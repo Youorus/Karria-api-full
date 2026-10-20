@@ -1,0 +1,52 @@
+"""Dépendances FastAPI transverses.
+
+Ces alias sont la manière **unique** d'obtenir la configuration, le bus
+d'événements, le stockage ou une unité de travail dans une route. La V1
+redéclarait dans chaque router un `def get_x_service(): return XService()`
+sans valeur ajoutée ; on centralise ici ce qui est réellement transverse,
+et chaque module ne déclare que ses propres dépendances métier.
+
+Ces objets sont exposés en dépendances plutôt qu'importés en tant que
+variables globales pour une raison précise : un test peut les remplacer via
+`app.dependency_overrides` sans monkeypatch, donc sans fuite d'un test à
+l'autre.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, cast
+
+from fastapi import Depends, Request
+
+from karria.shared.config import Settings, get_settings
+from karria.shared.database import TortoiseUnitOfWork, UnitOfWork
+from karria.shared.events import EventBus
+from karria.shared.storage import ObjectStorage
+
+
+def get_event_bus(request: Request) -> EventBus:
+    """Retourne le bus d'événements attaché à l'application."""
+    return cast(EventBus, request.app.state.event_bus)
+
+
+def get_object_storage(request: Request) -> ObjectStorage:
+    """Retourne le stockage objet attaché à l'application.
+
+    Lu depuis l'état de l'application et non depuis une variable de module :
+    un test le remplace par `dependency_overrides`, sans monkeypatch et sans
+    fuite d'un test à l'autre. La V1 conservait son client S3 dans deux
+    attributs de classe pour le même objet — un état global impossible à
+    substituer proprement.
+    """
+    return cast(ObjectStorage, request.app.state.object_storage)
+
+
+def get_unit_of_work() -> UnitOfWork:
+    """Retourne une unité de travail adossée à Tortoise."""
+    return TortoiseUnitOfWork()
+
+
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+EventBusDep = Annotated[EventBus, Depends(get_event_bus)]
+UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
+ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]

@@ -1,0 +1,64 @@
+# =====================================================================
+# Garde-fou local. Ce qui est vérifié ici est exactement ce qui est
+# vérifié en CI : un commit qui passe en local ne doit pas échouer sur le
+# serveur, sinon le hook perd sa raison d'être.
+#
+# Différence assumée avec la V1 : mypy et import-linter tournent
+# RÉELLEMENT. Un pre-commit qui ne vérifie que le formatage donne un
+# sentiment de sécurité sans en apporter.
+#
+# Installation : `make install`
+# =====================================================================
+
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  # --- Hygiène de fichiers ------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=512]
+
+  # --- Lint & formatage ---------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # --- Typage & frontières ------------------------------------------
+  # Exécutés via l'environnement uv du projet : ces outils ont besoin des
+  # dépendances réelles pour résoudre les imports. Un mypy isolé dans son
+  # propre venv ne verrait ni FastAPI ni Tortoise et validerait n'importe
+  # quoi.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (typage strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: import-linter
+        name: import-linter (frontières d'architecture)
+        entry: uv run lint-imports
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # --- Message de commit --------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]

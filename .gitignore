@@ -1,0 +1,53 @@
+# =====================================================================
+# Règle : la racine du dépôt reste propre. Aucun artefact, aucun script
+# jetable, aucun binaire, aucune capture d'écran ne doit y atterrir.
+# =====================================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# --- Environnements virtuels ---
+.venv/
+venv/
+
+# --- Secrets & configuration locale ---
+# Tout `.env` est un secret, SAUF les modèles : ceux-ci ne contiennent
+# que des noms de variables et leurs explications. Un modèle non
+# versionné ne sert à personne — c'est le seul document qui dise à un
+# nouveau développeur ce qu'il doit renseigner.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# --- Caches d'outillage ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- IDE & OS ---
+.idea/
+.vscode/
+.DS_Store
+
+# --- Artefacts jamais versionnés ---
+# Le schéma OpenAPI est généré, il n'est pas une source.
+openapi.json
+*.log
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# --- Cache d'import-linter ---
+.import_linter_cache/

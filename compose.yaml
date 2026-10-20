@@ -1,0 +1,73 @@
+# =====================================================================
+# Environnement de développement local.
+#
+# Deux services d'infrastructure : PostgreSQL et MinIO. On ajoute une brique
+# le jour où un module en a besoin, pas avant — un cache ou une file
+# d'attente que personne n'utilise est une dépendance à maintenir pour rien.
+#
+# MinIO parle le même protocole S3 que Scaleway : le code est identique, et
+# développer en local ne coûte ni facturation, ni accès réseau sortant.
+# =====================================================================
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: karria
+      POSTGRES_PASSWORD: karria
+      POSTGRES_DB: karria
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U karria"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # console web
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      target: runtime
+    # Profil optionnel : par défaut `make db-up` ne démarre que la base et
+    # l'API tourne en local avec rechargement à chaud, ce qui est bien plus
+    # confortable. `docker compose --profile full up` monte l'ensemble.
+    profiles: [full]
+    ports:
+      - "8000:8000"
+    environment:
+      DB__URL: postgres://karria:karria@postgres:5432/karria
+      APP__ENVIRONMENT: local
+      OBSERVABILITY__LOG_FORMAT: console
+      STORAGE__PROVIDER: minio
+      # Depuis un conteneur, MinIO ne s'appelle pas `localhost`.
+      STORAGE__ENDPOINT_URL: http://minio:9000
+      STORAGE__ACCESS_KEY: minioadmin
+      STORAGE__SECRET_KEY: minioadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  minio_data:

@@ -1,0 +1,143 @@
+# =====================================================================
+# Porte de qualité. Strictement identique à `make check` en local : un
+# développeur doit pouvoir reproduire un échec de CI sans pousser.
+# =====================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+
+concurrency:
+  # Un nouveau push annule la CI précédente sur la même branche.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"  # échoue si uv.lock ne correspond pas à pyproject.toml
+
+jobs:
+  quality:
+    name: Lint, typage et frontières
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-groups
+
+      - name: Lint
+        run: |
+          uv run ruff check src tests scripts
+          uv run ruff format --check src tests scripts
+
+      - name: Typage strict
+        run: uv run mypy
+
+      - name: Frontières d'architecture
+        run: uv run lint-imports
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: karria
+          POSTGRES_PASSWORD: karria
+          POSTGRES_DB: karria_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP__ENVIRONMENT: test
+      DB__URL: postgres://karria:karria@localhost:5432/karria_test
+      OBSERVABILITY__LOG_FORMAT: json
+      # MinIO parle le même protocole S3 que Scaleway : la CI exerce donc le
+      # vrai adaptateur, pas une doublure. C'est ce qui vérifie qu'un CV
+      # atterrit réellement dans un bucket privé — le reste de la
+      # suite ne peut que le supposer.
+      STORAGE__PROVIDER: minio
+      STORAGE__ENDPOINT_URL: http://localhost:9000
+      STORAGE__ACCESS_KEY: minioadmin
+      STORAGE__SECRET_KEY: minioadmin
+      STORAGE__BUCKET_PREFIX: karria
+      # Le provisionnement pose la configuration CORS à partir de cette
+      # liste ; sans elle, la valeur par défaut de `Settings` suffirait,
+      # mais la rendre explicite évite de dépendre d'un défaut.
+      SECURITY__ALLOWED_ORIGINS: '["http://localhost:3000"]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --all-groups
+
+      # MinIO ne peut pas être déclaré en `services:` : son image exige la
+      # commande `server /data`, et un service GitHub Actions n'accepte que
+      # des options passées à `docker create`, jamais une commande. On le
+      # lance donc explicitement.
+      - name: Démarrer MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            --health-cmd "mc ready local" \
+            --health-interval 5s \
+            --health-retries 20 \
+            minio/minio:latest server /data
+
+      - name: Attendre que MinIO réponde
+        run: |
+          # Bornée : sans limite, une image indisponible ferait tourner le
+          # job jusqu'au délai maximal de GitHub plutôt qu'échouer vite.
+          for attempt in $(seq 1 30); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO est prêt."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MinIO n'a pas démarré en 60 secondes." >&2
+          docker logs minio >&2
+          exit 1
+
+      - name: Provisionner les buckets
+        run: uv run python scripts/storage_provision.py
+
+      - name: Suite de tests
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+      # Aucune étape de contrôle supplémentaire n'est nécessaire : les
+      # fixtures d'intégration échouent — au lieu d'ignorer — dès que `CI`
+      # est positionné. Une dépendance manquante casse donc le build, au
+      # lieu de laisser la suite verte en ayant cessé de vérifier.
+
+  docker:
+    name: Build de l'image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # On vérifie que l'image construit à chaque PR. Découvrir un
+      # Dockerfile cassé au moment du déploiement est un incident évitable.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
