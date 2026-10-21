@@ -35,6 +35,13 @@ class ErrorCode(StrEnum):
     RULE_VIOLATION = "rule_violation"
     UNAUTHENTICATED = "unauthenticated"
     FORBIDDEN = "forbidden"
+    #: La ressource a existé et n'existe plus — un parcours de connexion
+    #: périmé, par exemple. Distinct de `NOT_FOUND` : le client sait qu'il
+    #: doit **recommencer**, pas corriger un identifiant.
+    GONE = "gone"
+    #: Trop de tentatives ou de demandes. `details.retry_after` dit, en
+    #: secondes, quand réessayer.
+    RATE_LIMITED = "rate_limited"
     DEPENDENCY_FAILURE = "dependency_failure"
     INTERNAL = "internal_error"
 
@@ -127,6 +134,34 @@ class AuthorizationError(DomainError):
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.FORBIDDEN
+
+
+class ResourceGoneError(DomainError):
+    """Une ressource a existé et n'est plus utilisable.
+
+    Un parcours périmé, un lien consommé : le client ne peut pas le
+    corriger, il doit recommencer. C'est ce qui le distingue d'un
+    `EntityNotFoundError`, où un identifiant faux est en cause.
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.GONE
+
+
+class RateLimitedError(DomainError):
+    """L'appelant a dépassé le rythme autorisé.
+
+    Porte toujours `details.retry_after`, en secondes : un client qui ne
+    sait pas quand réessayer réessaie tout de suite, ce qui est exactement
+    ce qu'on cherche à empêcher.
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
+
+    def __init__(
+        self, message: str, *, retry_after: int, details: Mapping[str, Any] | None = None
+    ) -> None:
+        super().__init__(message, details={**(details or {}), "retry_after": retry_after})
+        self.retry_after = retry_after
 
 
 # ---------------------------------------------------------------------

@@ -9,7 +9,8 @@ Contrat
   et `RUN_STARTUP_REINDEX` par variable d'environnement — et celle qui
   rend une configuration illisible en dix-huit mois.
 - Les réglages sont **composés par domaine** (`app`, `db`, `security`,
-  `storage`, `mail`, `observability`) et non alignés à plat. Chaque bloc
+  `storage`, `mail`, `social`, `push`, `gemini`, `observability`) et non
+  alignés à plat. Chaque bloc
   est lisible seul et peut être injecté seul dans un test.
 - L'objet est **injecté** via `SettingsDep`, jamais importé comme singleton
   global. Un test substitue la configuration sans monkeypatch.
@@ -299,6 +300,105 @@ class StorageSettings(BaseModel):
         return self
 
 
+class SocialSettings(BaseModel):
+    """Identifiants d'application auprès d'Apple et de Google.
+
+    Ce sont des **audiences**, pas des secrets : un identifiant de client
+    OAuth figure déjà dans l'application mobile, que n'importe qui peut
+    décompiler. Ce qui protège, c'est que l'API refuse tout jeton émis pour
+    une autre audience que celles-ci (ADR-0011).
+
+    Google émet un client **par plateforme** : un jeton obtenu sur iOS
+    porte l'identifiant iOS, un jeton obtenu via le client web — celui que
+    `@react-native-google-signin` exige pour rendre un `idToken` — porte
+    l'identifiant web. N'en déclarer qu'un ferait échouer l'autre
+    plateforme avec une erreur qui ressemble à un jeton forgé.
+    """
+
+    google_ios_client_id: str = ""
+    google_web_client_id: str = ""
+    google_android_client_id: str = ""
+    #: Le *bundle identifier* de l'application iOS, audience des jetons
+    #: Apple. Il n'est pas secret et ne change pas d'un environnement à
+    #: l'autre — d'où la valeur par défaut.
+    apple_client_id: str = "com.karria.app"
+
+    @property
+    def google_audiences(self) -> list[str]:
+        """Les audiences Google acceptées, sans les vides."""
+        return [
+            value
+            for value in (
+                self.google_ios_client_id,
+                self.google_web_client_id,
+                self.google_android_client_id,
+            )
+            if value
+        ]
+
+    @property
+    def apple_audiences(self) -> list[str]:
+        """Les audiences Apple acceptées."""
+        return [self.apple_client_id] if self.apple_client_id else []
+
+    @property
+    def google_enabled(self) -> bool:
+        """La connexion Google est-elle configurée sur ce serveur ?"""
+        return bool(self.google_audiences)
+
+    @property
+    def apple_enabled(self) -> bool:
+        """La connexion Apple est-elle configurée sur ce serveur ?"""
+        return bool(self.apple_audiences)
+
+
+class PushSettings(BaseModel):
+    """Accès au service de notifications push d'Expo.
+
+    L'URL est de la configuration parce qu'un test de bout en bout peut la
+    pointer vers un serveur local ; le jeton d'accès est facultatif — Expo
+    ne l'exige que si la sécurité renforcée est activée sur le projet.
+    """
+
+    expo_api_url: str = "https://exp.host/--/api/v2"
+    expo_access_token: SecretStr = SecretStr("")
+    request_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
+class GeminiSettings(BaseModel):
+    """Accès à l'API Gemini (module `cv` : interprétation, transcription,
+    extraction de CV, photo améliorée).
+
+    Les noms de modèles sont ici parce qu'ils décrivent **l'environnement**
+    — ce que le fournisseur sert aujourd'hui — et non une règle du produit :
+    un modèle retiré par Google se remplace par configuration, sans
+    livraison. Les valeurs par défaut sont celles relevées sur la liste
+    des modèles disponibles le 2026-10-21 (ADR-0013).
+
+    L'appel passe par l'API REST (`shared/http/outbound.py`), sans SDK : la
+    clé voyage dans un en-tête, jamais dans l'URL — donc jamais dans un
+    journal d'accès.
+    """
+
+    api_key: SecretStr = SecretStr("")
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    #: Texte, JSON à schéma imposé et compréhension audio.
+    text_model: str = "gemini-3.8-flash"
+    #: Génération d'image à partir d'une image (portrait de CV).
+    image_model: str = "gemini-3.1-flash-image"
+    #: Une transcription ou une extraction de CV prend plusieurs secondes ;
+    #: le délai par défaut du client sortant (10 s) couperait des appels
+    #: parfaitement sains.
+    request_timeout_seconds: float = Field(default=60.0, gt=0)
+    #: Une génération d'image est plus lente encore.
+    image_timeout_seconds: float = Field(default=90.0, gt=0)
+
+    @property
+    def enabled(self) -> bool:
+        """Une clé est-elle renseignée ?"""
+        return bool(self.api_key.get_secret_value())
+
+
 class ObservabilitySettings(BaseModel):
     """Journalisation et traçabilité."""
 
@@ -322,6 +422,9 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     mail: MailSettings = Field(default_factory=MailSettings)
+    social: SocialSettings = Field(default_factory=SocialSettings)
+    push: PushSettings = Field(default_factory=PushSettings)
+    gemini: GeminiSettings = Field(default_factory=GeminiSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:
@@ -379,6 +482,25 @@ class Settings(BaseSettings):
                 "table de sessions suffit à casser les codes à six chiffres."
             )
         problems.extend(self._provider_problems())
+        if not self.gemini.enabled:
+            # Avertit sans bloquer : seule la création du CV en est privée,
+            # et retenir un correctif urgent pour une clé d'IA manquante
+            # coûterait plus que des routes qui répondent 503 le temps de
+            # la poser.
+            logger.warning(
+                "config.gemini_disabled",
+                detail="GEMINI__API_KEY est vide : interprétation, transcription, import et "
+                "portrait répondront 503 `ai_unavailable`.",
+            )
+
+        if not self.social.google_enabled:
+            # Avertit sans bloquer : la connexion Google répondra
+            # « indisponible », le reste de l'API sert. Un correctif urgent
+            # ne doit pas attendre qu'un identifiant OAuth soit posé.
+            logger.warning(
+                "config.google_login_disabled",
+                hint="SOCIAL__GOOGLE_IOS_CLIENT_ID / SOCIAL__GOOGLE_WEB_CLIENT_ID absents.",
+            )
 
         if problems:
             details = "\n  - ".join(problems)

@@ -42,3 +42,9 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0007](0007-authentification-et-autorisation.md) | Principal transverse et permissions déclarées par module | Acceptée |
 | [0008](0008-stockage-objet.md) | Stockage objet : un port, un adaptateur S3, un registre de buckets | Acceptée |
 | [0009](0009-normalisation-des-images-recues.md) | Toute image reçue est normalisée avant d'être écrite | Acceptée |
+| [0010](0010-sessions-opaques-et-connexion-par-code.md) | Sessions opaques à rotation, connexion par code e-mail, compte né de la preuve | Acceptée |
+| [0011](0011-verification-des-jetons-apple-et-google.md) | Vérification locale des jetons Apple et Google, rattachement par le `sub` | Acceptée |
+| [0012](0012-appareils-et-notifications-push.md) | Appareils déclarés par installation, notifications par Expo | Acceptée |
+| [0013](0013-gemini-par-port-et-politique-anti-injection.md) | Gemini derrière des ports, par l'API REST, sortie à schéma imposé et réponse traitée comme une donnée | Acceptée |
+| [0014](0014-persistance-du-cv-et-du-brouillon.md) | CV et brouillon en documents JSONB, un par personne, photo retenue par identifiant | Acceptée |
+| [0015](0015-suppression-de-compte-et-retention.md) | Suppression de compte : effacement physique, trace de départ anonyme, oubli par événement | Acceptée |

@@ -31,7 +31,7 @@ tenir dans un module, ou se partager entre deux.
 
 | Surface | Routes vues dans le contrat | Source |
 |---|---|---|
-| Compte et session | `POST /auth/email/start`, `/auth/email/resend`, `/auth/email/verify`, `/auth/social/google`, `/auth/social/apple`, `/auth/refresh`, `/auth/logout`, `GET /auth/me` | `serveur-simule.ts` |
+| Compte et session | `POST /auth/email/start`, `/auth/email/resend`, `/auth/email/verify`, `/auth/social/google`, `/auth/social/apple`, `/auth/refresh`, `/auth/logout`, `GET /auth/me`, `DELETE /auth/me` | `serveur-simule.ts`, `contrat-api-compte.md` |
 | Fil d'offres matchées | `GET /job-matches/me` (filtres, pagination, `has_next`), `/job-matches/me/filter-options`, `GET /job-matches/{id}`, `…/summary-status`, `POST …/summary`, `PATCH …/interaction`, SSE `/job-matches/me/stream`, `PATCH /job-matches/bulk-feed-seen`, `POST …/dismiss`, `GET /job-matches/feedback-tags` | `serveur-simule.ts`, `reference-v1.md` §7 |
 | Agent conversationnel | `POST /assistant/messages` (contrat app) ; V1 : `POST /karria/chat/converse`, `GET /karria/chat/search/{id}/status\|matches` | `serveur-simule.ts`, `reference-v1.md` §6 |
 | CV | `GET /cv/me`, `PUT /cv/update`, `PUT /cv/image`, sous-ressources `/cv/experiences`…, `POST /cv/ai/…`, brouillon en conversation `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{chapter}`, `POST /cv/draft/finalize` | `contrat-api-cv.md` |
@@ -40,6 +40,16 @@ tenir dans un module, ou se partager entre deux.
 | Modèles de CV | `GET /templates/?active_only=true`, `/user-templates/me` | `reference-v1.md` §6 |
 | Profil, quotas, abonnement | `/users/me`, consommation et quotas, abonnement | `reference-v1.md` §6 |
 | Offres publiques (invité) | `/public/job-offers` | `reference-v1.md` §6 |
+
+## Les contextes construits
+
+Nommés par Marc, module par module. Le reste du découpage n'est pas écrit.
+
+| Module | Surface du contrat servie | ADR |
+|---|---|---|
+| `identity` | Compte et session : `/auth/*`, dont la suppression `DELETE /auth/me` | 0010, 0011, 0015 |
+| `devices` | Appareils et notifications push : `/devices/*` | 0012 |
+| `cv` | Le CV en conversation : `/cv/*`, `/voice/transcribe` | 0013, 0014 |
 
 ## Ce qui est déjà fixé, quelle que soit la découpe
 

@@ -159,3 +159,32 @@ def test_le_fichier_env_est_cherche_a_la_racine_du_depot() -> None:
     racine.
     """
     assert (BASE_DIR / "pyproject.toml").is_file()
+
+
+class TestSocialSettings:
+    def test_les_audiences_ignorent_les_identifiants_vides(self) -> None:
+        from karria.shared.config import SocialSettings  # noqa: PLC0415
+
+        social = SocialSettings(google_ios_client_id="ios", google_web_client_id="")
+
+        assert social.google_audiences == ["ios"]
+        assert social.google_enabled
+        assert social.apple_audiences == ["com.karria.app"]
+        assert social.apple_enabled
+
+    def test_sans_identifiant_google_la_connexion_google_est_indisponible(self) -> None:
+        from karria.shared.config import SocialSettings  # noqa: PLC0415
+
+        social = SocialSettings(apple_client_id="")
+
+        assert not social.google_enabled
+        assert not social.apple_enabled
+
+    def test_le_bloc_push_a_des_defauts_surs(self) -> None:
+        from karria.shared.config import PushSettings  # noqa: PLC0415
+
+        push = PushSettings()
+
+        assert push.expo_api_url.startswith("https://exp.host")
+        assert push.expo_access_token.get_secret_value() == ""
+        assert push.request_timeout_seconds > 0

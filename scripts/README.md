@@ -38,3 +38,13 @@ Le jour où un tel script apparaît, son planificateur (`systemd` ou
 au démarrage s'exécute à chaque redéploiement et sur chaque réplique
 (AGENTS.md §6.4). La V1 ré-indexait son corpus à chaque boot ; les
 tâches partiraient en double à chaque livraison.
+
+## `push_receipts.py` — lire les reçus des notifications
+
+    uv run python -m scripts.push_receipts
+
+À planifier toutes les quinze minutes. Interroge Expo sur les tickets émis
+depuis plus d'un quart d'heure et détache les jetons que le système a
+déclarés morts (`DeviceNotRegistered`). Sans lui, les désinstallations
+tardives ne seraient jamais vues et Expo finirait par bannir l'expéditeur
+(ADR-0012).

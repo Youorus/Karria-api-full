@@ -14,12 +14,13 @@ Contrat
 - **Démarrage bruyant, arrêt propre.** Si une dépendance critique manque,
   le processus doit échouer immédiatement et visiblement.
 
-Ce que ce fichier accueillera
------------------------------
-Les **ponts entre modules** qui s'abonnent au bus : un module ne connaît
-jamais les événements d'un autre (règle 4), et cette couche est la seule à
-voir les deux côtés. Chaque pont arrive avec le module qui le justifie,
-sous la forme d'un `subscribe_*` dans `wiring.py`, appelé ici.
+Les ponts entre modules
+-----------------------
+Un module ne connaît jamais les événements d'un autre (règle 4), et cette
+couche est la seule à voir les deux côtés. Les abonnements croisés vivent
+dans `wiring.subscribe_bridges`, appelé ici **une fois le stockage ouvert** :
+un abonné qui efface des objets a besoin du client ouvert pour la durée du
+processus.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from fastapi import FastAPI
 
 from karria.bootstrap.modules import ENABLED_MODULES, register_event_subscriptions
 from karria.bootstrap.orm import TORTOISE_ORM
+from karria.bootstrap.wiring import subscribe_bridges
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.events import EventBus
@@ -66,6 +68,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Une fois démarré, le stockage redevient une dépendance NON
         # critique — l'API sert encore beaucoup de choses sans lui.
         await storage.check_health()
+
+        # Les réactions croisées (un compte supprimé → `devices` et `cv`
+        # oublient la personne) : ici et pas plus haut, parce que l'oubli du
+        # CV efface des objets et a besoin du stockage ouvert.
+        subscribe_bridges(bus, storage=storage)
 
         logger.info(
             "application.started",

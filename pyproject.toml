@@ -46,10 +46,17 @@ dependencies = [
     # Le HEIC des iPhone récents, que Pillow ne lit pas seul. Roues avec
     # libheif embarquée, même raison.
     "pillow-heif>=1.7.0",
+    # --- Connexion Apple et Google (module `identity`) ---------------
+    # Vérification des jetons d'identité signés RS256 par Apple et Google
+    # (ADR-0011). `[crypto]` tire `cryptography`, indispensable pour RSA.
+    # Aucun SDK Google ni Firebase : les jetons sont des JWT standard, et
+    # un SDK par fournisseur serait deux fois plus de surface à suivre.
+    "pyjwt[crypto]>=2.10",
     # --- Ce qui n'est PAS ici, et pourquoi ---------------------------
     # Aucun SDK de modèle (Gemini), aucun client de source d'offres, aucun
     # hachage de mot de passe : chaque dépendance arrive avec le module
     # qui la justifie, dans le commit qui le crée (AGENTS.md §6.11).
+    "pypdf>=6.21.1",
 ]
 
 [project.optional-dependencies]
@@ -279,6 +286,9 @@ type = "layers"
 layers = ["api", "(infrastructure)", "(application)", "domain"]
 containers = [
     "karria.modules.health",
+    "karria.modules.identity",
+    "karria.modules.devices",
+    "karria.modules.cv",
 ]
 
 [[tool.importlinter.contracts]]
@@ -286,6 +296,9 @@ name = "Règle 2 bis — le domaine ignore tout framework"
 type = "forbidden"
 source_modules = [
     "karria.modules.health.domain",
+    "karria.modules.identity.domain",
+    "karria.modules.devices.domain",
+    "karria.modules.cv.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -310,6 +323,9 @@ name = "Règle 4 — les modules ne s'importent pas entre eux"
 type = "independence"
 modules = [
     "karria.modules.health",
+    "karria.modules.identity",
+    "karria.modules.devices",
+    "karria.modules.cv",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.

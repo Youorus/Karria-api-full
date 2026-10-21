@@ -18,6 +18,9 @@
 - Deux secrets se génèrent et ne doivent **jamais** être identiques :
   `SECURITY__SECRET_KEY` et `SECURITY__TOKEN_PEPPER`
   (`python -c "import secrets; print(secrets.token_urlsafe(64))"`).
+- `GEMINI__API_KEY` (module `cv`) : sans elle, la création du CV, la
+  transcription et l'import répondent 503 `ai_unavailable` ; le démarrage
+  l'annonce (`config.gemini_disabled`) sans bloquer.
 - Les buckets se créent par `make storage-provision`, idempotent, à relancer
   après chaque déploiement. Le nom physique porte l'environnement
   (`karria-production-media`) : la recette ne peut pas écraser la production.
@@ -25,3 +28,10 @@
   du conteneur (AGENTS.md §6.4).
 - `make doctor` avec la configuration de production dit si l'environnement
   est prêt, **avant** de couper le service.
+- Deux blocs de configuration arrivent avec les premiers modules métier :
+  `SOCIAL__*` (audiences Apple et Google — sans Google, l'API démarre et
+  avertit) et `PUSH__*` (service push d'Expo). Voir `.env.example`.
+- Une tâche planifiée lit les reçus de notifications toutes les quinze
+  minutes : `uv run python -m scripts.push_receipts` (ADR-0012).
+- `SECURITY__TOKEN_PEPPER` poivre les condensats de jetons et de codes : le
+  changer déconnecte **tous** les utilisateurs.

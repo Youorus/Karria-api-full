@@ -30,6 +30,9 @@ def test_le_registre_expose_les_routes_de_chaque_module() -> None:
 
     assert "/health/live" in chemins
     assert "/health/ready" in chemins
+    assert "/api/v1/auth/email/start" in chemins
+    assert "/api/v1/auth/social/apple" in chemins
+    assert "/api/v1/devices/{installation_id}" in chemins
 
 
 def test_les_sondes_de_sante_echappent_au_prefixe_versionne() -> None:
@@ -42,10 +45,12 @@ def test_les_sondes_de_sante_echappent_au_prefixe_versionne() -> None:
 
 
 def test_les_modeles_pour_aerich_sont_derives_du_registre() -> None:
-    """Aucune liste de modèles tenue à la main : `health` n'en a pas, la liste est vide."""
+    """Aucune liste de modèles tenue à la main : `identity` et `devices` y figurent."""
     assert all_model_modules() == [
         module.models_module for module in ENABLED_MODULES if module.models_module
     ]
+    assert "karria.modules.identity.infrastructure.models" in all_model_modules()
+    assert "karria.modules.devices.infrastructure.models" in all_model_modules()
 
 
 def test_les_permissions_ne_se_dupliquent_pas_entre_modules() -> None:

@@ -22,8 +22,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from doubles import CollectingBus
+from doubles import CollectingBus, DevicesEnv, IdentityEnv
 from karria.bootstrap.app import create_app
+from karria.modules.devices.api import dependencies as devices_deps
+from karria.modules.identity.api import dependencies as identity_deps
 from karria.shared.auth import Principal, resolve_principal
 from karria.shared.config import (
     AppSettings,
@@ -32,6 +34,8 @@ from karria.shared.config import (
     Settings,
     StorageSettings,
 )
+from karria.shared.database import NullUnitOfWork
+from karria.shared.http.dependencies import get_unit_of_work
 from karria.shared.storage import InMemoryObjectStorage
 
 
@@ -120,3 +124,50 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
+
+
+@pytest.fixture
+def identity_env(app: FastAPI) -> Iterator[IdentityEnv]:
+    """Installe les doublures d'`identity` sur l'application.
+
+    Les routes, les use cases, la validation **et** la couture
+    `resolve_principal` branchée par `bootstrap/wiring.py` sont exercés
+    pour de vrai : seuls les dépôts, l'envoi d'e-mail, le limiteur et
+    l'horloge sont remplacés.
+    """
+    env = IdentityEnv.build()
+    overrides = {
+        identity_deps.get_user_repository: lambda: env.users,
+        identity_deps.get_identity_repository: lambda: env.identities,
+        identity_deps.get_session_repository: lambda: env.sessions,
+        identity_deps.get_challenge_repository: lambda: env.challenges,
+        identity_deps.get_departure_repository: lambda: env.departures,
+        identity_deps.get_main_device_lookup: lambda: env.main_device,
+        identity_deps.get_login_code_sender: lambda: env.sender,
+        identity_deps.get_login_throttle: lambda: env.throttle,
+        identity_deps.get_token_factory: lambda: env.tokens,
+        identity_deps.get_clock: lambda: env.clock,
+        # Aucune base : l'atomicité relève des tests d'intégration.
+        get_unit_of_work: NullUnitOfWork,
+    }
+    app.dependency_overrides.update(overrides)
+    yield env
+    for key in overrides:
+        app.dependency_overrides.pop(key, None)
+
+
+@pytest.fixture
+def devices_env(app: FastAPI) -> Iterator[DevicesEnv]:
+    """Installe les doublures de `devices` sur l'application."""
+    env = DevicesEnv.build()
+    overrides = {
+        devices_deps.get_device_repository: lambda: env.devices,
+        devices_deps.get_ticket_repository: lambda: env.tickets,
+        devices_deps.get_push_gateway: lambda: env.gateway,
+        devices_deps.get_clock: lambda: env.clock,
+        get_unit_of_work: NullUnitOfWork,
+    }
+    app.dependency_overrides.update(overrides)
+    yield env
+    for key in overrides:
+        app.dependency_overrides.pop(key, None)

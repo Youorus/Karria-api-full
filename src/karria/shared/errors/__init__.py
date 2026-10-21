@@ -12,6 +12,8 @@ from karria.shared.errors.exceptions import (
     InfrastructureError,
     InvalidInputError,
     KarriaError,
+    RateLimitedError,
+    ResourceGoneError,
 )
 from karria.shared.errors.handlers import STATUS_BY_ERROR_CODE, register_exception_handlers
 from karria.shared.errors.openapi import error_responses
@@ -32,6 +34,8 @@ __all__ = [
     "InfrastructureError",
     "InvalidInputError",
     "KarriaError",
+    "RateLimitedError",
+    "ResourceGoneError",
     "error_responses",
     "register_exception_handlers",
 ]

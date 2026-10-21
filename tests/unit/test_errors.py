@@ -44,3 +44,17 @@ def test_les_reponses_openapi_sont_composables() -> None:
     responses = error_responses(ErrorCode.NOT_FOUND, ErrorCode.FORBIDDEN)
 
     assert set(responses) == {404, 403}
+
+
+def test_lerreur_de_rythme_porte_toujours_le_delai() -> None:
+    """Un client qui ne sait pas quand réessayer réessaie tout de suite."""
+    from karria.shared.errors import RateLimitedError, ResourceGoneError  # noqa: PLC0415
+
+    error = RateLimitedError("Trop vite.", retry_after=30, details={"reason": "x"})
+
+    assert error.code is ErrorCode.RATE_LIMITED
+    assert error.retry_after == 30
+    assert error.details == {"reason": "x", "retry_after": 30}
+    assert STATUS_BY_ERROR_CODE[ErrorCode.RATE_LIMITED] == 429
+    assert ResourceGoneError("Parti.").code is ErrorCode.GONE
+    assert STATUS_BY_ERROR_CODE[ErrorCode.GONE] == 410

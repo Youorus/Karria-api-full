@@ -25,6 +25,8 @@ _DESCRIPTIONS: dict[ErrorCode, str] = {
     ErrorCode.RULE_VIOLATION: "Une règle métier interdit cette opération.",
     ErrorCode.UNAUTHENTICATED: "Authentification requise ou invalide.",
     ErrorCode.FORBIDDEN: "Accès refusé.",
+    ErrorCode.GONE: "La ressource a expiré ou a déjà été consommée : recommencer.",
+    ErrorCode.RATE_LIMITED: "Trop de tentatives. `details.retry_after` indique quand réessayer.",
     ErrorCode.DEPENDENCY_FAILURE: "Un service dont dépend l'API est indisponible.",
     ErrorCode.INTERNAL: "Erreur interne.",
 }

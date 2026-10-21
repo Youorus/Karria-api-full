@@ -52,9 +52,20 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations" / "models"
 #: qui tronque des tables ne doit jamais pouvoir viser les données locales.
 DEFAULT_TEST_URL = "postgres://karria:karria@localhost:5432/karria_test"
 
-#: Les tables à vider entre deux tests, dans l'ordre d'écriture. Vide tant
-#: qu'aucun module ne possède de modèle.
-TABLES_TO_TRUNCATE: Final[tuple[str, ...]] = ()
+#: Les tables à vider entre deux tests. Chaque module y inscrit les siennes
+#: dans le commit qui les crée.
+TABLES_TO_TRUNCATE: Final[tuple[str, ...]] = (
+    "identity_users",
+    "identity_provider_identities",
+    "identity_sessions",
+    "identity_login_challenges",
+    "identity_departure_feedback",
+    "devices_installations",
+    "devices_push_tickets",
+    "cv_drafts",
+    "cv_curricula",
+    "cv_photos",
+)
 
 
 def unavailable(reason: str) -> None:

@@ -37,6 +37,8 @@ STATUS_BY_ERROR_CODE: Final[dict[ErrorCode, int]] = {
     ErrorCode.RULE_VIOLATION: status.HTTP_409_CONFLICT,
     ErrorCode.UNAUTHENTICATED: status.HTTP_401_UNAUTHORIZED,
     ErrorCode.FORBIDDEN: status.HTTP_403_FORBIDDEN,
+    ErrorCode.GONE: status.HTTP_410_GONE,
+    ErrorCode.RATE_LIMITED: status.HTTP_429_TOO_MANY_REQUESTS,
     ErrorCode.DEPENDENCY_FAILURE: status.HTTP_503_SERVICE_UNAVAILABLE,
     ErrorCode.INTERNAL: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
@@ -82,11 +84,18 @@ async def _handle_request_validation_error(_request: Request, exc: Exception) ->
         for error in exc.errors()
     ]
     logger.warning("request.invalid", fields=fields)
+    # `field` et `reason` à plat, en plus de la liste : c'est la forme que
+    # l'app lit pour afficher l'erreur **sous le champ concerné**
+    # (`details.field`), comme pour une erreur métier. Le premier champ
+    # fautif suffit — l'app n'en affiche qu'un à la fois.
+    details: dict[str, object] = {"fields": fields, "reason": "validation_error"}
+    if fields:
+        details["field"] = fields[0]["field"]
     return _build_response(
         http_status=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code=ErrorCode.INVALID_INPUT,
         message="La requête est invalide.",
-        details={"fields": fields},
+        details=details,
     )
 
 

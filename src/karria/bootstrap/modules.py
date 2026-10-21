@@ -14,7 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from karria.modules.cv import MODULE as CV_MODULE
+from karria.modules.devices import MODULE as DEVICES_MODULE
 from karria.modules.health import MODULE as HEALTH_MODULE
+from karria.modules.identity import MODULE as IDENTITY_MODULE
 
 if TYPE_CHECKING:
     from karria.shared.events import EventBus
@@ -22,7 +25,12 @@ if TYPE_CHECKING:
 
 
 #: Modules composant l'application, dans leur ordre d'enregistrement.
-ENABLED_MODULES: Final[tuple[ModuleDescriptor, ...]] = (HEALTH_MODULE,)
+ENABLED_MODULES: Final[tuple[ModuleDescriptor, ...]] = (
+    HEALTH_MODULE,
+    IDENTITY_MODULE,
+    DEVICES_MODULE,
+    CV_MODULE,
+)
 
 
 def all_model_modules() -> list[str]:
