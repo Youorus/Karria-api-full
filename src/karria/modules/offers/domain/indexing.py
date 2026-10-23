@@ -35,7 +35,7 @@ from karria.modules.offers.domain.offers import Offer
 #: Change quand la **composition** du texte plongé change : toute offre
 #: indexée sous une autre version se ré-indexe (commande explicite, jamais
 #: au démarrage).
-EMBEDDING_TEXT_VERSION: Final = "t2"
+EMBEDDING_TEXT_VERSION: Final = "t3"
 #: Caractères de description gardés dans le texte plongé. Avec l'en-tête,
 #: le texte fait ~600 caractères (~150 jetons) : 15 annonces/s mesurées.
 EMBEDDING_DESCRIPTION_CHARS: Final = 450
@@ -55,22 +55,15 @@ def cut(text: str, limit: int) -> str:
     return text[:limit].rsplit(" ", 1)[0]
 
 
-def traits(offer: Offer) -> list[str]:
-    """Contrat, télétravail, temps, expérience : ce qu'on a compris de l'offre."""
-    return [
-        part
-        for part in (
-            offer.contract_type.label if offer.contract_type else None,
-            offer.remote.value.replace("_", " ") if offer.remote else None,
-            offer.schedule.value.replace("_", " ") if offer.schedule else None,
-            offer.experience.value if offer.experience else None,
-        )
-        if part
-    ]
-
-
 def embedding_text(offer: Offer) -> str:
-    """Le texte dont on calcule le plongement dense."""
+    """Le texte dont on calcule le plongement dense : titre, employeur et lieu, puis l'annonce.
+
+    Les traits structurés (contrat, télétravail, temps, expérience) n'y sont
+    **plus** depuis `t3` (ADR-0018 § 6, ADR-0019) : écrits dans le texte, ils
+    faisaient relire l'étiquette à tout classifieur appris sur le vecteur, et
+    le filtre dur les applique déjà exactement. Changer ce texte change la
+    version de l'index : `reconcile` réécrit tout.
+    """
     header = [offer.title]
     context = [
         part
@@ -82,8 +75,6 @@ def embedding_text(offer: Offer) -> str:
     ]
     if context:
         header.append(" — ".join(context))
-    if found := traits(offer):
-        header.append(", ".join(found))
     body = cut(" ".join(offer.description.split()), EMBEDDING_DESCRIPTION_CHARS)
     return "\n".join([*header, body]).strip()
 

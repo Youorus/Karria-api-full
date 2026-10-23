@@ -220,6 +220,26 @@ plongement, et quels champs valent un appel au modèle (le contrat oui,
 l'expérience probablement non). Ensuite : un travail de file
 `offers.enrich` par lots, en cache, hors ingestion.
 
+### Le journal d'apprentissage n'a ni purge ni oubli, et rien ne s'entraîne encore
+
+L'ADR-0019 consigne chaque geste (`offers_interaction_events`). Rien ne le
+lit encore : les modèles attendent l'accord de Marc sur `scikit-learn`
+(et `lightgbm`). Le journal n'est pas effacé à la suppression de compte ni
+purgé avec le temps.
+
+**Ce que ça coûte :** ~200 000 lignes par jour à 1 000 personnes actives ;
+une donnée orpheline après suppression de compte.
+**Déclencheur :** l'accord sur les dépendances → `scripts/learning_export.py`,
+travail `offers.retrain` nocturne avec porte de promotion et dérive ; dans
+tous les cas, étendre `ForgetUser` au journal et purger à 180 jours.
+
+### Le ré-indexage `t3` n'a pas été re-jugé
+
+`embedding_text` a perdu la ligne des traits (ADR-0019 § 3). La précision@10
+jugée (91,4 % en `t2`) n'a pas été remesurée après le ré-indexage, par
+sobriété. **Déclencheur :** avant de promouvoir un classement appris, rejouer
+`scripts/offers_eval.py --judge` une fois.
+
 ### L'analyse de chaque offre par Karria n'existe pas
 
 L'app appelle `GET/POST /job-matches/{id}/summary(-status)` (V1) ; le
@@ -311,3 +331,31 @@ sur nos demandes n'a pas été mesurée.
 **Ce que ça coûte :** rien tant que le volume tient (20,7 offres/s de bout
 en bout, ×4 la cible).
 **Déclencheur :** un volume ×3, ou un serveur plus petit.
+
+---
+
+## Migration depuis la V1
+
+### Les jetons push V1 sont des jetons FCM bruts, inutilisables par Expo
+
+La V1 enregistrait un jeton Firebase par compte (`users.fcm_token`,
+`push_provider = fcm`). Dans la sauvegarde du 2026-09-12, **aucun** des
+19 jetons n'a la forme `ExponentPushToken[…]` : ce sont des jetons
+d'enregistrement FCM (format `id:APA91b…`, 142 caractères), 13 sous iOS et
+6 sous Android. L'expéditeur V2 (`devices`, ADR-0012) parle à Expo, qui ne
+connaît que ses propres jetons : `scripts/migrate_v1.py import` les compte
+(`push_unusable:fcm`) et n'en déclare aucun appareil.
+
+**Ce que ça coûte :** la campagne « Karria est de retour » ne peut joindre
+que les personnes qui auront réinstallé l'app et accordé la permission —
+l'app V2 déclare alors son appareil (`PUT /devices/{installation_id}`) et
+`scripts/push_campaign.py`, relancé, les trouve. Personne n'est prévenu
+« à froid ».
+**Ce qu'il faudrait pour les joindre à froid :** un envoi FCM direct
+(HTTP v1) avec le compte de service du projet Firebase V1, derrière une
+seconde implémentation du port `PushGateway` — et l'app V1 installée côté
+personne, puisque le jeton lui appartient. Téléverser les identifiants FCM
+dans Expo ne suffit pas : Expo n'accepte pas un jeton FCM brut en entrée.
+**Déclencheur :** décider que la relance « à froid » vaut le compte de
+service Firebase et une passerelle de plus. Sinon, laisser mourir avec
+l'app V1.

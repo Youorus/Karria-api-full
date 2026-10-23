@@ -31,6 +31,7 @@ from karria.modules.offers.domain import (
     FeedEntry,
     FeedOrigin,
     GeocodedPlace,
+    InteractionEvent,
     KarriaMemory,
     Location,
     MatchQuality,
@@ -54,6 +55,7 @@ from karria.modules.offers.infrastructure.models import (
     GeocodeCacheModel,
     IndexOutboxModel,
     IngestionRunModel,
+    InteractionEventModel,
     KarriaMemoryModel,
     MessageModel,
     OfferModel,
@@ -967,3 +969,37 @@ class TortoiseOfferStateRepository:
     async def delete_all_of_user(self, user_id: UUID) -> int:
         """Efface."""
         return await OfferStateModel.filter(user_id=user_id).delete()
+
+
+class TortoiseInteractionLog:
+    """Implémente `InteractionLog` : un lot, une requête."""
+
+    async def append(self, events: Sequence[InteractionEvent]) -> None:
+        """Consigne."""
+        if not events:
+            return
+        await InteractionEventModel.bulk_create(
+            [
+                InteractionEventModel(
+                    user_id=e.user_id,
+                    offer_id=e.offer_id,
+                    kind=e.kind.value,
+                    at=e.at,
+                    position=e.position,
+                    dwell_ms=e.dwell_ms,
+                    feed_mode=e.snapshot.feed_mode.value,
+                    criteria_fingerprint=e.snapshot.criteria_fingerprint,
+                    score=e.snapshot.score,
+                    quality=e.snapshot.quality,
+                    origin=e.snapshot.origin,
+                    source=e.snapshot.source,
+                    age_hours=e.snapshot.age_hours,
+                    distance_km=e.snapshot.distance_km,
+                    title_match=e.snapshot.title_match,
+                    contract_match=e.snapshot.contract_match,
+                    schedule_match=e.snapshot.schedule_match,
+                    has_salary=e.snapshot.has_salary,
+                )
+                for e in events
+            ]
+        )

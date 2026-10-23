@@ -21,6 +21,7 @@ from karria.modules.offers.domain import (
     DialogueProposal,
     FeedEntry,
     GeocodedPlace,
+    InteractionEvent,
     KarriaMemory,
     MemoryFacts,
     Offer,
@@ -533,6 +534,14 @@ class Message:
     role: str
     content: str
     created_at: datetime
+
+
+class InteractionLog(Protocol):
+    """Port : le journal d'apprentissage (ADR-0019), en ajout seulement."""
+
+    async def append(self, events: Sequence[InteractionEvent]) -> None:
+        """Consigne ces gestes."""
+        ...
 
 
 class ConversationRepository(Protocol):

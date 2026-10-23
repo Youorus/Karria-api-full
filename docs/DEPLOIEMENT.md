@@ -82,8 +82,12 @@ sur le serveur d'évaluation est `/root/karria-collector.env` (mode 600).
 Serveur `ssh papex-new` (Dokploy v0.30.8, Swarm ; partagé avec Papiers
 Express — ne jamais toucher à `papex*`, `/opt/papex` ni au projet Dokploy
 « Papiers Express »). Trois applications Dokploy dans le projet Karria,
-construites depuis `Youorus/Karria-api-full` (branche `main`, déploiement
-automatique par webhook GitHub — un `push` déclenche **trois** builds) :
+construites depuis `Youorus/Karria-api-full` (branche `main`). Le webhook
+GitHub pointe sur `https://admin.papex.fr/api/deploy/…`, dont le DNS vise
+encore l'ancien serveur : **un `push` ne déploie pas**. Déclencher à la main
+(`/root/dk.sh application.deploy '{"applicationId": …}'`, une fois par
+application, ids dans `/root/karria-dokploy.json`) jusqu'à ce que le DNS
+d'`admin.papex.fr` pointe sur 128.140.80.204 :
 
 | Application | Nom de service | Particularités |
 |---|---|---|

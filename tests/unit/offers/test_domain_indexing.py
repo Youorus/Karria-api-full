@@ -28,7 +28,6 @@ from karria.modules.offers.domain.indexing import (
     EMBEDDING_TEXT_VERSION,
     LEXICAL_DESCRIPTION_CHARS,
     cut,
-    traits,
 )
 
 pytestmark = pytest.mark.unit
@@ -60,11 +59,14 @@ def make_offer(**changes: object) -> Offer:
 
 
 class TestTexteDense:
-    def test_len_tete_porte_titre_employeur_lieu_et_traits(self) -> None:
+    def test_len_tete_porte_titre_employeur_et_lieu_sans_les_traits(self) -> None:
         lines = embedding_text(make_offer()).split("\n")
         assert lines[0] == "Aide-soignant de nuit H/F"
         assert lines[1] == "EHPAD Les Tilleuls — Marseille 8e"
-        assert lines[2] == "CDI, sur site, temps plein, debutant"
+        # Plus de ligne « CDI, sur site, temps plein » : elle faisait fuir
+        # l'étiquette dans le vecteur (ADR-0018 § 6).
+        assert len(lines) == 3
+        assert "CDI" not in lines[2]
 
     def test_la_description_est_bornee_et_sur_une_ligne(self) -> None:
         body = embedding_text(make_offer()).split("\n")[-1]
@@ -82,7 +84,6 @@ class TestTexteDense:
             description="Courte.",
         )
         assert embedding_text(bare) == "Aide-soignant de nuit H/F\nCourte."
-        assert traits(bare) == []
 
 
 class TestTextesLexicaux:

@@ -36,6 +36,7 @@ from karria.modules.offers.application import (
     IngestBatch,
     IngestionRunRepository,
     IngestPostings,
+    InteractionLog,
     JobQueue,
     KarriaMemoryRepository,
     LandingStore,
@@ -75,6 +76,7 @@ from karria.modules.offers.infrastructure import (
     TortoiseGeocodeCache,
     TortoiseIndexOutbox,
     TortoiseIngestionRunRepository,
+    TortoiseInteractionLog,
     TortoiseKarriaMemoryRepository,
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
@@ -370,16 +372,40 @@ def get_get_offer(
     return GetOfferForUser(offers=offers, feed=feed, states=states)
 
 
-def get_update_state(
-    offers: OfferRepositoryDep, feed: FeedRepositoryDep, states: StateRepositoryDep, clock: ClockDep
+def get_interaction_log() -> InteractionLog:
+    """Le journal d'apprentissage."""
+    return TortoiseInteractionLog()
+
+
+InteractionLogDep = Annotated[InteractionLog, Depends(get_interaction_log)]
+
+
+def get_update_state(  # noqa: PLR0917 - FastAPI injecte par position
+    offers: OfferRepositoryDep,
+    feed: FeedRepositoryDep,
+    states: StateRepositoryDep,
+    clock: ClockDep,
+    criteria: CriteriaRepositoryDep,
+    log: InteractionLogDep,
 ) -> UpdateOfferState:
-    """Une interaction."""
-    return UpdateOfferState(offers=offers, feed=feed, states=states, clock=clock)
+    """Une interaction, consignée."""
+    return UpdateOfferState(
+        offers=offers, feed=feed, states=states, clock=clock, criteria=criteria, log=log
+    )
 
 
-def get_mark_seen(states: StateRepositoryDep, clock: ClockDep) -> MarkFeedSeen:
-    """Le « vu » par lots."""
-    return MarkFeedSeen(states=states, clock=clock)
+def get_mark_seen(  # noqa: PLR0917 - FastAPI injecte par position
+    states: StateRepositoryDep,
+    clock: ClockDep,
+    offers: OfferRepositoryDep,
+    feed: FeedRepositoryDep,
+    criteria: CriteriaRepositoryDep,
+    log: InteractionLogDep,
+) -> MarkFeedSeen:
+    """Le « vu » par lots, consigné avec la place de chaque carte."""
+    return MarkFeedSeen(
+        states=states, clock=clock, offers=offers, feed=feed, criteria=criteria, log=log
+    )
 
 
 def get_get_feed_filters(

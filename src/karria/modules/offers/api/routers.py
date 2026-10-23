@@ -145,14 +145,18 @@ async def get_filter_options(
     "/me/seen",
     response_model=SeenResponse,
     summary="Marquer des offres comme affichées",
-    description="L'app envoie par lots (100 au plus) les offres passées à l'écran. Idempotent.",
+    description=(
+        "L'app envoie par lots (100 au plus) les offres passées à l'écran : `offer_ids`, ou "
+        "`impressions` avec la place de chaque carte (`offset + index`), ce qui nourrit "
+        "l'apprentissage du classement. Idempotent sur le « vu »."
+    ),
     responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
 )
 async def mark_seen(
     body: SeenRequest, principal: CurrentPrincipalDep, mark: MarkSeenDep
 ) -> SeenResponse:
     """Marque."""
-    return SeenResponse(updated=await mark.execute(principal.subject_id, body.offer_ids))
+    return SeenResponse(updated=await mark.execute(principal.subject_id, body.to_impressions()))
 
 
 @matches_router.get(
@@ -207,6 +211,8 @@ async def update_interaction(
             saved=body.saved,
             applied=body.applied,
             dismissed=body.dismissed,
+            position=body.position,
+            dwell_ms=body.dwell_ms,
         ),
     )
     return JobMatchResponse.from_item(item, now=clock.now())

@@ -45,6 +45,7 @@ from karria.modules.offers.application.ports import (
     IndexQuery,
     IngestionReport,
     IngestionRunRepository,
+    InteractionLog,
     JobQueue,
     KarriaMemoryRepository,
     LandingStore,
@@ -89,6 +90,8 @@ from karria.modules.offers.domain import (
     FeedMode,
     FeedOrigin,
     Intent,
+    InteractionEvent,
+    InteractionKind,
     KarriaMemory,
     MemoryFacts,
     Offer,
@@ -141,10 +144,12 @@ from karria.modules.offers.domain import (
     render_pending,
     seed_targets,
     simhash64,
+    snapshot,
     source_place,
     targets_of,
     title_relaxations,
     title_text,
+    transitions,
     validate_terms,
 )
 from karria.shared.clock import Clock
@@ -1727,10 +1732,13 @@ class StateChanges:
     saved: bool | None = None
     applied: bool | None = None
     dismissed: bool | None = None
+    #: La place de la carte au moment du geste, et le temps passé sur la fiche (journal).
+    position: int | None = None
+    dwell_ms: int | None = None
 
 
 class UpdateOfferState:
-    """Enregistre ce que la personne a fait d'une offre."""
+    """Enregistre ce que la personne a fait d'une offre — et le consigne pour apprendre."""
 
     def __init__(
         self,
@@ -1739,22 +1747,27 @@ class UpdateOfferState:
         feed: FeedRepository,
         states: OfferStateRepository,
         clock: Clock,
+        criteria: CriteriaRepository | None = None,
+        log: InteractionLog | None = None,
     ) -> None:
         self._offers = offers
         self._feed = feed
         self._states = states
         self._clock = clock
+        self._criteria = criteria
+        self._log = log
 
     async def execute(self, user_id: UUID, offer_id: UUID, changes: StateChanges) -> FeedItem:
         """Applique les changements et rend l'offre à jour."""
         offer = await self._offers.find(offer_id)
         if offer is None:
             raise OfferNotFoundError(offer_id)
+        now = self._clock.now()
         current = await self._states.find(user_id, offer_id) or OfferState(
             user_id=user_id, offer_id=offer_id
         )
         updated = current.with_changes(
-            at=self._clock.now(),
+            at=now,
             seen=changes.seen,
             opened=changes.opened,
             link_clicked=changes.link_clicked,
@@ -1763,29 +1776,118 @@ class UpdateOfferState:
             dismissed=changes.dismissed,
         )
         await self._states.save(updated)
+        entry = await self._feed.find(user_id, offer_id)
+        await self._journal(user_id, offer, entry, current, updated, changes, now)
         logger.debug("offers.state_updated", user_id=str(user_id), offer_id=str(offer_id))
-        return FeedItem(offer=offer, entry=await self._feed.find(user_id, offer_id), state=updated)
+        return FeedItem(offer=offer, entry=entry, state=updated)
+
+    async def _journal(  # noqa: PLR0917 - les sept sont le contexte d'un seul geste
+        self,
+        user_id: UUID,
+        offer: Offer,
+        entry: FeedEntry | None,
+        before: OfferState,
+        after: OfferState,
+        changes: StateChanges,
+        now: datetime,
+    ) -> None:
+        if self._log is None:
+            return
+        kinds = transitions(before, after)
+        if changes.dwell_ms is not None:
+            kinds.append(InteractionKind.DWELL)
+        if not kinds:
+            return
+        stored = await self._criteria.find(user_id) if self._criteria is not None else None
+        shot = snapshot(offer, entry, stored.criteria if stored else None, now=now)
+        await self._log.append(
+            [
+                InteractionEvent(
+                    user_id=user_id,
+                    offer_id=offer.id,
+                    kind=kind,
+                    at=now,
+                    snapshot=shot,
+                    position=changes.position,
+                    dwell_ms=changes.dwell_ms if kind is InteractionKind.DWELL else None,
+                )
+                for kind in kinds
+            ]
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Impression:
+    """Une carte affichée, et sa place dans le fil tel qu'affiché (`None` : inconnue)."""
+
+    offer_id: UUID
+    position: int | None = None
 
 
 class MarkFeedSeen:
-    """L'app signale ce qu'elle a affiché, par lots."""
+    """L'app signale ce qu'elle a affiché, par lots — chaque affichage est consigné."""
 
-    def __init__(self, *, states: OfferStateRepository, clock: Clock) -> None:
+    def __init__(
+        self,
+        *,
+        states: OfferStateRepository,
+        clock: Clock,
+        offers: OfferRepository | None = None,
+        feed: FeedRepository | None = None,
+        criteria: CriteriaRepository | None = None,
+        log: InteractionLog | None = None,
+    ) -> None:
         self._states = states
         self._clock = clock
+        self._offers = offers
+        self._feed = feed
+        self._criteria = criteria
+        self._log = log
 
-    async def execute(self, user_id: UUID, offer_ids: Sequence[UUID]) -> int:
+    async def execute(self, user_id: UUID, impressions: Sequence[Impression]) -> int:
         """Rend le nombre d'offres nouvellement marquées vues."""
         now = self._clock.now()
-        known = await self._states.find_many(user_id, offer_ids)
+        unique = list({i.offer_id: i for i in impressions}.values())
+        known = await self._states.find_many(user_id, [i.offer_id for i in unique])
         updated = 0
-        for offer_id in dict.fromkeys(offer_ids):
-            state = known.get(offer_id) or OfferState(user_id=user_id, offer_id=offer_id)
+        for impression in unique:
+            state = known.get(impression.offer_id) or OfferState(
+                user_id=user_id, offer_id=impression.offer_id
+            )
             if state.seen:
                 continue
             await self._states.save(state.with_changes(at=now, seen=True))
             updated += 1
+        await self._journal(user_id, unique, now)
         return updated
+
+    async def _journal(
+        self, user_id: UUID, impressions: Sequence[Impression], now: datetime
+    ) -> None:
+        if self._log is None or self._offers is None or self._feed is None:
+            return
+        offers = await self._offers.find_many([i.offer_id for i in impressions])
+        if not offers:
+            return
+        entries = {e.offer_id: e for e in await self._feed.entries_of(user_id)}
+        stored = await self._criteria.find(user_id) if self._criteria is not None else None
+        criteria = stored.criteria if stored else None
+        await self._log.append(
+            [
+                InteractionEvent(
+                    user_id=user_id,
+                    offer_id=i.offer_id,
+                    kind=InteractionKind.IMPRESSION,
+                    at=now,
+                    snapshot=snapshot(
+                        offers[i.offer_id], entries.get(i.offer_id), criteria, now=now
+                    ),
+                    position=i.position,
+                )
+                for i in impressions
+                if i.offer_id in offers
+            ]
+        )
 
 
 @dataclass(frozen=True, slots=True)

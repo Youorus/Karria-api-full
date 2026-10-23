@@ -305,3 +305,31 @@ class OfferStateModel(BaseDBModel):
             "Vue, ouverte, sauvegardée, candidatée, écartée : par personne et par offre."
         )
         unique_together = (("user_id", "offer_id"),)
+
+
+class InteractionEventModel(BaseDBModel):
+    """Un geste sur une offre, avec son instantané (ADR-0019). Ajout seulement."""
+
+    user_id = fields.UUIDField(db_index=True)
+    offer_id = fields.UUIDField(db_index=True)
+    kind = fields.CharField(max_length=16)
+    at = fields.DatetimeField()
+    position = fields.IntField(null=True)
+    dwell_ms = fields.IntField(null=True)
+    feed_mode = fields.CharField(max_length=16)
+    criteria_fingerprint = fields.CharField(max_length=32, null=True)
+    score = fields.FloatField(null=True)
+    quality = fields.CharField(max_length=8, null=True)
+    origin = fields.CharField(max_length=8, null=True)
+    source = fields.CharField(max_length=16)
+    age_hours = fields.FloatField()
+    distance_km = fields.FloatField(null=True)
+    title_match = fields.SmallIntField(null=True)
+    contract_match = fields.BooleanField(null=True)
+    schedule_match = fields.BooleanField(null=True)
+    has_salary = fields.BooleanField()
+
+    class Meta:
+        table = "offers_interaction_events"
+        table_description = "Le journal d'apprentissage : gestes et contexte (ADR-0019)."
+        indexes = (("at",),)

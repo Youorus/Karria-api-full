@@ -11,16 +11,17 @@ consigné dans le contrat, section « Ce que l'app doit changer ».
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from karria.modules.offers.application import (
     ConversationTurn,
     FeedFilterOptions,
     FeedItem,
     FeedPage,
+    Impression,
     StoredCriteria,
 )
 from karria.modules.offers.domain import (
@@ -275,12 +276,34 @@ class FilterOptionsResponse(BaseModel):
         )
 
 
-class SeenRequest(BaseModel):
-    """Les offres que l'app vient d'afficher."""
+class ImpressionRequest(BaseModel):
+    """Une carte affichée et sa place dans le fil tel qu'affiché (`offset + index`)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    offer_ids: list[UUID] = Field(min_length=1, max_length=SEEN_BATCH_MAX)
+    offer_id: UUID
+    position: int | None = Field(default=None, ge=0, le=100_000)
+
+
+class SeenRequest(BaseModel):
+    """Les offres que l'app vient d'afficher : `offer_ids`, ou `impressions` avec leur place."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offer_ids: list[UUID] = Field(default_factory=list, max_length=SEEN_BATCH_MAX)
+    impressions: list[ImpressionRequest] = Field(default_factory=list, max_length=SEEN_BATCH_MAX)
+
+    @model_validator(mode="after")
+    def _one_of(self) -> Self:
+        if bool(self.offer_ids) == bool(self.impressions):
+            raise ValueError("Donner `offer_ids` ou `impressions`, pas les deux ni aucun.")
+        return self
+
+    def to_impressions(self) -> list[Impression]:
+        """Vers l'application."""
+        if self.impressions:
+            return [Impression(offer_id=i.offer_id, position=i.position) for i in self.impressions]
+        return [Impression(offer_id=i) for i in self.offer_ids]
 
 
 class SeenResponse(BaseModel):
@@ -301,6 +324,12 @@ class InteractionRequest(BaseModel):
     )
     detail_opened: Literal[True] | None = None
     link_clicked: Literal[True] | None = None
+    position: int | None = Field(
+        default=None, ge=0, le=100_000, description="La place de la carte au moment du geste."
+    )
+    dwell_ms: int | None = Field(
+        default=None, ge=0, le=86_400_000, description="Temps passé sur la fiche, en ms."
+    )
 
 
 # ---------------------------------------------------------------------

@@ -50,3 +50,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0015](0015-suppression-de-compte-et-retention.md) | Suppression de compte : effacement physique, trace de départ anonyme, oubli par événement | Acceptée |
 | [0016](0016-moteur-de-recherche-d-offres.md) | Moteur d'offres : collecte découplée, base de vérité, index hybride, porte d'intitulé | Proposée |
 | [0017](0017-france-travail-et-planificateur-de-collecte.md) | France Travail en couche de base, collecte continue, planificateur piloté par la demande | Proposée |
+| [0019](0019-apprentissage-continu.md) | Apprentissage continu : journal des gestes avec leur place, classement appris, porte de promotion, dérive | Proposée |

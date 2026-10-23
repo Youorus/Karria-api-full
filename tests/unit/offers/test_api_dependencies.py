@@ -150,9 +150,13 @@ class TestCasDUsage:
         assert isinstance(deps.get_get_feed(any_port, any_port, any_port, any_port), GetFeed)
         assert isinstance(deps.get_get_offer(any_port, any_port, any_port), GetOfferForUser)
         assert isinstance(
-            deps.get_update_state(any_port, any_port, any_port, any_port), UpdateOfferState
+            deps.get_update_state(any_port, any_port, any_port, any_port, any_port, any_port),
+            UpdateOfferState,
         )
-        assert isinstance(deps.get_mark_seen(any_port, any_port), MarkFeedSeen)
+        assert isinstance(
+            deps.get_mark_seen(any_port, any_port, any_port, any_port, any_port, any_port),
+            MarkFeedSeen,
+        )
         assert isinstance(deps.get_get_feed_filters(any_port, any_port, any_port), GetFeedFilters)
         assert isinstance(deps.get_lease_targets(any_port, any_port), LeaseScrapeTargets)
         assert isinstance(

@@ -36,6 +36,7 @@ from karria.modules.offers.domain import (
     FeedEntry,
     FeedOrigin,
     GeocodedPlace,
+    InteractionEvent,
     KarriaMemory,
     Location,
     LocationCriteria,
@@ -866,6 +867,17 @@ class InMemoryFeedRepository:
         for key in mine:
             del self.entries[key]
         return len(mine)
+
+
+class InMemoryInteractionLog:
+    """`InteractionLog` en mémoire."""
+
+    def __init__(self) -> None:
+        self.events: list[InteractionEvent] = []
+
+    async def append(self, events: Sequence[InteractionEvent]) -> None:
+        """Consigne."""
+        self.events.extend(events)
 
 
 class InMemoryStateRepository:

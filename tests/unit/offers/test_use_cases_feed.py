@@ -13,6 +13,7 @@ from karria.modules.offers.application import (
     GetFeed,
     GetFeedFilters,
     GetOfferForUser,
+    Impression,
     MarkFeedSeen,
     StateChanges,
     UpdateOfferState,
@@ -20,6 +21,7 @@ from karria.modules.offers.application import (
 from karria.modules.offers.domain import (
     ContractType,
     FeedMode,
+    InteractionKind,
     OfferNotFoundError,
     OfferState,
 )
@@ -28,6 +30,7 @@ from offers.fakes import (
     FixedClock,
     InMemoryCriteriaRepository,
     InMemoryFeedRepository,
+    InMemoryInteractionLog,
     InMemoryOfferRepository,
     InMemoryStateRepository,
     make_entry,
@@ -51,10 +54,23 @@ class Env:
             criteria=self.criteria, feed=self.feed, offers=self.offers, states=self.states
         )
         self.get_offer = GetOfferForUser(offers=self.offers, feed=self.feed, states=self.states)
+        self.log = InMemoryInteractionLog()
         self.update = UpdateOfferState(
-            offers=self.offers, feed=self.feed, states=self.states, clock=self.clock
+            offers=self.offers,
+            feed=self.feed,
+            states=self.states,
+            clock=self.clock,
+            criteria=self.criteria,
+            log=self.log,
         )
-        self.seen = MarkFeedSeen(states=self.states, clock=self.clock)
+        self.seen = MarkFeedSeen(
+            states=self.states,
+            clock=self.clock,
+            offers=self.offers,
+            feed=self.feed,
+            criteria=self.criteria,
+            log=self.log,
+        )
         self.filters = GetFeedFilters(criteria=self.criteria, feed=self.feed, offers=self.offers)
 
     def request(self, **changes: object) -> FeedRequest:
@@ -206,6 +222,40 @@ class TestInteractions:
         assert item.state.link_clicked
         assert item.state.saved_at == NOW
         assert env.states.states[(USER, offer.id)] == item.state
+        assert [e.kind for e in env.log.events] == [
+            InteractionKind.SAVE,
+            InteractionKind.OPEN,
+            InteractionKind.LINK_CLICK,
+        ]
+
+    async def test_le_journal_porte_la_place_le_temps_passe_et_le_contexte(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        offer = make_offer()
+        env.offers.add(offer)
+        env.feed.add(make_entry(USER, offer.id, score=0.7))
+
+        await env.update.execute(USER, offer.id, StateChanges(opened=True, position=4))
+        await env.update.execute(USER, offer.id, StateChanges(dwell_ms=12_000))
+        await env.update.execute(USER, offer.id, StateChanges(opened=True))  # rien ne change
+
+        kinds = [(e.kind, e.position, e.dwell_ms) for e in env.log.events]
+        assert kinds == [(InteractionKind.OPEN, 4, None), (InteractionKind.DWELL, None, 12_000)]
+        shot = env.log.events[0].snapshot
+        assert shot.score == 0.7
+        assert shot.feed_mode is FeedMode.SEARCH
+        assert shot.title_match == 0
+
+    async def test_sans_journal_l_interaction_reste_muette(self, env: Env) -> None:
+        plain = UpdateOfferState(
+            offers=env.offers, feed=env.feed, states=env.states, clock=env.clock
+        )
+        offer = make_offer()
+        env.offers.add(offer)
+
+        item = await plain.execute(USER, offer.id, StateChanges(saved=True))
+
+        assert item.state.saved
+        assert env.log.events == []
 
 
 class TestVu:
@@ -213,10 +263,35 @@ class TestVu:
         seen, fresh = uuid4(), uuid4()
         env.states.add(OfferState(user_id=USER, offer_id=seen, seen=True))
 
-        updated = await env.seen.execute(USER, [seen, fresh, fresh])
+        updated = await env.seen.execute(
+            USER, [Impression(seen, 0), Impression(fresh, 1), Impression(fresh, 1)]
+        )
 
         assert updated == 1
         assert env.states.states[(USER, fresh)].seen is True
+        assert env.log.events == []  # aucune de ces offres n'existe : rien à expliquer
+
+    async def test_chaque_affichage_est_consigne_avec_sa_place(self, env: Env) -> None:
+        first, second = make_offer(), make_offer()
+        env.offers.add(first, second)
+        env.states.add(OfferState(user_id=USER, offer_id=first.id, seen=True))
+
+        updated = await env.seen.execute(USER, [Impression(first.id, 0), Impression(second.id, 1)])
+
+        assert updated == 1
+        assert [(e.kind, e.offer_id, e.position) for e in env.log.events] == [
+            (InteractionKind.IMPRESSION, first.id, 0),
+            (InteractionKind.IMPRESSION, second.id, 1),
+        ]
+        assert env.log.events[0].snapshot.feed_mode is FeedMode.ALL_OFFERS
+
+    async def test_sans_journal_le_vu_reste_un_simple_marquage(self, env: Env) -> None:
+        plain = MarkFeedSeen(states=env.states, clock=env.clock)
+        offer = make_offer()
+        env.offers.add(offer)
+
+        assert await plain.execute(USER, [Impression(offer.id)]) == 1
+        assert env.log.events == []
 
 
 class TestOptionsDeFiltre:

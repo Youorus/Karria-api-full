@@ -82,6 +82,13 @@ from karria.modules.offers.domain.indexing import (
     index_version,
     title_text,
 )
+from karria.modules.offers.domain.learning import (
+    InteractionEvent,
+    InteractionKind,
+    Snapshot,
+    snapshot,
+    transitions,
+)
 from karria.modules.offers.domain.memory import (
     MEMORY_LIST_MAX,
     MEMORY_SUMMARY_MAX_LENGTH,
@@ -221,6 +228,8 @@ __all__ = [
     "GeocodedPlace",
     "GuardVerdict",
     "Intent",
+    "InteractionEvent",
+    "InteractionKind",
     "KarriaMemory",
     "Location",
     "LocationCriteria",
@@ -243,6 +252,7 @@ __all__ = [
     "ScrapeTarget",
     "SearchCriteria",
     "SearchUnavailableError",
+    "Snapshot",
     "Source",
     "TargetDemand",
     "TargetOrigin",
@@ -300,12 +310,14 @@ __all__ = [
     "render_pending",
     "seed_targets",
     "simhash64",
+    "snapshot",
     "source_place",
     "targets_from_criteria",
     "targets_of",
     "title_relaxations",
     "title_text",
     "title_tokens",
+    "transitions",
     "uuid7",
     "validate_terms",
 ]
