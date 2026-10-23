@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-21**
+**Dernière mise à jour : 2026-10-22**
 
 ## Où on en est
 
@@ -22,14 +22,51 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `DELETE /auth/me` |
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
+| `offers`   | **en validation** (ADR-0016 et 0017 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
-Qualité au 2026-10-21 : `make check` est vert. 794 tests passent et 4
-sont ignorés (les tests Gemini en direct). La couverture est de 97 %, et
-de 100 % sur les modules métier.
+### Session du 2026-10-22 (France Travail, collecte continue, planificateur) — à valider par Marc
+
+- **France Travail est la source n°1** (`collector/france_travail.py`) :
+  OAuth2, pagination 150/3 150, partition par département, fuseau de Paris
+  (mesuré : les `Z` de l'API sont de l'heure de Paris), passage toutes les
+  3 min + balayage nocturne. Identifiants dans `.env` local
+  (`COLLECTOR__FRANCE_TRAVAIL_*`) et `/root/karria-collector.env` (600) sur
+  le serveur ; jamais affichés.
+- **Contrat de remise** (v1, additif) : indices structurés (contrat, temps,
+  expérience, salaire, coordonnées, instants, `expired`). Ils priment sur
+  le texte. Règle nouvelle : **temps partiel demandé → offre muette écartée**.
+- **Planificateur piloté par la demande** (`domain/steering.py`, migration
+  4) : cibles canoniques terme × département × contrat, liens
+  personne ↔ cible, `search_terms` et `preferences` dans les critères,
+  validation des termes contre les titres réels, essai des cibles,
+  priorité (demande, manque, rendement, ancienneté, redondance FT), cadence
+  adaptative ; côté collecteur : gigue, budget horaire, zéro silencieux.
+- **Règle** : une conversation ne cherche jamais en direct
+  (`tests/unit/offers/test_no_live_search.py`, import-linter).
+- **Mesuré** (serveur d'évaluation, index 41 000 offres canoniques) :
+  précision@10 jugée 82 % (FT 83 %, HelloWork 85 %, Indeed 78 %) ;
+  parution → indexée p95 14 min 28 s (sous charge de balayage) ; alerte
+  dans la seconde qui suit l'indexation ; recherche p95 98 ms. Détail et
+  limites : ADR-0017.
+- **Reste pour la suite** (voir le rapport de session et `PLUS-TARD.md`) :
+  la porte d'intitulé et les mots de niveau (« chef cuisinier »), la boucle
+  de vérification de vie France Travail, la boucle des synonymes, la couche
+  LLM multi-fournisseurs (ADR-0018 à venir) et la relecture du travail
+  d'Opus.
+- **Environnement d'évaluation** (`ssh papex-new`, partagé avec Papiers
+  Express — ne jamais toucher à `papex*`) : conteneurs `karria-eval-apiserver`,
+  `karria-eval-worker`, `karria-eval-collector` (image `karria-eval-api`
+  construite depuis `/root/karria-eval/code`), base `karria_eval`, sorties
+  dans `/root/karria-eval/out/` (`eval_ft2.jsonl`, `complex.jsonl`,
+  `seed.jsonl`, `catalogue.jsonl`).
+
+Qualité au 2026-10-22 : `make check` est vert. 1 500 tests passent et 21
+sont ignorés (tests en direct et MinIO absent en local). 100 % sur le
+domaine et l'application des modules métier.
 
 **Rien n'est commité depuis le socle** (`5447036`). Les modules
-`identity`, `devices` et `cv` ne sont pas suivis par git. Marc commite
-lui-même, sur sa demande explicite.
+`identity`, `devices`, `cv`, `offers`, le collecteur et la file ne sont pas
+suivis par git. Marc commite lui-même, sur sa demande explicite.
 
 ## Décisions clés (détail dans `docs/adr/`)
 
@@ -80,17 +117,21 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    - parcours CV complet ;
    - photo améliorée ;
    - import.
-2. **Modules suivants**, à décider par Marc un par un : offres/matching
-   (`job-matches`), modèles de CV, assistant, génération de CV (PDF),
-   abonnement Stripe.
-3. **Points listés dans `docs/PLUS-TARD.md`** :
+2. **Valider l'ADR-0016 et l'ADR-0017** (moteur d'offres, France Travail,
+   planificateur), puis : la couche LLM multi-fournisseurs et son banc
+   d'essai (ADR-0018), la relecture du travail d'Opus, la porte d'intitulé
+   et les mots de niveau.
+3. **Modules suivants**, à décider par Marc un par un : modèles de CV,
+   génération de CV (PDF), abonnement Stripe.
+4. **Points listés dans `docs/PLUS-TARD.md`** :
    - purge planifiée ;
    - limiteur de débit et cache JWKS multi-réplicas (Redis) ;
    - livraison durable des événements ;
    - durée de conservation des raisons de départ ;
    - routes d'édition directe du CV ;
    - chapitre `projects`.
-4. **Hébergement et déploiement** : `docs/DEPLOIEMENT.md` n'est qu'un squelette.
+5. **Hébergement et déploiement** : `docs/DEPLOIEMENT.md` décrit la mise
+   en service du moteur d'offres (trois processus) ; le reste est un squelette.
 
 ## Règles de travail (Marc)
 

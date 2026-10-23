@@ -48,3 +48,5 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0013](0013-gemini-par-port-et-politique-anti-injection.md) | Gemini derrière des ports, par l'API REST, sortie à schéma imposé et réponse traitée comme une donnée | Acceptée |
 | [0014](0014-persistance-du-cv-et-du-brouillon.md) | CV et brouillon en documents JSONB, un par personne, photo retenue par identifiant | Acceptée |
 | [0015](0015-suppression-de-compte-et-retention.md) | Suppression de compte : effacement physique, trace de départ anonyme, oubli par événement | Acceptée |
+| [0016](0016-moteur-de-recherche-d-offres.md) | Moteur d'offres : collecte découplée, base de vérité, index hybride, porte d'intitulé | Proposée |
+| [0017](0017-france-travail-et-planificateur-de-collecte.md) | France Travail en couche de base, collecte continue, planificateur piloté par la demande | Proposée |

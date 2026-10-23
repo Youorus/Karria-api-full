@@ -159,3 +159,138 @@ journalisé.
 **Déclencheur :** le module des quotas (« le même compte porte les
 quotas »), qui portera la règle ; ce module exposera son usage par
 événement ou par port.
+
+---
+
+## Moteur d'offres (ADR-0016)
+
+### Aucune purge des offres inactives
+
+Une offre expirée quitte l'index mais reste en base (on la relit si elle
+est sauvegardée).
+
+**Ce que ça coûte :** ~5 Ko par offre ; à 30 000 nouvelles par jour,
+~4,5 Go par mois.
+**Déclencheur :** 2 millions de lignes. Un travail nocturne qui supprime les
+offres inactives depuis 90 jours que personne n'a sauvegardées ni
+candidatées (et leurs entrées de fil).
+
+### On ne sait pas si une annonce est encore en ligne
+
+JobSpy ne rend que les annonces des 72 dernières heures : une offre pourvue
+reste visible jusqu'à 30 jours après sa dernière parution. Pour France
+Travail, `GET /offres/{id}` rend 204 quand l'annonce est retirée (vérifié),
+et le contrat de remise sait déjà le dire (`expired: true`, désactivation
+et retrait de l'index côté API, testés) — mais la **boucle de vérification**
+du collecteur n'est pas écrite : il lui faudrait une route interne qui
+rende les identifiants à vérifier (les plus anciens d'abord) et une colonne
+`liveness_checked_at`.
+
+**Ce que ça coûte :** des offres mortes dans le fil, surtout en fin de vie ;
+pour France Travail, 10 appels/s permettraient de vérifier 30 000 annonces
+actives en moins d'une heure par jour.
+**Déclencheur :** des retours « offre introuvable ». Écrire la route et la
+boucle ; pour JobSpy, vérifier l'URL à l'ouverture du détail (HEAD) et
+désactiver sur 404/410.
+
+### La part nouvelle d'une journée courante n'est pas encore mesurée
+
+Mesuré : 79 % au premier remplissage, 57 % sur le passage du lendemain
+(même matinée). Le régime de croisière se lit dans `offers_ingestion_runs`
+(`inserted / fetched`).
+
+**Ce que ça coûte :** le modèle de coût de l'ADR-0016 suppose 40 %.
+**Déclencheur :** une semaine de collecte réelle ; relire la table et
+corriger l'ADR par une nouvelle.
+
+### L'analyse de chaque offre par Karria n'existe pas
+
+L'app appelle `GET/POST /job-matches/{id}/summary(-status)` (V1) ; le
+contrat de recherche ne les sert pas, `job_offer.summary` vaut `null`.
+
+**Ce que ça coûte :** l'écran de détail affiche « Analyse non disponible ».
+**Déclencheur :** la décision de Marc sur ce module (coût Gemini par offre
+ouverte, mise en cache par offre et par personne).
+
+### La porte d'intitulé perd les titres inattendus
+
+« Barber » n'entre pas pour « coiffeuse », ni « Chef de projet » nu pour
+« chef de projet digital ». C'est du rappel perdu, jamais une erreur
+montrée.
+
+**Ce que ça coûte :** 5 demandes sur 35 sans résultat le 2026-10-22, dont
+une par synonyme manquant (les quatre autres : le corpus n'avait rien).
+**Déclencheur :** des fils vides alors que le corpus a l'offre. Pistes :
+demander au modèle des intitulés plus variés ; ou un reclasseur juste
+(`bge-reranker-v2-m3`) sur les seuls candidats refusés, hors requête.
+
+### MinIO n'est pas épinglé
+
+`karria-minio` tourne sur `quay.io/minio/minio:latest` ; l'image locale n'a
+pas d'empreinte de registre et le dernier tag n'est plus publié sur quay.
+
+**Ce que ça coûte :** un redéploiement de la composition peut changer de
+version de MinIO sans qu'on l'ait décidé.
+**Déclencheur :** le prochain changement de la composition `karria-donnees`.
+Choisir une image maintenue et l'épingler par empreinte.
+
+### La porte d'intitulé accepte un titre de niveau supérieur
+
+« Chef cuisinier / Cheffe cuisinière » passe pour « cuisinier », « Cuisinier
+chef de partie » aussi : la porte exige que les mots demandés soient dans le
+titre, elle ne refuse rien de ce qui s'y ajoute. Mesuré le 2026-10-22 : 3 à
+4 des 10 premières de « cuisinier en temps plein dans toute la France ».
+
+**Ce que ça coûte :** des offres d'un niveau au-dessus dans le fil, que le
+juge (et la personne) tiennent pour hors sujet.
+**Déclencheur :** la validation de l'ADR-0017. Piste : une liste de mots de
+**niveau** (« chef », « responsable », « directeur », « aide », « assistant »,
+« adjoint », « stagiaire ») qui éliminent quand ils ne sont pas dans la
+demande ; à mesurer avec `scripts/offers_eval.py --judge`.
+
+### La réécriture d'une cible rétrogradée et la boucle des synonymes
+
+Une cible à l'essai qui ne rapporte rien, ou dont les titres ne passent pas
+la porte, est rétrogradée et journalisée (`offers.target_demoted`,
+`offers.target_offtarget`) ; les rejets de la porte se comptent
+(`gate_rejects`). Personne ne lit encore ces signaux : ni réécriture du
+terme par le modèle, ni enrichissement des synonymes depuis les ouvertures,
+sauvegardes et rejets.
+
+**Ce que ça coûte :** une cible mal nommée reste mal nommée ; un métier que
+les annonces titrent autrement (« hôte de caisse » pour « caissière ») n'est
+appris que si le modèle le sait déjà.
+**Déclencheur :** une semaine de production ; lire les cibles rétrogradées
+et les `gate_rejects` les plus hauts, puis proposer au modèle une réécriture
+à partir des titres réels rapportés.
+
+### Le dédoublonnement par URL de partenaire n'est pas fait
+
+France Travail republie des offres de partenaires avec un lien vers eux :
+517 annonces sur 30 244 (1,7 %) pointent Indeed. Le condensat et le SimHash
+n'en rapprochent que 41 (texte reformaté).
+
+**Ce que ça coûte :** jusqu'à 1,7 % du flux France Travail en double avec
+Indeed dans un fil.
+**Déclencheur :** une part au-delà de 5 %, ou des retours de doublons.
+Normaliser les URL de candidature (sans paramètres de suivi), les indexer,
+et les ajouter au niveau 1 du dédoublonnement.
+
+### Le modèle d'échelle du planificateur n'est pas vérifié
+
+L'ADR-0017 projette le nombre de cibles et de requêtes à 1 000, 10 000 et
+100 000 personnes sur un modèle (1,35 terme par personne, concentration de
+la demande, 4 passages par jour par cible active).
+
+**Ce que ça coûte :** une estimation, pas une mesure.
+**Déclencheur :** une semaine de production ; relire `offers_scrape_targets`
+(`scrapes`, `yield_ema`) et `offers_target_demands`.
+
+### Le modèle de plongement n'a pas de remplaçant mesuré
+
+e5-small int8 irait trois fois plus vite (44,8 annonces/s) ; sa qualité
+sur nos demandes n'a pas été mesurée.
+
+**Ce que ça coûte :** rien tant que le volume tient (20,7 offres/s de bout
+en bout, ×4 la cible).
+**Déclencheur :** un volume ×3, ou un serveur plus petit.

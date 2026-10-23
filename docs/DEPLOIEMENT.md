@@ -35,3 +35,49 @@
   minutes : `uv run python -m scripts.push_receipts` (ADR-0012).
 - `SECURITY__TOKEN_PEPPER` poivre les condensats de jetons et de codes : le
   changer déconnecte **tous** les utilisateurs.
+
+## Le moteur d'offres : trois processus, une image (ADR-0016)
+
+| Application Dokploy | Commande | Rôle |
+|---|---|---|
+| `karria-api` | celle du `Dockerfile` (Gunicorn) | les routes, dont `/internal/offers/*` pour le collecteur |
+| `karria-worker` | `python -m scripts.worker` | la file durable : ingestion des lots, synchronisation de l'index (chaque minute), alertes, cibles (chaque heure), expiration et réconciliation (chaque nuit) |
+| `karria-collector` | `python -m karria.collector` | la collecte continue : France Travail toutes les 3 min + balayage nocturne, JobSpy toutes les 10 min ; aucun secret de l'API, seulement ses identifiants partenaires France Travail |
+
+Même dépôt, même image, `restart: unless-stopped` pour les trois. Le
+collecteur n'a **pas** de tâche planifiée Dokploy : sa boucle est son
+calendrier (variante : une tâche planifiée `python -m karria.collector
+--once` toutes les 10 minutes — jamais les deux).
+
+Mise en service, dans l'ordre :
+
+1. `aerich upgrade` (tables `offers_*`), puis `python -m scripts.queue_schema`
+   (tables `procrastinate_*`, une fois ; à relire à chaque montée de
+   version de procrastinate) ;
+2. `make storage-provision` (bucket `landing`) ;
+3. `python -m scripts.offers ensure-indexes` (collections Qdrant
+   `karria-<env>-offers` et `-criteria`) ;
+4. `python -m scripts.offers refresh-targets` (le socle de 30 cibles) ;
+5. démarrer le worker, puis le collecteur ;
+6. amorcer France Travail : `python -m karria.collector --ft-sweep 1`
+   (la veille, ~24 000 annonces, deux minutes de lecture, dix minutes
+   d'ingestion) — ensuite la boucle suffit.
+
+Variables de l'API et du worker : `QDRANT__URL`, `QDRANT__API_KEY`,
+`INFERENCE__EMBEDDINGS_URL` (`http://karria-embeddings:80`),
+`INFERENCE__EMBEDDING_MODEL` (défaut `intfloat/multilingual-e5-base@int8`,
+**ne change qu'avec un ré-indexage** : `python -m scripts.offers reconcile`),
+`COLLECTOR__TOKEN` (`openssl rand -hex 32`). Variables du collecteur :
+`COLLECTOR__API_URL` (l'API par son nom interne, ex.
+`http://karria-api-ujqvaj:8000/api/v1` — ce nom doit figurer dans
+`SECURITY__ALLOWED_HOSTS` de l'API, sinon `400 Invalid host header`),
+`COLLECTOR__TOKEN` (le même), `COLLECTOR__FRANCE_TRAVAIL_CLIENT_ID` et
+`COLLECTOR__FRANCE_TRAVAIL_CLIENT_SECRET` (compte partenaire
+francetravail.io ; les URL et la portée ont des défauts corrects),
+`COLLECTOR__PROXIES` facultatif. Le fichier d'environnement du collecteur
+sur le serveur d'évaluation est `/root/karria-collector.env` (mode 600).
+
+Le serveur d'inférence (`karria-embeddings`, composition `karria-donnees`)
+sert `/opt/karria/models/e5-base-int8`, produit par
+`scripts/quantize_onnx.py` à partir de la révision `d128750` de
+`intfloat/multilingual-e5-base`. Il n'y a plus de reclasseur.
