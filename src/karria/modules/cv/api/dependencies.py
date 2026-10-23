@@ -36,14 +36,11 @@ from karria.modules.cv.application import (
     ValidateChapter,
 )
 from karria.modules.cv.infrastructure import (
-    DisabledTransport,
     FileInspector,
-    GeminiChapterInterpreter,
-    GeminiClient,
-    GeminiCvExtractor,
-    GeminiPortraitEnhancer,
-    GeminiTranscriber,
-    GenerationTransport,
+    LlmChapterInterpreter,
+    LlmCvExtractor,
+    LlmPortraitEnhancer,
+    LlmTranscriber,
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
@@ -51,8 +48,8 @@ from karria.modules.cv.infrastructure import (
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.http.dependencies import (
     EventBusDep,
+    LanguageModelDep,
     ObjectStorageDep,
-    SettingsDep,
     UnitOfWorkDep,
     get_unit_of_work,
 )
@@ -81,44 +78,24 @@ def get_upload_inspector() -> UploadInspector:
     return FileInspector()
 
 
-def get_text_transport(settings: SettingsDep) -> GenerationTransport:
-    """Le transport Gemini pour le texte, le JSON et l'audio."""
-    if not settings.gemini.enabled:
-        return DisabledTransport()
-    return GeminiClient.from_settings(
-        settings.gemini, timeout_seconds=settings.gemini.request_timeout_seconds
-    )
+def get_chapter_interpreter(llm: LanguageModelDep) -> ChapterInterpreter:
+    """L'interprète, par le port LLM routé (tâche `cv_interpret`)."""
+    return LlmChapterInterpreter(llm)
 
 
-def get_image_transport(settings: SettingsDep) -> GenerationTransport:
-    """Le transport Gemini pour la génération d'image, plus patient."""
-    if not settings.gemini.enabled:
-        return DisabledTransport()
-    return GeminiClient.from_settings(
-        settings.gemini, timeout_seconds=settings.gemini.image_timeout_seconds
-    )
+def get_audio_transcriber(llm: LanguageModelDep) -> AudioTranscriber:
+    """La transcription (tâche `transcribe`)."""
+    return LlmTranscriber(llm)
 
 
-TextTransportDep = Annotated[GenerationTransport, Depends(get_text_transport)]
-ImageTransportDep = Annotated[GenerationTransport, Depends(get_image_transport)]
+def get_portrait_enhancer(llm: LanguageModelDep) -> PortraitEnhancer:
+    """Le portrait (tâche `portrait`, un modèle d'image)."""
+    return LlmPortraitEnhancer(llm)
 
 
-def get_chapter_interpreter(
-    transport: TextTransportDep, settings: SettingsDep
-) -> ChapterInterpreter:
-    return GeminiChapterInterpreter(transport, settings.gemini.text_model)
-
-
-def get_audio_transcriber(transport: TextTransportDep, settings: SettingsDep) -> AudioTranscriber:
-    return GeminiTranscriber(transport, settings.gemini.text_model)
-
-
-def get_portrait_enhancer(transport: ImageTransportDep, settings: SettingsDep) -> PortraitEnhancer:
-    return GeminiPortraitEnhancer(transport, settings.gemini.image_model)
-
-
-def get_cv_extractor(transport: TextTransportDep, settings: SettingsDep) -> CvDocumentExtractor:
-    return GeminiCvExtractor(transport, settings.gemini.text_model)
+def get_cv_extractor(llm: LanguageModelDep) -> CvDocumentExtractor:
+    """L'extraction d'un CV existant (tâche `cv_extract`)."""
+    return LlmCvExtractor(llm)
 
 
 ClockDep = Annotated[Clock, Depends(get_clock)]

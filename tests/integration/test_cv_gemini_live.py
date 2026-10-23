@@ -1,4 +1,4 @@
-"""Les adaptateurs Gemini contre la vraie API — ignorés par défaut.
+"""Les adaptateurs du port LLM contre la vraie API (route Gemini par défaut) — ignorés par défaut.
 
 Lancer explicitement, avec une clé dans l'environnement (le `.env` est
 coupé par la suite de tests) :
@@ -22,13 +22,13 @@ from doubles import sample_image
 from karria.modules.cv.application import InterpretAnswer
 from karria.modules.cv.domain import Chapter
 from karria.modules.cv.infrastructure import (
-    GeminiChapterInterpreter,
-    GeminiClient,
-    GeminiCvExtractor,
-    GeminiPortraitEnhancer,
-    GeminiTranscriber,
+    LlmChapterInterpreter,
+    LlmCvExtractor,
+    LlmPortraitEnhancer,
+    LlmTranscriber,
 )
 from karria.shared.config import GeminiSettings, Settings
+from karria.shared.llm import LanguageModel, build_language_model
 
 pytestmark = [
     pytest.mark.integration,
@@ -64,8 +64,9 @@ def gemini() -> GeminiSettings:
 
 
 @pytest.fixture(scope="module")
-def text_client(gemini: GeminiSettings) -> GeminiClient:
-    return GeminiClient.from_settings(gemini, timeout_seconds=gemini.request_timeout_seconds)
+def llm(gemini: GeminiSettings) -> LanguageModel:
+    _ = gemini
+    return build_language_model(Settings())
 
 
 def silent_wav(seconds: float = 1.0, rate: int = 16_000) -> bytes:
@@ -90,10 +91,8 @@ def silent_wav(seconds: float = 1.0, rate: int = 16_000) -> bytes:
     return header + data
 
 
-async def test_linterprete_lit_une_identite_et_ignore_une_injection(
-    text_client: GeminiClient, gemini: GeminiSettings
-) -> None:
-    use_case = InterpretAnswer(GeminiChapterInterpreter(text_client, gemini.text_model))
+async def test_linterprete_lit_une_identite_et_ignore_une_injection(llm: LanguageModel) -> None:
+    use_case = InterpretAnswer(LlmChapterInterpreter(llm))
 
     identity = await use_case.execute(
         Chapter.IDENTITY, "Je m'appelle Awa Diallo et je veux devenir conseillère de vente"
@@ -109,35 +108,24 @@ async def test_linterprete_lit_une_identite_et_ignore_une_injection(
     assert injected.proposal is None
 
 
-async def test_la_transcription_rend_une_chaine(
-    text_client: GeminiClient, gemini: GeminiSettings
-) -> None:
-    text = await GeminiTranscriber(text_client, gemini.text_model).transcribe(
-        silent_wav(), "audio/wav"
-    )
+async def test_la_transcription_rend_une_chaine(llm: LanguageModel) -> None:
+    text = await LlmTranscriber(llm).transcribe(silent_wav(), "audio/wav")
 
     assert isinstance(text, str)
 
 
-async def test_lextraction_lit_un_cv_en_texte(
-    text_client: GeminiClient, gemini: GeminiSettings
-) -> None:
-    extracted = await GeminiCvExtractor(text_client, gemini.text_model).extract(
-        CV_TEXT.encode(), "text/plain"
-    )
+async def test_lextraction_lit_un_cv_en_texte(llm: LanguageModel) -> None:
+    extracted = await LlmCvExtractor(llm).extract(CV_TEXT.encode(), "text/plain")
 
     assert extracted[Chapter.IDENTITY]["first_name"] == "Awa"
     assert len(extracted[Chapter.EXPERIENCES]) >= 2
     assert len(extracted[Chapter.EDUCATIONS]) >= 1
 
 
-async def test_le_generateur_rend_un_portrait(gemini: GeminiSettings) -> None:
-    client = GeminiClient.from_settings(gemini, timeout_seconds=gemini.image_timeout_seconds)
+async def test_le_generateur_rend_un_portrait(llm: LanguageModel) -> None:
     buffer = BytesIO(sample_image(512, 640))
 
-    image = await GeminiPortraitEnhancer(client, gemini.image_model).enhance(
-        buffer.getvalue(), "image/jpeg"
-    )
+    image = await LlmPortraitEnhancer(llm).enhance(buffer.getvalue(), "image/jpeg")
 
     assert image.content_type.startswith("image/")
     assert len(image.payload) > 1_000

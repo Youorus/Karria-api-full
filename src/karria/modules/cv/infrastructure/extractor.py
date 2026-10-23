@@ -1,4 +1,4 @@
-"""L'extraction Gemini : un CV existant → les chapitres du brouillon.
+"""L'extraction : un CV existant → les chapitres du brouillon, par le port LLM.
 
 Implémente `CvDocumentExtractor`. Le document part tel quel au modèle
 (PDF, image) ou sous forme de texte (DOCX converti) ; la sortie a le schéma
@@ -34,20 +34,18 @@ from karria.modules.cv.domain import (
     SkillsChapter,
     Summary,
 )
-from karria.modules.cv.infrastructure.gemini import (
-    GenerationRequest,
-    GenerationTransport,
-    InlinePart,
-    response_schema_for,
-)
+from karria.modules.cv.infrastructure.llm import call, json_of
 from karria.modules.cv.infrastructure.prompts import (
     EXTRACT_MESSAGE,
     EXTRACT_SYSTEM,
     EXTRACT_TEXT_MESSAGE,
 )
+from karria.shared.llm import Blob, LanguageModel, LlmRequest, Part, response_schema_for
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+TASK = "cv_extract"
 
 
 class _ExtractedCv(BaseModel):
@@ -80,35 +78,34 @@ def extraction_schema() -> dict[str, Any]:
     return response_schema_for(_ExtractedCv)
 
 
-class GeminiCvExtractor:
-    """Implémente `CvDocumentExtractor` avec Gemini."""
+class LlmCvExtractor:
+    """Implémente `CvDocumentExtractor` par le port LLM."""
 
-    def __init__(self, transport: GenerationTransport, model: str) -> None:
-        self._transport = transport
-        self._model = model
+    def __init__(self, llm: LanguageModel) -> None:
+        self._llm = llm
 
     async def extract(self, document: bytes, content_type: str) -> dict[Chapter, Any]:
-        parts: tuple[str | InlinePart, ...]
+        parts: tuple[Part, ...]
         if content_type == "text/plain":
             text = document.decode("utf-8", errors="replace").replace("</", "<\\/")
             parts = (f"<document>\n{text}\n</document>", EXTRACT_TEXT_MESSAGE)
         else:
-            parts = (InlinePart(document, content_type), EXTRACT_MESSAGE)
+            parts = (Blob(document, content_type), EXTRACT_MESSAGE)
 
-        result = await self._transport.generate(
-            GenerationRequest(
-                model=self._model,
+        result = await call(
+            self._llm,
+            LlmRequest(
+                task=TASK,
                 parts=parts,
                 system=EXTRACT_SYSTEM,
                 response_schema=extraction_schema(),
                 temperature=0.1,
-                thinking_budget=0,
-            )
+            ),
         )
         if result.refused:
-            raise ModelUnavailableError(f"refus : {result.block_reason or result.finish_reason}")
+            raise ModelUnavailableError(f"refus : {result.finish_reason}")
         try:
-            raw = _RawExtraction.model_validate(result.json())
+            raw = _RawExtraction.model_validate(json_of(result))
         except ValidationError as exc:
             logger.warning("cv.extraction_malformed", errors=exc.error_count())
             raise ModelOutputInvalidError("extraction hors schéma") from exc

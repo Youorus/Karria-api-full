@@ -12,26 +12,23 @@ from karria.modules.cv.api.dependencies import (
     get_cv_extractor,
     get_cv_repository,
     get_draft_repository,
-    get_image_transport,
     get_photo_repository,
     get_portrait_enhancer,
-    get_text_transport,
     get_upload_inspector,
 )
 from karria.modules.cv.infrastructure import (
-    DisabledTransport,
     FileInspector,
-    GeminiChapterInterpreter,
-    GeminiClient,
-    GeminiCvExtractor,
-    GeminiPortraitEnhancer,
-    GeminiTranscriber,
+    LlmChapterInterpreter,
+    LlmCvExtractor,
+    LlmPortraitEnhancer,
+    LlmTranscriber,
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
 )
 from karria.shared.clock import SystemClock
 from karria.shared.config import GeminiSettings, Settings
+from karria.shared.llm import DisabledLanguageModel, build_language_model
 
 pytestmark = pytest.mark.unit
 
@@ -44,21 +41,14 @@ def test_les_ports_de_persistance_et_dinspection_ont_leur_adaptateur() -> None:
     assert isinstance(get_upload_inspector(), FileInspector)
 
 
-def test_sans_cle_les_transports_refusent_a_lappel() -> None:
-    settings = Settings()
+def test_les_adaptateurs_recoivent_le_port_llm_route() -> None:
+    llm = build_language_model(Settings(gemini=GeminiSettings(api_key=SecretStr("k"))))
 
-    assert isinstance(get_text_transport(settings), DisabledTransport)
-    assert isinstance(get_image_transport(settings), DisabledTransport)
+    assert isinstance(get_chapter_interpreter(llm), LlmChapterInterpreter)
+    assert isinstance(get_audio_transcriber(llm), LlmTranscriber)
+    assert isinstance(get_portrait_enhancer(llm), LlmPortraitEnhancer)
+    assert isinstance(get_cv_extractor(llm), LlmCvExtractor)
 
 
-def test_avec_une_cle_les_adaptateurs_gemini_sont_assembles() -> None:
-    settings = Settings(gemini=GeminiSettings(api_key=SecretStr("k")))
-    text = get_text_transport(settings)
-    image = get_image_transport(settings)
-
-    assert isinstance(text, GeminiClient)
-    assert isinstance(image, GeminiClient)
-    assert isinstance(get_chapter_interpreter(text, settings), GeminiChapterInterpreter)
-    assert isinstance(get_audio_transcriber(text, settings), GeminiTranscriber)
-    assert isinstance(get_portrait_enhancer(image, settings), GeminiPortraitEnhancer)
-    assert isinstance(get_cv_extractor(text, settings), GeminiCvExtractor)
+def test_sans_aucune_cle_le_port_refuse_a_l_appel() -> None:
+    assert isinstance(build_language_model(Settings()), DisabledLanguageModel)
