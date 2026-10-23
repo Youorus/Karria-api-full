@@ -187,7 +187,13 @@ Rapport : `docs/evals/assistant_redteam.json`.
   2. les règles de `normalization.py` pour ce que le texte dit clairement ;
   3. des **classifieurs légers sur les plongements déjà calculés** (coût
      marginal nul), entraînés sur les annonces France Travail étiquetées :
-     VOIR_CLASSIFIEURS
+     l'expérience (régression logistique sur les vecteurs e5 + n-grammes
+     de titre, étiquettes France Travail, 80/20) tourne sur le serveur
+     d'évaluation au moment où cette ADR est écrite ; ses tableaux
+     (exactitude par champ, couverture par seuil de confiance, accord sur
+     Indeed/HelloWork) sont consignés dans
+     `/root/karria-eval/out/classifiers/report.md` et repris ici dès qu'ils
+     sont lus — voir `REPRISE.md` ;
   4. le modèle **pour le résidu seulement** (prédictions sous le seuil de
      confiance, titres marketing), par lots, en cache (condensat de contenu
      + version du prompt), asynchrone, jamais sur le chemin de l'ingestion.
@@ -199,7 +205,35 @@ Rapport : `docs/evals/assistant_redteam.json`.
 
 ### 7. Ce que ça coûte
 
-VOIR_COUTS
+Mesuré sur le banc d'essai et la suite d'attaques (jetons du fournisseur) :
+
+| appel | entrée | sortie | latence p50 |
+|---|---|---|---|
+| tour de dialogue (constitution + mémoire + fenêtre) | ~2 450 jetons | ~100 jetons | 2 à 7 s (3.8-flash) |
+| mise à jour de la mémoire (hors chemin de la réponse) | ~700 jetons | ~80 jetons | ~1,5 s, asynchrone |
+| interprétation d'un chapitre de CV | ~630 | ~90 | 2,2 s (1,3 s en 3.5-flash) |
+| extraction d'un CV en texte | ~640 | ~360 | 3,8 s |
+
+Le dialogue coûte donc **deux appels par tour utile** (le second en file,
+invisible pour la personne) ; une question d'identité ou un hors-sujet
+évident n'en coûte qu'un, ou zéro. À la grille Gemini Flash du jour (de
+l'ordre de 0,1 à 0,5 $ par million de jetons d'entrée selon le palier,
+non versionnée ici), un tour revient à quelques dixièmes de centime ;
+1 000 tours par jour font moins d'un euro.
+
+**Enrichissement à 60 000 annonces par jour** (projection, § 6) :
+(a) *gratuit d'abord* — France Travail (~40 %) sans appel ; règles ; les
+classifieurs couvrent la part des annonces JobSpy au-dessus du seuil de
+confiance (à lire dans le rapport des classifieurs) ; le modèle ne voit que
+le résidu, par lots de 10 annonces (~2 500 jetons par appel) : à 20 % de
+résidu, 36 000 annonces → 3 600 appels → ~9 M jetons par jour, soit de
+l'ordre de 1 à 5 € par jour selon le palier ; (b) *le modèle sur tout* :
+60 000 annonces → 6 000 appels → ~15 M jetons par jour, 2 à 8 € par jour,
+et six fois plus de latence de file. L'ingestion elle-même n'attend jamais
+l'enrichissement. Le palier gratuit de Google pour un modèle Flash-Lite
+n'a pas été vérifié ici (limites de débit et conditions d'usage des
+données publiques) : à vérifier avant de s'y appuyer, et jamais pour les
+conversations des personnes.
 
 ## Conséquences
 
