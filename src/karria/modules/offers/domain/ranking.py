@@ -52,6 +52,8 @@ QUALITY_HIGH_SCORE: Final = 0.85
 QUALITY_MEDIUM_SCORE: Final = 0.65
 #: Place maximale du fil issu d'une recherche.
 FEED_MAX_ENTRIES: Final = 1_000
+#: Voisines d'intitulé cherchées dans les premiers candidats du rappel seulement.
+NEIGHBOUR_WINDOW: Final = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,10 +117,12 @@ def gate_rejects(ordered: Sequence[Offer], criteria: SearchCriteria) -> list[Off
     """Les offres que le filtre dur retient mais que la porte d'intitulé écarte.
 
     Ce sont les voisines d'une recherche : « commis de cuisine » pour
-    « cuisinier ». Les élargissements s'en nourrissent.
+    « cuisinier ». Les élargissements s'en nourrissent — dans la tête du
+    rappel seulement (`NEIGHBOUR_WINDOW`), là où le voisinage a un sens.
     """
     matcher = TitleMatcher.of(criteria.job_titles, criteria.excluded_titles)
-    return [o for o in ordered if criteria.accepts(o) and matcher.match(o.title) is None]
+    window = ordered[:NEIGHBOUR_WINDOW]
+    return [o for o in window if criteria.accepts(o) and matcher.match(o.title) is None]
 
 
 def reasons_for(offer: Offer, criteria: SearchCriteria) -> tuple[str, ...]:

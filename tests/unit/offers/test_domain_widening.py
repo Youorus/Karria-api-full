@@ -176,10 +176,11 @@ class TestChoix:
 
         chosen = choose(20, counted)
 
-        # Le lieu est une seule famille : toute la France (+1 980) l'emporte sur
-        # les rayons ; le contrat (+13) passe derrière l'intitulé voisin (+15).
+        # Le lieu est une seule famille : le rayon 50 (+40) double déjà un fil
+        # de 20, on ne propose pas plus loin ; le contrat (+13) passe derrière
+        # l'intitulé voisin (+15).
         assert [(w.id, w.gain) for w in chosen] == [
-            ("whole-france", 1_980),
+            ("radius-50", 40),
             ("title-commis", 15),
             ("contract-cdd", 13),
         ]
@@ -194,6 +195,15 @@ class TestChoix:
         ]
 
         assert [w.id for w in choose(20, counted)] == ["radius-50"]
+
+    def test_un_pas_insuffisant_cede_au_pas_suivant(self) -> None:
+        counted = [
+            (relaxation("radius-50", WideningKind.RADIUS), 32),  # +12 : notable, mais ne double pas
+            (relaxation("radius-100", WideningKind.RADIUS), 45),  # +25 : double le fil
+            (relaxation("whole-france", WideningKind.WHOLE_FRANCE), 600),
+        ]
+
+        assert [(w.id, w.gain) for w in choose(20, counted)] == [("radius-100", 25)]
 
     def test_un_fil_fourni_n_est_elargi_que_s_il_double(self) -> None:
         current = WIDEN_WHEN_BELOW + 10

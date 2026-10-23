@@ -24,6 +24,37 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
+### Session du 2026-10-23, suite (élargissements, journal d'apprentissage, migration V1)
+
+- **Fil sans plafond bas** : rappel 1 500 candidats, fil jusqu'à 1 000 entrées
+  (écriture en un lot). **Élargissements** (`domain/widening.py`, ADR-0018) :
+  Karria compte dans l'index ce que rapporterait chaque relâchement (rayon,
+  départements voisins, toute la France, contrat, temps, expérience, site,
+  intitulés voisins tirés des écartées de la porte) et propose les 3 meilleurs
+  avec leurs gains **comptés** ; une réponse rapide reprise telle quelle
+  s'applique sans le modèle ; propositions gardées avec la conversation
+  (migration 6). Réponse `/assistant/messages` : `widenings[]`. Mesuré en prod
+  (`scripts/widening_eval.py`, 13 demandes) : recherche 55 ms à 1,9 s (froid),
+  comptage 0,1 à 2,4 s ; « cuisinier CDI Lyon » 22 offres → toute la France
+  +346. Les voisines d'intitulé se limitent désormais à la tête du rappel.
+- **Journal d'apprentissage** (ADR-0019, migration 7) : chaque affichage avec
+  sa place, chaque bascule d'état, `dwell_ms`, et l'instantané des traits.
+  Contrat `seen`/`interaction` étendu. Rien ne s'entraîne encore
+  (`scikit-learn`/`lightgbm` : accord de Marc attendu).
+- **Plongement `t3`** : plus de ligne des traits dans `embedding_text` ;
+  ré-indexage prod lancé par `reconcile` (54 000 points).
+- **Décisions appliquées** : `LLM__TASKS__CV_INTERPRET=gemini:gemini-3.5-flash`
+  en prod ; utilisateur de test supprimé.
+- **Migration V1** : `scripts/migrate_v1.py` (export / convert / import dry-run)
+  et `scripts/push_campaign.py` (jamais d'envoi sans `--send`) — les jetons V1
+  sont des FCM bruts, inutilisables par Expo (voir `PLUS-TARD.md`). Import en
+  prod **non lancé**.
+- **Reporté** (consigne de sobriété) : filtres étendus + facettes du fil (item 1,
+  retiré par Marc), re-jugement de la précision après `t3`, nouvelle passe
+  red-team, suite d'évaluation large des élargissements.
+- **Déploiement** : le webhook GitHub vise `admin.papex.fr` dont le DNS pointe
+  sur l'ancien serveur → déployer à la main (`docs/DEPLOIEMENT.md`).
+
 ### Session du 2026-10-23 (porte d'intitulé, couche LLM, agent Karria, mise en production)
 
 - **Porte d'intitulé** : mots de niveau déterministes (`domain/titles.py`)

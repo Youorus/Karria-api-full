@@ -44,6 +44,9 @@ _CONTRACT_PHRASE: Final[dict[ContractType, str]] = {
 }
 #: Un intitulé voisin n'est proposé que s'il porte au moins autant d'offres écartées.
 TITLE_MIN_COUNT: Final = 5
+#: Les voisines se cherchent dans la tête du rappel (`ranking.NEIGHBOUR_WINDOW`) :
+#: au-delà, le rappel dense ramène des métiers sans rapport (mesuré 2026-10-23 :
+#: « collaborateur comptable » proposé pour « cuisinier » depuis le fond des 1 500).
 TITLE_CANDIDATES_MAX: Final = 2
 _GENDER: Final = re.compile(r"\(h/f/x\)|\bh/f/x\b|\(?\b[hf]\s*/\s*[hf]\b\)?")
 _PARENS: Final = re.compile(r"\([^)]*\)")
@@ -284,6 +287,11 @@ _FAMILY: Final[dict[WideningKind, str]] = {
 }
 
 
+def _enough(current: int, gain: int) -> bool:
+    """Un gain qui vaut la peine : notable, et qui double au moins un fil fourni."""
+    return gain >= WIDEN_MIN_GAIN and (current < WIDEN_WHEN_BELOW or gain >= current)
+
+
 def choose(current: int, counted: Sequence[tuple[Relaxation, int]]) -> list[Widening]:
     """Classe par gain ; une proposition par famille (le lieu n'en est qu'une) ; au plus `WIDENINGS_MAX`.
 
@@ -295,12 +303,14 @@ def choose(current: int, counted: Sequence[tuple[Relaxation, int]]) -> list[Wide
     chosen: dict[str, Widening] = {}
     for relaxation, total in counted:
         gain = relaxation.known_gain if relaxation.known_gain is not None else total - current
-        if gain < WIDEN_MIN_GAIN or (current >= WIDEN_WHEN_BELOW and gain < current):
+        if not _enough(current, gain):
             continue
         family = _FAMILY.get(relaxation.kind, relaxation.kind.value)
         # Dans une même famille, le premier venu est le moins disruptif (rayon
-        # 50 avant 100, avant toute la France) : il ne cède qu'à un gain plus grand.
-        if family in chosen and chosen[family].gain >= gain:
+        # 50 avant 100, avant toute la France) : dès qu'un pas suffit à
+        # doubler le fil, on ne propose pas plus loin — « 50 km : +340 »
+        # vaut mieux que « toute la France : +2 000 » pour qui a dit Lyon.
+        if family in chosen and (chosen[family].gain >= gain or chosen[family].gain >= current):
             continue
         chosen[family] = Widening(
             id=relaxation.id,
