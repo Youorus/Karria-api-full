@@ -186,22 +186,38 @@ Rapport : `docs/evals/assistant_redteam.json`.
      Travail : contrat, temps, expérience, coordonnées — aucun appel) ;
   2. les règles de `normalization.py` pour ce que le texte dit clairement ;
   3. des **classifieurs légers sur les plongements déjà calculés** (coût
-     marginal nul), entraînés sur les annonces France Travail étiquetées :
-     l'expérience (régression logistique sur les vecteurs e5 + n-grammes
-     de titre, étiquettes France Travail, 80/20) tourne sur le serveur
-     d'évaluation au moment où cette ADR est écrite ; ses tableaux
-     (exactitude par champ, couverture par seuil de confiance, accord sur
-     Indeed/HelloWork) sont consignés dans
-     `/root/karria-eval/out/classifiers/report.md` et repris ici dès qu'ils
-     sont lus — voir `REPRISE.md` ;
+     marginal nul), entraînés sur les annonces France Travail étiquetées.
+     Mesuré (`docs/evals/classifiers_e5.md`, 20 000 offres, régression
+     logistique sur e5 + n-grammes de titre, 80/20 stratifié) — avec une
+     **fuite découverte en passant** : `embedding_text()` écrit la ligne des
+     traits (contrat, temps, expérience) dans le texte plongé, donc un
+     classifieur sur le vecteur *indexé* relit l'étiquette (92 à 95 %,
+     chiffres trompeurs). Les seuls chiffres valables pour une offre au
+     champ manquant sont ceux d'un plongement **sans** traits :
+
+     | champ | exactitude (majoritaire) | couverture à ≥ 0,8 / exactitude | verdict |
+     |---|---|---|---|
+     | temps de travail | 88,1 % (81,8 %) | 80 % / 92,7 % | utile |
+     | télétravail (mention) | 95,0 % (94,4 %) | 93 % / 97,1 % | utile, classe rare mal rappelée (25 %) |
+     | type de contrat | 76,2 % (52,4 %) | 51 % / 89,8 % | moitié des offres seulement ; `stage` impossible (absent de FT) |
+     | expérience | 62,7 % (51,7 %) | 11 % / 90,9 % | inutile : résidu au modèle |
+
+     Sur Indeed/HelloWork (étiquettes regex, proxy bruité) : accord 91 %
+     (temps) et 70 % (contrat) au-dessus de 0,8. Coût : entraînement < 25 s,
+     inférence 0,03 s pour 1 000 offres, modèles < 200 Ko.
   4. le modèle **pour le résidu seulement** (prédictions sous le seuil de
      confiance, titres marketing), par lots, en cache (condensat de contenu
      + version du prompt), asynchrone, jamais sur le chemin de l'ingestion.
 
   Ce qui est livré dans cette ADR : les mesures des classifieurs et le
-  routage (`LLM__TASKS__ENRICH`). Ce qui attend : la décision de Marc sur
-  la dépendance `scikit-learn` dans l'image (AGENTS.md § 6.11) et
-  l'écriture du travail d'enrichissement du résidu — `PLUS-TARD.md`.
+  routage (`LLM__TASKS__ENRICH`). Ce qui attend la décision de Marc :
+  la dépendance `scikit-learn` dans l'image (AGENTS.md § 6.11) ; retirer
+  la ligne des traits de `embedding_text()` (un ré-indexage complet,
+  ~50 min sur le serveur d'inférence, et la recherche perd un signal
+  explicite de contrat/temps dans le vecteur dense — à mesurer avant) ou
+  calculer un second plongement « propre » par offre (double le coût
+  d'inférence) ; puis l'écriture du travail d'enrichissement du résidu —
+  `PLUS-TARD.md`.
 
 ### 7. Ce que ça coûte
 
@@ -222,14 +238,19 @@ non versionnée ici), un tour revient à quelques dixièmes de centime ;
 1 000 tours par jour font moins d'un euro.
 
 **Enrichissement à 60 000 annonces par jour** (projection, § 6) :
-(a) *gratuit d'abord* — France Travail (~40 %) sans appel ; règles ; les
-classifieurs couvrent la part des annonces JobSpy au-dessus du seuil de
-confiance (à lire dans le rapport des classifieurs) ; le modèle ne voit que
-le résidu, par lots de 10 annonces (~2 500 jetons par appel) : à 20 % de
-résidu, 36 000 annonces → 3 600 appels → ~9 M jetons par jour, soit de
-l'ordre de 1 à 5 € par jour selon le palier ; (b) *le modèle sur tout* :
+(a) *gratuit d'abord* — France Travail (~40 %, 24 000 annonces) sans
+appel ; règles ; les classifieurs couvrent, parmi les 36 000 annonces
+JobSpy, ~80 % du temps de travail et ~50 % du contrat au-dessus du seuil
+0,8 (chiffres « propres » ci-dessus) ; une annonce part au modèle dès qu'un
+champ demandé reste sous le seuil, donc le résidu est dicté par le champ le
+plus dur : **~50 % de JobSpy = ~18 000 annonces** (contrat) ou **~90 %** si
+l'on veut aussi l'expérience. Par lots de 10 annonces (~2 500 jetons par
+appel) : 1 800 à 3 200 appels → 4,5 à 8 M jetons par jour, soit de l'ordre
+de **0,5 à 4 € par jour** selon le palier ; (b) *le modèle sur tout* :
 60 000 annonces → 6 000 appels → ~15 M jetons par jour, 2 à 8 € par jour,
-et six fois plus de latence de file. L'ingestion elle-même n'attend jamais
+et deux à trois fois plus de latence de file. Si l'expérience n'est pas
+exigée pour JobSpy (elle est déjà structurée chez France Travail), le
+gratuit-d'abord divise la facture par trois. L'ingestion elle-même n'attend jamais
 l'enrichissement. Le palier gratuit de Google pour un modèle Flash-Lite
 n'a pas été vérifié ici (limites de débit et conditions d'usage des
 données publiques) : à vérifier avant de s'y appuyer, et jamais pour les

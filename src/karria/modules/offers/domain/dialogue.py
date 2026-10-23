@@ -162,5 +162,5 @@ def announce_results(count: int) -> str:
     if count == 0:
         return "Je n'ai trouvé aucune offre qui corresponde pour l'instant ; je lance une recherche et je vous préviens dès qu'il en arrive."
     if count == 1:
-        return "J'ai trouvé une offre, elle est dans votre fil."
-    return f"J'ai trouvé {count} offres, elles sont dans votre fil."
+        return "J'ai trouvé une offre, elle est dans ton fil."
+    return f"J'ai trouvé {count} offres, elles sont dans ton fil."

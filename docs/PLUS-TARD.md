@@ -203,6 +203,23 @@ Mesuré : 79 % au premier remplissage, 57 % sur le passage du lendemain
 **Déclencheur :** une semaine de collecte réelle ; relire la table et
 corriger l'ADR par une nouvelle.
 
+### L'enrichissement du résidu n'est pas écrit
+
+L'ADR-0018 § 6 décide un enrichissement *gratuit d'abord* (champs
+structurés, règles, classifieurs sur plongements, modèle pour le résidu).
+Les mesures sont faites (`docs/evals/classifiers_e5.md`) ; rien n'est
+branché : les annonces JobSpy sans contrat, temps ou expérience restent
+`null`, et la ligne des traits dans `embedding_text()` fait que tout
+classifieur sur le vecteur indexé triche.
+
+**Ce que ça coûte :** les filtres contrat/temps ignorent une part des
+annonces JobSpy (passage de l'inconnu selon `strict_schedule`).
+**Déclencheur :** trois décisions de Marc — `scikit-learn` dans l'image,
+retirer les traits du texte plongé (ré-indexage ~50 min) ou second
+plongement, et quels champs valent un appel au modèle (le contrat oui,
+l'expérience probablement non). Ensuite : un travail de file
+`offers.enrich` par lots, en cache, hors ingestion.
+
 ### L'analyse de chaque offre par Karria n'existe pas
 
 L'app appelle `GET/POST /job-matches/{id}/summary(-status)` (V1) ; le

@@ -77,6 +77,36 @@ francetravail.io ; les URL et la portée ont des défauts corrects),
 `COLLECTOR__PROXIES` facultatif. Le fichier d'environnement du collecteur
 sur le serveur d'évaluation est `/root/karria-collector.env` (mode 600).
 
+### État réel de la production (2026-10-23)
+
+Serveur `ssh papex-new` (Dokploy v0.30.8, Swarm ; partagé avec Papiers
+Express — ne jamais toucher à `papex*`, `/opt/papex` ni au projet Dokploy
+« Papiers Express »). Trois applications Dokploy dans le projet Karria,
+construites depuis `Youorus/Karria-api-full` (branche `main`, déploiement
+automatique par webhook GitHub — un `push` déclenche **trois** builds) :
+
+| Application | Nom de service | Particularités |
+|---|---|---|
+| API | `karria-api-ujqvaj` | Gunicorn, 2 GiB ; domaines `api.karria.fr` et `api.128-140-80-204.sslip.io` (Let's Encrypt) ; `/health/ready` public |
+| worker | `karria-worker-y9xkmo` | `python -m scripts.worker`, 1,5 GiB |
+| collecteur | `karria-collector-gwd7ud` | `python -m karria.collector`, 2 GiB, fichier d'env `/root/karria-collector.prod.env` |
+
+Le `HEALTHCHECK` du `Dockerfile` interroge HTTP : sur le worker et le
+collecteur il tue le conteneur (`exit 137`, boucle de redémarrage). Ces deux
+applications ont donc `healthCheckSwarm = {"Test": ["NONE"]}` dans Dokploy.
+Les variables de l'API sont dans `/root/karria-api.env` (mode 600 ; jamais
+affiché), qui alimente aussi les conteneurs ponctuels :
+
+```sh
+docker run --rm --network dokploy-network --env-file /root/karria-api.env \
+  karria-api-ujqvaj:latest aerich upgrade            # ou : python -m scripts.offers reconcile
+```
+
+Les appels à l'API Dokploy passent par le cookie `/root/.dokploy-cookie`
+(domaine `localhost`, donc `http://localhost:3000/api/...`) et l'aide
+`/root/dk.sh <endpoint> <fichier json>` ; les identifiants d'applications
+sont dans `/root/karria-dokploy.json`.
+
 Le serveur d'inférence (`karria-embeddings`, composition `karria-donnees`)
 sert `/opt/karria/models/e5-base-int8`, produit par
 `scripts/quantize_onnx.py` à partir de la révision `d128750` de

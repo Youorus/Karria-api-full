@@ -22,9 +22,44 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `DELETE /auth/me` |
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
-| `offers`   | **en validation** (ADR-0016 et 0017 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+| `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
-### Session du 2026-10-22 (France Travail, collecte continue, planificateur) — à valider par Marc
+### Session du 2026-10-23 (porte d'intitulé, couche LLM, agent Karria, mise en production)
+
+- **Porte d'intitulé** : mots de niveau déterministes (`domain/titles.py`)
+  + `excluded_titles` rendus par le modèle dans l'appel de dialogue.
+  Précision@10 jugée **82 % → 91,4 %** (FT 93 %, HelloWork 90 %, Indeed
+  93 %) ; « cuisinier temps plein France » 10/10.
+- **Couche LLM** `shared/llm` (ADR-0018) : Gemini, Anthropic, OpenAI,
+  compatible OpenAI, REST sans SDK ; routage par tâche
+  (`LLM__TASKS__*`, `LLM__FALLBACKS__*`, `LLM__PROVIDERS__*`), validé au
+  démarrage ; `cv` et `offers` migrés. Banc d'essai (`scripts/llm_bench.py`)
+  : gemini-3.8-flash gardé partout ; 3.5-flash recommandé pour
+  `cv_interpret` (6/6, 1,3 s) — **à confirmer par Marc**.
+- **Agent Karria** : constitution versionnée (1.0, tutoiement), mémoire
+  par personne (`KarriaMemory`, migration 5, visible/effaçable),
+  pré-classifieur et garde de sortie déterministes, `intent` dans la
+  réponse ; suite d'attaques 36 cas **36/36**
+  (`docs/evals/assistant_redteam.json`, relance :
+  `ASSISTANT_REDTEAM_LIVE=1 pytest tests/integration/test_assistant_redteam_live.py`).
+- **Classifieurs sur plongements** (`docs/evals/classifiers_e5.md`) : temps
+  de travail et télétravail utiles (88 %/95 %, couverture 80 %/93 % à 0,8),
+  contrat moyen (76 %, couverture 51 %), expérience inutile ; **fuite** :
+  `embedding_text()` écrit les traits dans le texte plongé. Trois décisions
+  pour Marc (voir `PLUS-TARD.md`).
+- **Production** (`docs/DEPLOIEMENT.md` § État réel) : API, worker et
+  collecteur en service sur Dokploy ; `https://api.128-140-80-204.sslip.io`
+  et `api.karria.fr` ; migrations 3-5 appliquées ; 60 463 offres en base
+  dont 54 072 actives canoniques, index Qdrant `karria-production-offers`
+  = 54 072 points (import de l'évaluation sans recalcul, fantômes purgés,
+  `reconcile` à 0) ; smoke test de bout en bout réussi (connexion e-mail,
+  `/auth/me`, fil, tour de recherche « cuisinier CDI Lyon » → 20 offres des
+  trois sources). Pile d'évaluation arrêtée (base `karria_eval` et
+  collections `karria-eval-staging-*` gardées).
+- **Non fait** : la relecture par Opus du travail (Tâche 3) — risques
+  listés dans le rapport de session ; l'enrichissement du résidu.
+
+### Session du 2026-10-22 (France Travail, collecte continue, planificateur) — validée par Marc
 
 - **France Travail est la source n°1** (`collector/france_travail.py`) :
   OAuth2, pagination 150/3 150, partition par département, fuseau de Paris
@@ -60,13 +95,14 @@ font foi : `karria_app/docs/contrat-api-*.md`.
   dans `/root/karria-eval/out/` (`eval_ft2.jsonl`, `complex.jsonl`,
   `seed.jsonl`, `catalogue.jsonl`).
 
-Qualité au 2026-10-22 : `make check` est vert. 1 500 tests passent et 21
+Qualité au 2026-10-23 : `make check` est vert. ~1 600 tests passent et 22
 sont ignorés (tests en direct et MinIO absent en local). 100 % sur le
 domaine et l'application des modules métier.
 
-**Rien n'est commité depuis le socle** (`5447036`). Les modules
-`identity`, `devices`, `cv`, `offers`, le collecteur et la file ne sont pas
-suivis par git. Marc commite lui-même, sur sa demande explicite.
+Tout est commité et poussé sur `main` de `Youorus/Karria-api-full`
+(autorisation explicite de Marc le 2026-10-22 pour la mise en production ;
+le `push` déclenche le déploiement Dokploy). Hors de ce cadre, la règle
+reste : ne commiter que sur demande.
 
 ## Décisions clés (détail dans `docs/adr/`)
 
@@ -117,10 +153,11 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    - parcours CV complet ;
    - photo améliorée ;
    - import.
-2. **Valider l'ADR-0016 et l'ADR-0017** (moteur d'offres, France Travail,
-   planificateur), puis : la couche LLM multi-fournisseurs et son banc
-   d'essai (ADR-0018), la relecture du travail d'Opus, la porte d'intitulé
-   et les mots de niveau.
+2. **Valider l'ADR-0018** (couche LLM, agent Karria, enrichissement) et
+   trancher : `gemini-3.5-flash` pour `cv_interpret` ; `scikit-learn` dans
+   l'image ; retrait des traits du texte plongé (ré-indexage) ; champs qui
+   valent un appel au modèle. Puis la relecture du travail (Tâche 3) et la
+   purge des offres inactives en production.
 3. **Modules suivants**, à décider par Marc un par un : modèles de CV,
    génération de CV (PDF), abonnement Stripe.
 4. **Points listés dans `docs/PLUS-TARD.md`** :

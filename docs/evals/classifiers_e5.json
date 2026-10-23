@@ -1,0 +1,1474 @@
+{
+  "meta": {
+    "collection": "karria-eval-staging-offers",
+    "embed_seconds": 1031.7,
+    "embed_per_second": 19.39,
+    "cos_clean_vs_indexed": 0.9534104466438293,
+    "note": "clean = embedding_text sans la ligne traits (étiquettes) ; indexed = vecteur Qdrant (fuite)",
+    "n_offers": 20000,
+    "n_ft": 14000,
+    "n_jobspy": 6000,
+    "embedding": "multilingual-e5-base int8 (TEI local), 768d, passage: titre/employeur—lieu/description[:450]",
+    "title_features": "TfidfVectorizer(1-2 grammes, min_df=3, sublinear_tf) ajusté sur les titres FT d'entraînement",
+    "model": "LogisticRegression(lbfgs, C=4, max_iter=3000), sans pondération de classes",
+    "split": "80/20 stratifié, seed 42, FT étiquetées uniquement",
+    "total_seconds": 1188.5
+  },
+  "variants": {
+    "clean": {
+      "schedule": {
+        "ft_label_distribution": {
+          "temps_plein": 5876,
+          "temps_partiel": 1303
+        },
+        "n_train": 5743,
+        "n_test": 1436,
+        "models": {
+          "emb": {
+            "accuracy": 0.8739554317548747,
+            "macro_f1": 0.7387797271777987,
+            "majority_baseline_acc": 0.8182451253481894,
+            "per_class": {
+              "temps_partiel": {
+                "precision": 0.7816901408450704,
+                "recall": 0.42528735632183906,
+                "f1": 0.5508684863523573,
+                "support": 261
+              },
+              "temps_plein": {
+                "precision": 0.884080370942813,
+                "recall": 0.9736170212765958,
+                "f1": 0.9266909680032401,
+                "support": 1175
+              }
+            },
+            "train_seconds": 0.65,
+            "ece": 0.017896192195023666,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9254874651810585,
+                "accuracy": 0.8976674191121143,
+                "residue_share": 0.07451253481894149
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.8495821727019499,
+                "accuracy": 0.9147540983606557,
+                "residue_share": 0.1504178272980501
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.7256267409470752,
+                "accuracy": 0.9385796545105566,
+                "residue_share": 0.27437325905292476
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.5125348189415042,
+                "accuracy": 0.9605978260869565,
+                "residue_share": 0.4874651810584958
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.8809192200557103,
+            "macro_f1": 0.7700973797078328,
+            "majority_baseline_acc": 0.8182451253481894,
+            "per_class": {
+              "temps_partiel": {
+                "precision": 0.7528089887640449,
+                "recall": 0.5134099616858238,
+                "f1": 0.6104783599088838,
+                "support": 261
+              },
+              "temps_plein": {
+                "precision": 0.8990461049284578,
+                "recall": 0.9625531914893617,
+                "f1": 0.9297163995067818,
+                "support": 1175
+              }
+            },
+            "train_seconds": 0.54,
+            "ece": 0.025591092826977017,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9435933147632312,
+                "accuracy": 0.9025830258302583,
+                "residue_share": 0.05640668523676884
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.8746518105849582,
+                "accuracy": 0.9156050955414012,
+                "residue_share": 0.12534818941504178
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.7987465181058496,
+                "accuracy": 0.9267654751525719,
+                "residue_share": 0.20125348189415038
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.6441504178272981,
+                "accuracy": 0.9545945945945946,
+                "residue_share": 0.3558495821727019
+              }
+            ]
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 4993,
+            "n_label_in_trained_classes": 4993,
+            "label_distribution": {
+              "temps_plein": 4018,
+              "temps_partiel": 975
+            },
+            "agreement_all": 0.8451832565591828,
+            "agreement_on_trained_classes": 0.8451832565591828,
+            "agreement_conf_ge_0.8": 0.9137741046831956,
+            "coverage_conf_ge_0.8": 0.7270178249549369,
+            "by_source": {
+              "indeed": 0.8202643171806168,
+              "hellowork": 0.8659566654425266
+            },
+            "confusion_top": [
+              {
+                "regex": "temps_partiel",
+                "model": "temps_plein",
+                "n": 540
+              },
+              {
+                "regex": "temps_plein",
+                "model": "temps_partiel",
+                "n": 233
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0255,
+          "unlabelled": {
+            "n": 1007,
+            "predicted_distribution": {
+              "temps_plein": 947,
+              "temps_partiel": 60
+            },
+            "share_conf_ge_0.8": 0.8232373386295928,
+            "predicted_distribution_conf_ge_0.8": {
+              "temps_plein": 811,
+              "temps_partiel": 18
+            }
+          }
+        },
+        "model_size_kb": 40.5,
+        "model_path": "/out/models/clean_schedule_emb_title.joblib"
+      },
+      "contract_type": {
+        "ft_label_distribution": {
+          "cdi": 7335,
+          "interim": 4775,
+          "cdd": 1513,
+          "alternance": 237,
+          "other": 132
+        },
+        "n_train": 11193,
+        "n_test": 2799,
+        "models": {
+          "emb": {
+            "accuracy": 0.744908896034298,
+            "macro_f1": 0.47668641187908384,
+            "majority_baseline_acc": 0.5241157556270096,
+            "per_class": {
+              "alternance": {
+                "precision": 1.0,
+                "recall": 0.3125,
+                "f1": 0.47619047619047616,
+                "support": 48
+              },
+              "cdd": {
+                "precision": 0.6283185840707964,
+                "recall": 0.23432343234323433,
+                "f1": 0.34134615384615385,
+                "support": 303
+              },
+              "cdi": {
+                "precision": 0.7360703812316716,
+                "recall": 0.8554873892297206,
+                "f1": 0.7912988650693569,
+                "support": 1467
+              },
+              "interim": {
+                "precision": 0.7701863354037267,
+                "recall": 0.7790575916230367,
+                "f1": 0.7745965642894326,
+                "support": 955
+              },
+              "other": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "support": 26
+              }
+            },
+            "train_seconds": 17.54,
+            "ece": 0.04496040741176678,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.6981064665952126,
+                "accuracy": 0.8300921187308086,
+                "residue_share": 0.3018935334047874
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.5112540192926045,
+                "accuracy": 0.8763102725366876,
+                "residue_share": 0.4887459807073955
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.3215434083601286,
+                "accuracy": 0.9255555555555556,
+                "residue_share": 0.6784565916398714
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.12897463379778493,
+                "accuracy": 0.9473684210526315,
+                "residue_share": 0.871025366202215
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.7620578778135049,
+            "macro_f1": 0.6687246483747151,
+            "majority_baseline_acc": 0.5241157556270096,
+            "per_class": {
+              "alternance": {
+                "precision": 0.9285714285714286,
+                "recall": 0.5416666666666666,
+                "f1": 0.6842105263157895,
+                "support": 48
+              },
+              "cdd": {
+                "precision": 0.6473684210526316,
+                "recall": 0.40594059405940597,
+                "f1": 0.49898580121703856,
+                "support": 303
+              },
+              "cdi": {
+                "precision": 0.7692789968652037,
+                "recall": 0.83640081799591,
+                "f1": 0.8014369693011104,
+                "support": 1467
+              },
+              "interim": {
+                "precision": 0.7672502574665293,
+                "recall": 0.7801047120418848,
+                "f1": 0.7736240913811008,
+                "support": 955
+              },
+              "other": {
+                "precision": 0.8,
+                "recall": 0.46153846153846156,
+                "f1": 0.5853658536585366,
+                "support": 26
+              }
+            },
+            "train_seconds": 22.83,
+            "ece": 0.014115015486682975,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.7970703822793855,
+                "accuracy": 0.8256387270282385,
+                "residue_share": 0.20292961772061446
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.6688102893890675,
+                "accuracy": 0.8579059829059829,
+                "residue_share": 0.3311897106109325
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.5119685602000714,
+                "accuracy": 0.8981158408932309,
+                "residue_share": 0.4880314397999286
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.3097534833869239,
+                "accuracy": 0.9331026528258363,
+                "residue_share": 0.6902465166130761
+              }
+            ]
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 5196,
+            "n_label_in_trained_classes": 4686,
+            "label_distribution": {
+              "cdi": 2210,
+              "cdd": 1297,
+              "interim": 538,
+              "stage": 510,
+              "alternance": 493,
+              "other": 148
+            },
+            "agreement_all": 0.5704387990762124,
+            "agreement_on_trained_classes": 0.6325224071702945,
+            "agreement_conf_ge_0.8": 0.7044392523364486,
+            "coverage_conf_ge_0.8": 0.4942263279445728,
+            "by_source": {
+              "indeed": 0.5434694702790134,
+              "hellowork": 0.5949320602276901
+            },
+            "confusion_top": [
+              {
+                "regex": "cdd",
+                "model": "cdi",
+                "n": 768
+              },
+              {
+                "regex": "stage",
+                "model": "cdi",
+                "n": 277
+              },
+              {
+                "regex": "interim",
+                "model": "cdi",
+                "n": 264
+              },
+              {
+                "regex": "stage",
+                "model": "cdd",
+                "n": 216
+              },
+              {
+                "regex": "alternance",
+                "model": "cdi",
+                "n": 184
+              },
+              {
+                "regex": "cdd",
+                "model": "interim",
+                "n": 137
+              },
+              {
+                "regex": "cdi",
+                "model": "interim",
+                "n": 122
+              },
+              {
+                "regex": "other",
+                "model": "cdi",
+                "n": 104
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.026,
+          "unlabelled": {
+            "n": 804,
+            "predicted_distribution": {
+              "cdi": 692,
+              "cdd": 82,
+              "interim": 30
+            },
+            "share_conf_ge_0.8": 0.5597014925373134,
+            "predicted_distribution_conf_ge_0.8": {
+              "cdi": 440,
+              "cdd": 8,
+              "interim": 2
+            }
+          }
+        },
+        "model_size_kb": 186.1,
+        "model_path": "/out/models/clean_contract_type_emb_title.joblib"
+      },
+      "experience": {
+        "ft_label_distribution": {
+          "debutant": 7127,
+          "junior": 4126,
+          "confirme": 2407,
+          "senior": 126
+        },
+        "n_train": 11028,
+        "n_test": 2758,
+        "models": {
+          "emb": {
+            "accuracy": 0.6265409717186367,
+            "macro_f1": 0.4106846237125349,
+            "majority_baseline_acc": 0.5170413343002176,
+            "per_class": {
+              "confirme": {
+                "precision": 0.5043988269794721,
+                "recall": 0.35684647302904565,
+                "f1": 0.41798298906439857,
+                "support": 482
+              },
+              "debutant": {
+                "precision": 0.6708860759493671,
+                "recall": 0.8548387096774194,
+                "f1": 0.75177304964539,
+                "support": 1426
+              },
+              "junior": {
+                "precision": 0.5616666666666666,
+                "recall": 0.4084848484848485,
+                "f1": 0.4729824561403509,
+                "support": 825
+              },
+              "senior": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "support": 25
+              }
+            },
+            "train_seconds": 17.84,
+            "ece": 0.031164402564942968,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.4408992023205221,
+                "accuracy": 0.7787828947368421,
+                "residue_share": 0.559100797679478
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.25670775924583034,
+                "accuracy": 0.8248587570621468,
+                "residue_share": 0.7432922407541697
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.10804931109499638,
+                "accuracy": 0.9093959731543624,
+                "residue_share": 0.8919506889050036
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.019579405366207395,
+                "accuracy": 0.9629629629629629,
+                "residue_share": 0.9804205946337926
+              }
+            ],
+            "mae_levels": 0.47643219724437996,
+            "within_one_level": 0.8999274836838289
+          },
+          "emb+title": {
+            "accuracy": 0.5844815083393764,
+            "macro_f1": 0.39279756061785187,
+            "majority_baseline_acc": 0.5170413343002176,
+            "per_class": {
+              "confirme": {
+                "precision": 0.44779582366589327,
+                "recall": 0.4004149377593361,
+                "f1": 0.42278203723986857,
+                "support": 482
+              },
+              "debutant": {
+                "precision": 0.6676904176904177,
+                "recall": 0.7622720897615708,
+                "f1": 0.7118533071381794,
+                "support": 1426
+              },
+              "junior": {
+                "precision": 0.47701149425287354,
+                "recall": 0.4024242424242424,
+                "f1": 0.4365548980933596,
+                "support": 825
+              },
+              "senior": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "support": 25
+              }
+            },
+            "train_seconds": 24.04,
+            "ece": 0.07339923849374384,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.5812182741116751,
+                "accuracy": 0.6955708047411104,
+                "residue_share": 0.41878172588832485
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.4082668600435098,
+                "accuracy": 0.7708703374777975,
+                "residue_share": 0.5917331399564902
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.24075416968817984,
+                "accuracy": 0.8328313253012049,
+                "residue_share": 0.7592458303118201
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.10043509789702683,
+                "accuracy": 0.9061371841155235,
+                "residue_share": 0.8995649021029731
+              }
+            ],
+            "mae_levels": 0.5195794053662074,
+            "within_one_level": 0.8984771573604061
+          }
+        },
+        "best_model": "emb",
+        "jobspy": {
+          "labelled": {
+            "n": 2659,
+            "n_label_in_trained_classes": 2659,
+            "label_distribution": {
+              "debutant": 1432,
+              "confirme": 712,
+              "senior": 333,
+              "junior": 182
+            },
+            "agreement_all": 0.4189544941707409,
+            "agreement_on_trained_classes": 0.4189544941707409,
+            "agreement_conf_ge_0.8": 0.7894736842105263,
+            "coverage_conf_ge_0.8": 0.021436630312147424,
+            "by_source": {
+              "indeed": 0.3809880239520958,
+              "hellowork": 0.45729402872260017
+            },
+            "confusion_top": [
+              {
+                "regex": "debutant",
+                "model": "junior",
+                "n": 444
+              },
+              {
+                "regex": "confirme",
+                "model": "debutant",
+                "n": 294
+              },
+              {
+                "regex": "confirme",
+                "model": "junior",
+                "n": 240
+              },
+              {
+                "regex": "debutant",
+                "model": "confirme",
+                "n": 139
+              },
+              {
+                "regex": "senior",
+                "model": "confirme",
+                "n": 139
+              },
+              {
+                "regex": "senior",
+                "model": "debutant",
+                "n": 107
+              },
+              {
+                "regex": "senior",
+                "model": "junior",
+                "n": 87
+              },
+              {
+                "regex": "junior",
+                "model": "debutant",
+                "n": 64
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0009,
+          "unlabelled": {
+            "n": 3341,
+            "predicted_distribution": {
+              "debutant": 2144,
+              "junior": 911,
+              "confirme": 286
+            },
+            "share_conf_ge_0.8": 0.03442083208620174,
+            "predicted_distribution_conf_ge_0.8": {
+              "debutant": 113,
+              "junior": 2
+            }
+          }
+        },
+        "model_size_kb": 12.0,
+        "model_path": "/out/models/clean_experience_emb.joblib"
+      },
+      "remote": {
+        "ft_label_distribution": {
+          "aucune_mention": 13217,
+          "teletravail_mentionne": 783
+        },
+        "n_train": 11200,
+        "n_test": 2800,
+        "models": {
+          "emb": {
+            "accuracy": 0.9446428571428571,
+            "macro_f1": 0.5216634648979236,
+            "majority_baseline_acc": 0.9439285714285715,
+            "per_class": {
+              "aucune_mention": {
+                "precision": 0.9458781362007168,
+                "recall": 0.9984865682936057,
+                "f1": 0.9714706423706976,
+                "support": 2643
+              },
+              "teletravail_mentionne": {
+                "precision": 0.6,
+                "recall": 0.03821656050955414,
+                "f1": 0.0718562874251497,
+                "support": 157
+              }
+            },
+            "train_seconds": 0.23,
+            "ece": 0.01359796406967297,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9889285714285714,
+                "accuracy": 0.9490790899241603,
+                "residue_share": 0.011071428571428621
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.9778571428571429,
+                "accuracy": 0.9532505478451424,
+                "residue_share": 0.02214285714285713
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.9517857142857142,
+                "accuracy": 0.9606003752345216,
+                "residue_share": 0.048214285714285765
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.8707142857142857,
+                "accuracy": 0.9770303527481542,
+                "residue_share": 0.12928571428571434
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.9496428571428571,
+            "macro_f1": 0.6649805378131579,
+            "majority_baseline_acc": 0.9439285714285715,
+            "per_class": {
+              "aucune_mention": {
+                "precision": 0.9569028487947406,
+                "recall": 0.9912977676882331,
+                "f1": 0.973796692064672,
+                "support": 2643
+              },
+              "teletravail_mentionne": {
+                "precision": 0.6290322580645161,
+                "recall": 0.2484076433121019,
+                "f1": 0.3561643835616438,
+                "support": 157
+              }
+            },
+            "train_seconds": 0.5,
+            "ece": 0.005131024836078383,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9857142857142858,
+                "accuracy": 0.9565217391304348,
+                "residue_share": 0.014285714285714235
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.9628571428571429,
+                "accuracy": 0.9632789317507419,
+                "residue_share": 0.037142857142857144
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.9325,
+                "accuracy": 0.9712753734201456,
+                "residue_share": 0.0675
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.8753571428571428,
+                "accuracy": 0.9808241534067728,
+                "residue_share": 0.12464285714285717
+              }
+            ]
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 6000,
+            "n_label_in_trained_classes": 6000,
+            "label_distribution": {
+              "aucune_mention": 5322,
+              "teletravail_mentionne": 678
+            },
+            "agreement_all": 0.8816666666666667,
+            "agreement_on_trained_classes": 0.8816666666666667,
+            "agreement_conf_ge_0.8": 0.921389751552795,
+            "coverage_conf_ge_0.8": 0.8586666666666667,
+            "by_source": {
+              "indeed": 0.8629844369850473,
+              "hellowork": 0.9041498347410943
+            },
+            "confusion_top": [
+              {
+                "regex": "teletravail_mentionne",
+                "model": "aucune_mention",
+                "n": 582
+              },
+              {
+                "regex": "aucune_mention",
+                "model": "teletravail_mentionne",
+                "n": 128
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0248
+        },
+        "model_size_kb": 66.2,
+        "model_path": "/out/models/clean_remote_emb_title.joblib"
+      }
+    },
+    "indexed_leaky": {
+      "schedule": {
+        "ft_label_distribution": {
+          "temps_plein": 5876,
+          "temps_partiel": 1303
+        },
+        "n_train": 5743,
+        "n_test": 1436,
+        "models": {
+          "emb": {
+            "accuracy": 0.924791086350975,
+            "macro_f1": 0.8539793013060967,
+            "majority_baseline_acc": 0.8182451253481894,
+            "per_class": {
+              "temps_partiel": {
+                "precision": 0.9371428571428572,
+                "recall": 0.6283524904214559,
+                "f1": 0.7522935779816514,
+                "support": 261
+              },
+              "temps_plein": {
+                "precision": 0.9230769230769231,
+                "recall": 0.9906382978723405,
+                "f1": 0.9556650246305419,
+                "support": 1175
+              }
+            },
+            "train_seconds": 0.5,
+            "ece": 0.043189076701578635,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9533426183844012,
+                "accuracy": 0.9430241051862673,
+                "residue_share": 0.04665738161559885
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.8899721448467967,
+                "accuracy": 0.9546165884194053,
+                "residue_share": 0.11002785515320335
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.7966573816155988,
+                "accuracy": 0.9702797202797203,
+                "residue_share": 0.20334261838440115
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.6128133704735376,
+                "accuracy": 0.9863636363636363,
+                "residue_share": 0.38718662952646243
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.9178272980501393,
+            "macro_f1": 0.8433931363886742,
+            "majority_baseline_acc": 0.8182451253481894,
+            "per_class": {
+              "temps_partiel": {
+                "precision": 0.8864864864864865,
+                "recall": 0.6283524904214559,
+                "f1": 0.7354260089686099,
+                "support": 261
+              },
+              "temps_plein": {
+                "precision": 0.9224620303756994,
+                "recall": 0.9821276595744681,
+                "f1": 0.9513602638087386,
+                "support": 1175
+              }
+            },
+            "train_seconds": 0.32,
+            "ece": 0.015502972512060917,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.967966573816156,
+                "accuracy": 0.9294964028776979,
+                "residue_share": 0.03203342618384397
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.9164345403899722,
+                "accuracy": 0.9437689969604863,
+                "residue_share": 0.08356545961002781
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.83008356545961,
+                "accuracy": 0.964765100671141,
+                "residue_share": 0.16991643454038996
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.6908077994428969,
+                "accuracy": 0.9768145161290323,
+                "residue_share": 0.30919220055710306
+              }
+            ]
+          }
+        },
+        "best_model": "emb",
+        "jobspy": {
+          "labelled": {
+            "n": 4993,
+            "n_label_in_trained_classes": 4993,
+            "label_distribution": {
+              "temps_plein": 4018,
+              "temps_partiel": 975
+            },
+            "agreement_all": 0.8840376527137993,
+            "agreement_on_trained_classes": 0.8840376527137993,
+            "agreement_conf_ge_0.8": 0.9547511312217195,
+            "coverage_conf_ge_0.8": 0.7081914680552774,
+            "by_source": {
+              "indeed": 0.8700440528634361,
+              "hellowork": 0.8957032684539111
+            },
+            "confusion_top": [
+              {
+                "regex": "temps_partiel",
+                "model": "temps_plein",
+                "n": 498
+              },
+              {
+                "regex": "temps_plein",
+                "model": "temps_partiel",
+                "n": 81
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0012,
+          "unlabelled": {
+            "n": 1007,
+            "predicted_distribution": {
+              "temps_plein": 983,
+              "temps_partiel": 24
+            },
+            "share_conf_ge_0.8": 0.7378351539225422,
+            "predicted_distribution_conf_ge_0.8": {
+              "temps_plein": 742,
+              "temps_partiel": 1
+            }
+          }
+        },
+        "model_path": null
+      },
+      "contract_type": {
+        "ft_label_distribution": {
+          "cdi": 7335,
+          "interim": 4775,
+          "cdd": 1513,
+          "alternance": 237,
+          "other": 132
+        },
+        "n_train": 11193,
+        "n_test": 2799,
+        "models": {
+          "emb": {
+            "accuracy": 0.9428367274026438,
+            "macro_f1": 0.8127100742565029,
+            "majority_baseline_acc": 0.5241157556270096,
+            "per_class": {
+              "alternance": {
+                "precision": 1.0,
+                "recall": 0.75,
+                "f1": 0.8571428571428571,
+                "support": 48
+              },
+              "cdd": {
+                "precision": 0.9128630705394191,
+                "recall": 0.7260726072607261,
+                "f1": 0.8088235294117647,
+                "support": 303
+              },
+              "cdi": {
+                "precision": 0.935672514619883,
+                "recall": 0.9815950920245399,
+                "f1": 0.9580838323353293,
+                "support": 1467
+              },
+              "interim": {
+                "precision": 0.958974358974359,
+                "recall": 0.9790575916230366,
+                "f1": 0.9689119170984456,
+                "support": 955
+              },
+              "other": {
+                "precision": 1.0,
+                "recall": 0.3076923076923077,
+                "f1": 0.47058823529411764,
+                "support": 26
+              }
+            },
+            "train_seconds": 10.63,
+            "ece": 0.07217965710797708,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9178277956413005,
+                "accuracy": 0.9743090696769171,
+                "residue_share": 0.08217220435869954
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.8631654162200786,
+                "accuracy": 0.9859271523178808,
+                "residue_share": 0.13683458377992141
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.7699178277956413,
+                "accuracy": 0.9902552204176334,
+                "residue_share": 0.23008217220435867
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.609860664523044,
+                "accuracy": 0.9964850615114236,
+                "residue_share": 0.390139335476956
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.9378349410503751,
+            "macro_f1": 0.8226091469190857,
+            "majority_baseline_acc": 0.5241157556270096,
+            "per_class": {
+              "alternance": {
+                "precision": 0.96875,
+                "recall": 0.6458333333333334,
+                "f1": 0.775,
+                "support": 48
+              },
+              "cdd": {
+                "precision": 0.8828451882845189,
+                "recall": 0.6963696369636964,
+                "f1": 0.7785977859778598,
+                "support": 303
+              },
+              "cdi": {
+                "precision": 0.927143778207608,
+                "recall": 0.9802317655078391,
+                "f1": 0.9529489728296885,
+                "support": 1467
+              },
+              "interim": {
+                "precision": 0.9688149688149689,
+                "recall": 0.9759162303664921,
+                "f1": 0.9723526343244653,
+                "support": 955
+              },
+              "other": {
+                "precision": 0.8666666666666667,
+                "recall": 0.5,
+                "f1": 0.6341463414634146,
+                "support": 26
+              }
+            },
+            "train_seconds": 18.29,
+            "ece": 0.05428243844352778,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9292604501607717,
+                "accuracy": 0.9688581314878892,
+                "residue_share": 0.07073954983922826
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.878528045730618,
+                "accuracy": 0.9784465229768199,
+                "residue_share": 0.12147195426938195
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.7931404072883173,
+                "accuracy": 0.990990990990991,
+                "residue_share": 0.20685959271168275
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.6509467667023937,
+                "accuracy": 0.9961580680570802,
+                "residue_share": 0.3490532332976063
+              }
+            ]
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 5196,
+            "n_label_in_trained_classes": 4686,
+            "label_distribution": {
+              "cdi": 2210,
+              "cdd": 1297,
+              "interim": 538,
+              "stage": 510,
+              "alternance": 493,
+              "other": 148
+            },
+            "agreement_all": 0.6751347190146266,
+            "agreement_on_trained_classes": 0.7486128894579599,
+            "agreement_conf_ge_0.8": 0.8874670681219421,
+            "coverage_conf_ge_0.8": 0.5113548883756736,
+            "by_source": {
+              "indeed": 0.6482005661140315,
+              "hellowork": 0.6995960337862651
+            },
+            "confusion_top": [
+              {
+                "regex": "cdd",
+                "model": "cdi",
+                "n": 543
+              },
+              {
+                "regex": "stage",
+                "model": "cdi",
+                "n": 251
+              },
+              {
+                "regex": "stage",
+                "model": "interim",
+                "n": 166
+              },
+              {
+                "regex": "alternance",
+                "model": "cdi",
+                "n": 129
+              },
+              {
+                "regex": "cdi",
+                "model": "interim",
+                "n": 99
+              },
+              {
+                "regex": "interim",
+                "model": "cdi",
+                "n": 96
+              },
+              {
+                "regex": "stage",
+                "model": "cdd",
+                "n": 86
+              },
+              {
+                "regex": "cdd",
+                "model": "interim",
+                "n": 75
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0288,
+          "unlabelled": {
+            "n": 804,
+            "predicted_distribution": {
+              "cdi": 551,
+              "interim": 166,
+              "cdd": 85,
+              "alternance": 2
+            },
+            "share_conf_ge_0.8": 0.22885572139303484,
+            "predicted_distribution_conf_ge_0.8": {
+              "cdi": 163,
+              "interim": 15,
+              "cdd": 6
+            }
+          }
+        },
+        "model_path": null
+      },
+      "experience": {
+        "ft_label_distribution": {
+          "debutant": 7127,
+          "junior": 4126,
+          "confirme": 2407,
+          "senior": 126
+        },
+        "n_train": 11028,
+        "n_test": 2758,
+        "models": {
+          "emb": {
+            "accuracy": 0.9285714285714286,
+            "macro_f1": 0.6882304541154021,
+            "majority_baseline_acc": 0.5170413343002176,
+            "per_class": {
+              "confirme": {
+                "precision": 0.888646288209607,
+                "recall": 0.8443983402489627,
+                "f1": 0.8659574468085106,
+                "support": 482
+              },
+              "debutant": {
+                "precision": 0.9389830508474576,
+                "recall": 0.9712482468443198,
+                "f1": 0.9548431575318855,
+                "support": 1426
+              },
+              "junior": {
+                "precision": 0.9321212121212121,
+                "recall": 0.9321212121212121,
+                "f1": 0.9321212121212121,
+                "support": 825
+              },
+              "senior": {
+                "precision": 0.0,
+                "recall": 0.0,
+                "f1": 0.0,
+                "support": 25
+              }
+            },
+            "train_seconds": 13.62,
+            "ece": 0.11731697139185007,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.8618564176939811,
+                "accuracy": 0.9722339082877577,
+                "residue_share": 0.13814358230601886
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.7632342277012327,
+                "accuracy": 0.9847980997624703,
+                "residue_share": 0.23676577229876727
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.6160261058738216,
+                "accuracy": 0.9929370217775162,
+                "residue_share": 0.38397389412617844
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.4028281363306744,
+                "accuracy": 0.9972997299729973,
+                "residue_share": 0.5971718636693256
+              }
+            ],
+            "mae_levels": 0.10261058738216099,
+            "within_one_level": 0.9699057287889775
+          },
+          "emb+title": {
+            "accuracy": 0.9111675126903553,
+            "macro_f1": 0.7060350173153637,
+            "majority_baseline_acc": 0.5170413343002176,
+            "per_class": {
+              "confirme": {
+                "precision": 0.8458244111349036,
+                "recall": 0.8195020746887967,
+                "f1": 0.8324552160168599,
+                "support": 482
+              },
+              "debutant": {
+                "precision": 0.9320987654320988,
+                "recall": 0.9530154277699859,
+                "f1": 0.9424410540915396,
+                "support": 1426
+              },
+              "junior": {
+                "precision": 0.9142512077294686,
+                "recall": 0.9175757575757576,
+                "f1": 0.9159104658197217,
+                "support": 825
+              },
+              "senior": {
+                "precision": 0.4,
+                "recall": 0.08,
+                "f1": 0.13333333333333333,
+                "support": 25
+              }
+            },
+            "train_seconds": 15.09,
+            "ece": 0.0908181579629499,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.869108049311095,
+                "accuracy": 0.9620358781810596,
+                "residue_share": 0.13089195068890502
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.7657722987672226,
+                "accuracy": 0.984375,
+                "residue_share": 0.23422770123277736
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.640319071791153,
+                "accuracy": 0.9932049830124575,
+                "residue_share": 0.359680928208847
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.44778825235678027,
+                "accuracy": 0.9983805668016195,
+                "residue_share": 0.5522117476432198
+              }
+            ],
+            "mae_levels": 0.12799129804205947,
+            "within_one_level": 0.9619289340101523
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 2659,
+            "n_label_in_trained_classes": 2659,
+            "label_distribution": {
+              "debutant": 1432,
+              "confirme": 712,
+              "senior": 333,
+              "junior": 182
+            },
+            "agreement_all": 0.7130500188040617,
+            "agreement_on_trained_classes": 0.7130500188040617,
+            "agreement_conf_ge_0.8": 0.9048042704626335,
+            "coverage_conf_ge_0.8": 0.4227153065062053,
+            "by_source": {
+              "indeed": 0.7043413173652695,
+              "hellowork": 0.7218442932728647
+            },
+            "confusion_top": [
+              {
+                "regex": "confirme",
+                "model": "debutant",
+                "n": 185
+              },
+              {
+                "regex": "senior",
+                "model": "confirme",
+                "n": 145
+              },
+              {
+                "regex": "senior",
+                "model": "junior",
+                "n": 134
+              },
+              {
+                "regex": "debutant",
+                "model": "junior",
+                "n": 74
+              },
+              {
+                "regex": "debutant",
+                "model": "confirme",
+                "n": 72
+              },
+              {
+                "regex": "confirme",
+                "model": "junior",
+                "n": 72
+              },
+              {
+                "regex": "senior",
+                "model": "debutant",
+                "n": 44
+              },
+              {
+                "regex": "junior",
+                "model": "confirme",
+                "n": 20
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.028,
+          "unlabelled": {
+            "n": 3341,
+            "predicted_distribution": {
+              "debutant": 1558,
+              "confirme": 1016,
+              "junior": 763,
+              "senior": 4
+            },
+            "share_conf_ge_0.8": 0.14277162526189763,
+            "predicted_distribution_conf_ge_0.8": {
+              "debutant": 289,
+              "confirme": 112,
+              "junior": 76
+            }
+          }
+        },
+        "model_path": null
+      },
+      "remote": {
+        "ft_label_distribution": {
+          "aucune_mention": 13217,
+          "teletravail_mentionne": 783
+        },
+        "n_train": 11200,
+        "n_test": 2800,
+        "models": {
+          "emb": {
+            "accuracy": 0.9646428571428571,
+            "macro_f1": 0.7626937850940536,
+            "majority_baseline_acc": 0.9439285714285715,
+            "per_class": {
+              "aucune_mention": {
+                "precision": 0.9642335766423358,
+                "recall": 0.9996216420734014,
+                "f1": 0.9816087683447892,
+                "support": 2643
+              },
+              "teletravail_mentionne": {
+                "precision": 0.9833333333333333,
+                "recall": 0.37579617834394907,
+                "f1": 0.543778801843318,
+                "support": 157
+              }
+            },
+            "train_seconds": 0.39,
+            "ece": 0.021381443675075298,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9857142857142858,
+                "accuracy": 0.9717391304347827,
+                "residue_share": 0.014285714285714235
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.9667857142857142,
+                "accuracy": 0.981529368304396,
+                "residue_share": 0.03321428571428575
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.9457142857142857,
+                "accuracy": 0.9875377643504532,
+                "residue_share": 0.05428571428571427
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.8946428571428572,
+                "accuracy": 0.9932135728542915,
+                "residue_share": 0.10535714285714282
+              }
+            ]
+          },
+          "emb+title": {
+            "accuracy": 0.9675,
+            "macro_f1": 0.7962432957407012,
+            "majority_baseline_acc": 0.9439285714285715,
+            "per_class": {
+              "aucune_mention": {
+                "precision": 0.9684287812041116,
+                "recall": 0.9981082103670071,
+                "f1": 0.9830445313955655,
+                "support": 2643
+              },
+              "teletravail_mentionne": {
+                "precision": 0.9342105263157895,
+                "recall": 0.45222929936305734,
+                "f1": 0.6094420600858369,
+                "support": 157
+              }
+            },
+            "train_seconds": 0.54,
+            "ece": 0.009450226006354052,
+            "thresholds": [
+              {
+                "threshold": 0.6,
+                "coverage": 0.9867857142857143,
+                "accuracy": 0.9743032935215346,
+                "residue_share": 0.013214285714285734
+              },
+              {
+                "threshold": 0.7,
+                "coverage": 0.9682142857142857,
+                "accuracy": 0.9789745481372187,
+                "residue_share": 0.031785714285714306
+              },
+              {
+                "threshold": 0.8,
+                "coverage": 0.9435714285714286,
+                "accuracy": 0.9844814534443603,
+                "residue_share": 0.056428571428571384
+              },
+              {
+                "threshold": 0.9,
+                "coverage": 0.8932142857142857,
+                "accuracy": 0.9916033586565374,
+                "residue_share": 0.10678571428571426
+              }
+            ]
+          }
+        },
+        "best_model": "emb+title",
+        "jobspy": {
+          "labelled": {
+            "n": 6000,
+            "n_label_in_trained_classes": 6000,
+            "label_distribution": {
+              "aucune_mention": 5322,
+              "teletravail_mentionne": 678
+            },
+            "agreement_all": 0.9186666666666666,
+            "agreement_on_trained_classes": 0.9186666666666666,
+            "agreement_conf_ge_0.8": 0.960458452722063,
+            "coverage_conf_ge_0.8": 0.8725,
+            "by_source": {
+              "indeed": 0.9017393957888312,
+              "hellowork": 0.9390378259272861
+            },
+            "confusion_top": [
+              {
+                "regex": "teletravail_mentionne",
+                "model": "aucune_mention",
+                "n": 463
+              },
+              {
+                "regex": "aucune_mention",
+                "model": "teletravail_mentionne",
+                "n": 25
+              }
+            ]
+          },
+          "inference_seconds_per_1k": 0.0243
+        },
+        "model_path": null
+      }
+    }
+  }
+}

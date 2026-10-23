@@ -126,8 +126,8 @@ class TestAnnonce:
         assert "aucune offre" in announce_results(0)
 
     def test_singulier_et_pluriel(self) -> None:
-        assert announce_results(1) == "J'ai trouvé une offre, elle est dans votre fil."
-        assert announce_results(12) == "J'ai trouvé 12 offres, elles sont dans votre fil."
+        assert announce_results(1) == "J'ai trouvé une offre, elle est dans ton fil."
+        assert announce_results(12) == "J'ai trouvé 12 offres, elles sont dans ton fil."
 
 
 class TestIntention:
