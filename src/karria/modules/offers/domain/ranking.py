@@ -37,7 +37,9 @@ class MatchQuality(StrEnum):
 #: Candidats demandés à la fusion hybride pour une recherche. Sans
 #: reclasseur à payer, la fenêtre peut être large : 300 candidats se lisent
 #: en base en ~15 ms.
-RETRIEVAL_LIMIT: Final = 300
+#: Candidats demandés à l'index : assez pour que le fil porte toutes les offres
+#: pertinentes d'une demande large (mesuré 2026-10-23 : « cuisinier · France »).
+RETRIEVAL_LIMIT: Final = 1_500
 #: Les premiers intitulés de la liste sont le métier dit ; les suivants,
 #: des synonymes que Karria a ajoutés.
 PRIMARY_TITLES: Final = 2
@@ -49,7 +51,7 @@ TITLE_WEIGHT: Final = 0.6
 QUALITY_HIGH_SCORE: Final = 0.85
 QUALITY_MEDIUM_SCORE: Final = 0.65
 #: Place maximale du fil issu d'une recherche.
-FEED_MAX_ENTRIES: Final = 150
+FEED_MAX_ENTRIES: Final = 1_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,16 @@ def rank(
         )
     ranked.sort(key=lambda item: item.score, reverse=True)
     return ranked[:limit]
+
+
+def gate_rejects(ordered: Sequence[Offer], criteria: SearchCriteria) -> list[Offer]:
+    """Les offres que le filtre dur retient mais que la porte d'intitulé écarte.
+
+    Ce sont les voisines d'une recherche : « commis de cuisine » pour
+    « cuisinier ». Les élargissements s'en nourrissent.
+    """
+    matcher = TitleMatcher.of(criteria.job_titles, criteria.excluded_titles)
+    return [o for o in ordered if criteria.accepts(o) and matcher.match(o.title) is None]
 
 
 def reasons_for(offer: Offer, criteria: SearchCriteria) -> tuple[str, ...]:

@@ -25,6 +25,7 @@ doublures en mémoire.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -100,6 +101,8 @@ from karria.modules.offers.domain import (
     SearchCriteria,
     Source,
     TargetState,
+    Widening,
+    accepted_widening,
     after_scrape,
     announce_results,
     bands,
@@ -107,6 +110,8 @@ from karria.modules.offers.domain import (
     build_notification,
     candidate_terms,
     canonical_text,
+    choose,
+    clean_suggestions,
     content_hash,
     decide,
     demand_scores,
@@ -114,6 +119,7 @@ from karria.modules.offers.domain import (
     entries_to_remove,
     fold,
     gate_rate,
+    gate_rejects,
     guard_reply,
     hamming,
     index_version,
@@ -124,16 +130,20 @@ from karria.modules.offers.domain import (
     merge_memory,
     normalize_posting,
     parse_location_label,
+    phrase_widenings,
     posting_from_record,
     posting_hash,
     pre_classify,
     priority,
     published_at_of,
     rank,
+    relaxations,
+    render_pending,
     seed_targets,
     simhash64,
     source_place,
     targets_of,
+    title_relaxations,
     title_text,
     validate_terms,
 )
@@ -864,6 +874,8 @@ class SearchResult:
     query_vector: tuple[float, ...]
     #: Candidats retrouvés par l'index.
     candidates: int
+    #: Retenues par le filtre dur, écartées par la porte d'intitulé : les voisines.
+    rejected: tuple[Offer, ...] = ()
 
 
 class SearchOffers:
@@ -881,9 +893,13 @@ class SearchOffers:
         self._offers = offers
 
     async def execute(
-        self, criteria: SearchCriteria, *, exclude: frozenset[UUID] = frozenset()
+        self,
+        criteria: SearchCriteria,
+        *,
+        exclude: frozenset[UUID] = frozenset(),
+        limit: int = RETRIEVAL_LIMIT,
     ) -> SearchResult:
-        """Cherche pour ces critères."""
+        """Cherche pour ces critères ; `limit` borne le rappel (moins pour un simple comptage)."""
         dense = await self._embedder.embed_query(criteria.dense_text())
         candidates = await self._index.search(
             IndexQuery(
@@ -891,16 +907,23 @@ class SearchOffers:
                 title_terms=" ".join(criteria.job_titles),
                 body_terms=" ".join(criteria.lexical_terms()),
                 criteria=criteria,
-                limit=RETRIEVAL_LIMIT,
+                limit=limit,
             )
         )
         window = [c for c in candidates if c.offer_id not in exclude]
         found = await self._offers.find_many([c.offer_id for c in window]) if window else {}
         ordered = [found[c.offer_id] for c in window if c.offer_id in found]
         ranked = rank(ordered, criteria)
-        logger.info("offers.searched", candidates=len(candidates), kept=len(ranked))
+        rejected = tuple(gate_rejects(ordered, criteria))
+        logger.info(
+            "offers.searched", candidates=len(candidates), kept=len(ranked), rejected=len(rejected)
+        )
         return SearchResult(
-            ranked=ranked, offers=found, query_vector=dense, candidates=len(candidates)
+            ranked=ranked,
+            offers=found,
+            query_vector=dense,
+            candidates=len(candidates),
+            rejected=rejected,
         )
 
 
@@ -910,6 +933,8 @@ class AppliedCriteria:
 
     stored: StoredCriteria
     results: int
+    #: La recherche elle-même (ses voisines nourrissent les élargissements).
+    search: SearchResult | None = None
 
 
 class ApplyCriteria:
@@ -1003,7 +1028,12 @@ class ApplyCriteria:
             thin=thin,
             targets=[t.key for t in targets],
         )
-        return AppliedCriteria(stored=stored, results=len(entries))
+        return AppliedCriteria(stored=stored, results=len(entries), search=result)
+
+    async def dismissed_of(self, user_id: UUID) -> frozenset[UUID]:
+        """Les offres que la personne a écartées : jamais recomptées."""
+        states = await self._states.all_of_user(user_id)
+        return frozenset(i for i, state in states.items() if state.dismissed)
 
     async def _validated_terms(self, criteria: SearchCriteria) -> list[str]:
         """Les termes de collecte confirmés par des titres réels de l'index.
@@ -1127,6 +1157,52 @@ class ConversationTurn:
     intent: Intent = Intent.SEARCH
     #: Un garde-fou a repéré ou remplacé quelque chose (journalisé).
     guarded: str | None = None
+    #: Les élargissements proposés, chiffrés.
+    widenings: tuple[Widening, ...] = ()
+
+
+#: Rappel borné pour compter un élargissement : assez pour chiffrer, moins cher qu'une recherche.
+WIDENING_COUNT_LIMIT: Final = 1_000
+
+
+class SuggestWidenings:
+    """Compte ce que chaque relâchement rapporterait — dans notre index, en parallèle — et choisit.
+
+    Le modèle de langage ne voit ces chiffres qu'une fois comptés ; il ne les
+    produit jamais. Les intitulés voisins viennent des offres que la porte
+    d'intitulé a écartées dans la recherche courante : leur gain est connu
+    sans requête.
+    """
+
+    def __init__(self, *, search: SearchOffers) -> None:
+        self._search = search
+
+    async def execute(
+        self,
+        criteria: SearchCriteria,
+        *,
+        current: int,
+        rejected: Sequence[Offer] = (),
+        exclude: frozenset[UUID] = frozenset(),
+    ) -> list[Widening]:
+        """Les propositions, classées par gain."""
+        candidates = relaxations(criteria)
+        results = await asyncio.gather(
+            *(
+                self._search.execute(r.criteria, exclude=exclude, limit=WIDENING_COUNT_LIMIT)
+                for r in candidates
+            )
+        )
+        counted = [(r, len(res.ranked)) for r, res in zip(candidates, results, strict=True)]
+        counted.extend((r, current) for r in title_relaxations(criteria, rejected))
+        chosen = choose(current, counted)
+        logger.info(
+            "offers.widenings_suggested",
+            current=current,
+            candidates=len(counted),
+            chosen=[(w.id, w.gain) for w in chosen],
+        )
+        return chosen
 
 
 class ConverseSearch:
@@ -1154,11 +1230,13 @@ class ConverseSearch:
         queue: JobQueue,
         clock: Clock,
         constitution_version: str,
+        widen: SuggestWidenings | None = None,
     ) -> None:
         self._conversations = conversations
         self._criteria = criteria
         self._dialogue = dialogue
         self._apply = apply
+        self._widen = widen
         self._memory = memory
         self._queue = queue
         self._clock = clock
@@ -1179,9 +1257,12 @@ class ConverseSearch:
             raise ConversationNotFoundError(conversation_id)
 
         stored = await self._criteria.find(user_id)
+        pending = await self._conversations.pending_widenings(conversation_id)
         flag = pre_classify(content)
         guarded: str | None = flag.value if flag else None
         results: int | None = None
+        widenings: list[Widening] = []
+        accepted = accepted_widening(content, pending)
         if flag is PreFlag.IDENTITY_PROBE:
             # La question d'identité ne passe pas par le modèle : la réponse
             # est celle de la constitution, identique à chaque fois.
@@ -1192,6 +1273,19 @@ class ConverseSearch:
                 intent=Intent.OFF_TOPIC,
             )
             reply = IDENTITY_REPLY
+        elif accepted is not None:
+            # Une réponse rapide reprise telle quelle : l'élargissement s'applique
+            # sans repasser par le modèle — exact, immédiat.
+            applied = await self._apply.execute(user_id, accepted.criteria)
+            stored, results = applied.stored, applied.results
+            outcome = DialogueOutcome(
+                status=DialogueStatus.SEARCH,
+                reply=f"C'est fait, j'ai élargi : {accepted.label}.",
+                criteria=accepted.criteria,
+                intent=Intent.REFINE,
+            )
+            widenings = await self._widenings_for(user_id, applied)
+            reply = f"{outcome.reply} {announce_results(results)} {phrase_widenings(results, widenings)}".strip()
         else:
             memory = await self._memory.find(user_id)
             history = [
@@ -1205,6 +1299,7 @@ class ConverseSearch:
                 current=stored.criteria if stored else None,
                 message=content,
                 memory=memory.facts.render() if memory and not memory.facts.is_empty else None,
+                facts=render_pending(pending),
             )
             if proposal.criteria is not None:
                 proposal = dataclasses.replace(
@@ -1224,7 +1319,13 @@ class ConverseSearch:
             if outcome.status is DialogueStatus.SEARCH and outcome.criteria is not None:
                 applied = await self._apply.execute(user_id, outcome.criteria)
                 stored, results = applied.stored, applied.results
-                reply = f"{reply} {announce_results(results)}".strip()
+                widenings = await self._widenings_for(user_id, applied)
+                reply = (
+                    f"{reply} {announce_results(results)} {phrase_widenings(results, widenings)}"
+                ).strip()
+        if outcome.status is DialogueStatus.SEARCH:
+            await self._conversations.set_pending_widenings(conversation_id, widenings)
+        suggestions = clean_suggestions((*(w.message for w in widenings), *outcome.suggestions))
 
         await self._conversations.add_message(conversation_id, role="user", content=content, at=now)
         message = await self._conversations.add_message(
@@ -1247,9 +1348,22 @@ class ConverseSearch:
             status=outcome.status,
             criteria=stored,
             results_count=results,
-            suggestions=outcome.suggestions,
+            suggestions=suggestions,
             intent=outcome.intent,
             guarded=guarded,
+            widenings=tuple(widenings),
+        )
+
+    async def _widenings_for(self, user_id: UUID, applied: AppliedCriteria) -> list[Widening]:
+        """Ce que Karria pourrait proposer d'élargir après cette recherche."""
+        if self._widen is None or applied.search is None:
+            return []
+        states = await self._apply.dismissed_of(user_id)
+        return await self._widen.execute(
+            applied.stored.criteria,
+            current=applied.results,
+            rejected=applied.search.rejected,
+            exclude=states,
         )
 
 

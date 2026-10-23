@@ -24,6 +24,7 @@ from karria.modules.offers.domain import (
 from karria.modules.offers.infrastructure.prompts import (
     SYSTEM,
     context_block,
+    facts_block,
     memory_block,
     user_message,
 )
@@ -72,12 +73,22 @@ class LlmDialogue:
         current: SearchCriteria | None,
         message: str,
         memory: str | None = None,
+        facts: str | None = None,
     ) -> DialogueProposal:
         """Un tour : constitution, mémoire, critères courants, fenêtre récente, message → proposition validée."""
         request = LlmRequest(
             task=TASK,
             parts=(
-                f"{memory_block(memory)}\n\n{context_block(current)}\n\n{user_message(message)}",
+                "\n\n".join(
+                    block
+                    for block in (
+                        memory_block(memory),
+                        facts_block(facts),
+                        context_block(current),
+                        user_message(message),
+                    )
+                    if block
+                ),
             ),
             system=SYSTEM,
             history=tuple(history),

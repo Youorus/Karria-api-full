@@ -18,6 +18,7 @@ from karria.modules.offers.domain import (
     Salary,
     SearchCriteria,
     Source,
+    gate_rejects,
     quality_of,
     rank,
     reasons_for,
@@ -30,6 +31,7 @@ from karria.modules.offers.domain.ranking import (
     TITLE_SYNONYM_SCORE,
     TITLE_WEIGHT,
 )
+from offers.fakes import make_criteria
 
 pytestmark = pytest.mark.unit
 
@@ -155,3 +157,18 @@ class TestRaisons:
         reasons = reasons_for(make_offer(remote=RemoteMode.REMOTE), found)
         assert reasons == ("CDI", "Versailles · 18 km", "Télétravail")
         assert reasons_for(make_offer(), criteria(salary_min_monthly=1_800))[-1] == "1900 €/mois"
+
+
+class TestVoisines:
+    def test_les_ecartees_par_la_porte_sont_les_voisines(self) -> None:
+        criteria = make_criteria(job_titles=["cuisinier"])
+        kept = make_offer(title="Cuisinier H/F")
+        neighbour = make_offer(title="Commis de cuisine H/F")
+        far = make_offer(
+            title="Commis de cuisine",
+            location=Location(label="Lyon", latitude=45.75, longitude=4.85),
+        )
+
+        rejected = gate_rejects([kept, neighbour, far], criteria)
+
+        assert [o.id for o in rejected] == [neighbour.id]

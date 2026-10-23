@@ -43,6 +43,7 @@ from karria.modules.offers.domain import (
     TargetDemand,
     TargetOrigin,
     TargetStats,
+    Widening,
     bands,
     fold,
 )
@@ -726,6 +727,21 @@ class TortoiseConversationRepository:
         )
         return [_to_message(row) for row in reversed(rows)]
 
+    async def set_pending_widenings(
+        self, conversation_id: UUID, widenings: Sequence[Widening]
+    ) -> None:
+        """Remplace."""
+        await ConversationModel.filter(id=conversation_id).update(
+            pending_widenings=[w.to_dict() for w in widenings] or None
+        )
+
+    async def pending_widenings(self, conversation_id: UUID) -> Sequence[Widening]:
+        """Relit, validé."""
+        row = await ConversationModel.get_or_none(id=conversation_id)
+        if row is None or not row.pending_widenings:
+            return []
+        return [Widening.from_dict(item) for item in row.pending_widenings]
+
     async def user_turns_since(self, user_id: UUID, since: datetime) -> int:
         """Messages de la personne depuis."""
         return await MessageModel.filter(
@@ -761,19 +777,24 @@ class TortoiseFeedRepository:
     async def replace(
         self, user_id: UUID, entries: Sequence[FeedEntry], *, remove: Sequence[UUID]
     ) -> None:
-        """Retire puis écrit."""
+        """Retire puis écrit — en un lot : un fil peut porter mille offres."""
         if remove:
             await FeedEntryModel.filter(user_id=user_id, offer_id__in=list(remove)).delete()
-        for entry in entries:
-            await FeedEntryModel.update_or_create(
-                user_id=user_id,
-                offer_id=entry.offer_id,
-                defaults={
-                    "score": entry.score,
-                    "quality": entry.quality,
-                    "reasons": list(entry.reasons),
-                    "origin": entry.origin,
-                },
+        if entries:
+            await FeedEntryModel.bulk_create(
+                [
+                    FeedEntryModel(
+                        user_id=user_id,
+                        offer_id=e.offer_id,
+                        score=e.score,
+                        quality=e.quality,
+                        reasons=list(e.reasons),
+                        origin=e.origin,
+                    )
+                    for e in entries
+                ],
+                on_conflict=["user_id", "offer_id"],
+                update_fields=["score", "quality", "reasons", "origin", "updated_at"],
             )
 
     async def add_many(self, entries: Sequence[FeedEntry]) -> None:

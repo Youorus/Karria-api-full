@@ -30,6 +30,7 @@ from karria.modules.offers.domain import (
     TargetDemand,
     TargetOrigin,
     TargetStats,
+    Widening,
 )
 
 # ---------------------------------------------------------------------
@@ -300,8 +301,12 @@ class SearchDialogue(Protocol):
         current: SearchCriteria | None,
         message: str,
         memory: str | None = None,
+        facts: str | None = None,
     ) -> DialogueProposal:
         """Une réponse et des critères, à partir de l'échange et de la mémoire de la personne.
+
+        `facts` : des données comptées par l'application (les élargissements
+        proposés au tour précédent), que le modèle relit sans les modifier.
 
         Raises:
             ModelUnavailableError: Le fournisseur ne répond pas.
@@ -549,6 +554,16 @@ class ConversationRepository(Protocol):
 
     async def recent_messages(self, conversation_id: UUID, *, limit: int) -> Sequence[Message]:
         """Les derniers messages, du plus ancien au plus récent."""
+        ...
+
+    async def set_pending_widenings(
+        self, conversation_id: UUID, widenings: Sequence[Widening]
+    ) -> None:
+        """Garde les élargissements proposés à ce tour (vide : plus rien en attente)."""
+        ...
+
+    async def pending_widenings(self, conversation_id: UUID) -> Sequence[Widening]:
+        """Les élargissements proposés au dernier tour de recherche."""
         ...
 
     async def user_turns_since(self, user_id: UUID, since: datetime) -> int:

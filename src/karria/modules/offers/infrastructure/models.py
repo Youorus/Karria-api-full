@@ -242,6 +242,9 @@ class ConversationModel(BaseDBModel):
 
     user_id = fields.UUIDField(db_index=True)
     last_message_at = fields.DatetimeField()
+    pending_widenings: list[dict[str, Any]] | None = fields.JSONField(
+        null=True, description="Les élargissements proposés au dernier tour de recherche."
+    )
 
     class Meta:
         table = "offers_conversations"

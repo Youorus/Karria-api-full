@@ -40,6 +40,7 @@ from karria.modules.offers.domain import (
     RemoteMode,
     Schedule,
     SearchCriteria,
+    WideningKind,
 )
 
 #: Longueur de l'extrait affiché sur une carte du fil.
@@ -439,6 +440,18 @@ class MessageResponse(BaseModel):
     created_at: datetime
 
 
+class WideningResponse(BaseModel):
+    """Un élargissement que Karria propose, chiffré sur la base."""
+
+    id: str = Field(description="Stable dans la conversation : `radius-50`, `contract-interim`…")
+    kind: WideningKind
+    label: str = Field(description="La phrase complète : « élargir à 50 km autour de Lyon ».")
+    gain: int = Field(description="Offres **en plus** dans le fil si la personne accepte.")
+    message: str = Field(
+        description="Le texte à envoyer comme message pour accepter ; figure aussi dans `suggestions`."
+    )
+
+
 class AssistantReplyResponse(BaseModel):
     """La réponse de Karria, et ce qu'elle a déclenché."""
 
@@ -458,6 +471,10 @@ class AssistantReplyResponse(BaseModel):
         description="Ce que Karria a compris du message : `search`, `refine`, `career_talk`, "
         "`app_help`, `small_talk`, `off_topic`."
     )
+    widenings: list[WideningResponse] = Field(
+        default_factory=list,
+        description="0 à 3 élargissements comptés sur la base ; envoyer `message` pour accepter.",
+    )
 
     @classmethod
     def from_turn(cls, turn: ConversationTurn) -> AssistantReplyResponse:
@@ -476,6 +493,12 @@ class AssistantReplyResponse(BaseModel):
             criteria=CriteriaResponse.from_stored(turn.criteria) if turn.criteria else None,
             suggestions=list(turn.suggestions),
             intent=turn.intent,
+            widenings=[
+                WideningResponse(
+                    id=w.id, kind=w.kind, label=w.label, gain=w.gain, message=w.message
+                )
+                for w in turn.widenings
+            ],
         )
 
 

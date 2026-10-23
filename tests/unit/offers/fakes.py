@@ -51,6 +51,7 @@ from karria.modules.offers.domain import (
     TargetDemand,
     TargetOrigin,
     TargetStats,
+    Widening,
     bands,
     canonical_text,
     content_hash,
@@ -519,10 +520,17 @@ class FakeDialogue:
         current: SearchCriteria | None,
         message: str,
         memory: str | None = None,
+        facts: str | None = None,
     ) -> DialogueProposal:
         """La proposition posée."""
         self.calls.append(
-            {"history": list(history), "current": current, "message": message, "memory": memory}
+            {
+                "history": list(history),
+                "current": current,
+                "message": message,
+                "memory": memory,
+                "facts": facts,
+            }
         )
         return self.proposal
 
@@ -744,6 +752,7 @@ class InMemoryConversationRepository:
         self.owners: dict[UUID, UUID] = {}
         self.messages: list[Message] = []
         self.turns_today = 0
+        self.pending: dict[UUID, list[Widening]] = {}
 
     async def create(self, user_id: UUID, *, at: datetime) -> UUID:
         """Ouvre."""
@@ -768,6 +777,16 @@ class InMemoryConversationRepository:
     async def recent_messages(self, conversation_id: UUID, *, limit: int) -> Sequence[Message]:
         """Les derniers."""
         return [m for m in self.messages if m.conversation_id == conversation_id][-limit:]
+
+    async def set_pending_widenings(
+        self, conversation_id: UUID, widenings: Sequence[Widening]
+    ) -> None:
+        """Garde."""
+        self.pending[conversation_id] = list(widenings)
+
+    async def pending_widenings(self, conversation_id: UUID) -> Sequence[Widening]:
+        """Relit."""
+        return list(self.pending.get(conversation_id, []))
 
     async def user_turns_since(self, user_id: UUID, since: datetime) -> int:
         """Le compteur posé."""

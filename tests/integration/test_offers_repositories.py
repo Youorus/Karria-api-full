@@ -32,6 +32,8 @@ from karria.modules.offers.domain import (
     TargetOrigin,
     TargetState,
     TargetStats,
+    Widening,
+    WideningKind,
     bands,
 )
 from karria.modules.offers.infrastructure import (
@@ -562,3 +564,24 @@ class TestEtats:
         assert await repository.offer_ids_where(user, seen=True) == [seen]
         assert await repository.offer_ids_where(user) == []
         assert await repository.delete_all_of_user(user) == 3
+
+
+class TestElargissementsEnAttente:
+    async def test_les_elargissements_se_gardent_et_se_relisent(self) -> None:
+        repository = TortoiseConversationRepository()
+        conversation = await repository.create(uuid4(), at=NOW)
+        widening = Widening(
+            id="radius-50",
+            kind=WideningKind.RADIUS,
+            label="élargir à 50 km autour de Paris",
+            gain=42,
+            message="Élargir à 50 km : +42",
+            criteria=SearchCriteria(query="serveur", job_titles=["serveur"], whole_france=True),
+        )
+
+        assert await repository.pending_widenings(conversation) == []
+        await repository.set_pending_widenings(conversation, [widening])
+        assert await repository.pending_widenings(conversation) == [widening]
+        await repository.set_pending_widenings(conversation, [])
+        assert await repository.pending_widenings(conversation) == []
+        assert await repository.pending_widenings(uuid4()) == []

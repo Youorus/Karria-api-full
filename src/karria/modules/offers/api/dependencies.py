@@ -52,6 +52,7 @@ from karria.modules.offers.application import (
     SearchDialogue,
     SearchOffers,
     SetAlertsEnabled,
+    SuggestWidenings,
     SyncIndex,
     TextEmbedder,
     UpdateKarriaMemory,
@@ -300,6 +301,7 @@ def get_converse_search(  # noqa: PLR0917 - FastAPI injecte par position
     memory: MemoryRepositoryDep,
     queue: JobQueueDep,
     clock: ClockDep,
+    search: SearchOffersDep,
 ) -> ConverseSearch:
     """Un tour de conversation, sous la constitution courante."""
     return ConverseSearch(
@@ -307,6 +309,7 @@ def get_converse_search(  # noqa: PLR0917 - FastAPI injecte par position
         criteria=criteria,
         dialogue=dialogue,
         apply=apply,
+        widen=SuggestWidenings(search=search),
         memory=memory,
         queue=queue,
         clock=clock,
