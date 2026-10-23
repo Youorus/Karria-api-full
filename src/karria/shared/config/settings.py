@@ -9,8 +9,8 @@ Contrat
   et `RUN_STARTUP_REINDEX` par variable d'environnement — et celle qui
   rend une configuration illisible en dix-huit mois.
 - Les réglages sont **composés par domaine** (`app`, `db`, `security`,
-  `storage`, `mail`, `social`, `push`, `gemini`, `observability`) et non
-  alignés à plat. Chaque bloc
+  `storage`, `mail`, `social`, `push`, `gemini`, `llm`, `qdrant`, `inference`,
+  `geocoding`, `collector`, `observability`) et non alignés à plat. Chaque bloc
   est lisible seul et peut être injecté seul dans un test.
 - L'objet est **injecté** via `SettingsDep`, jamais importé comme singleton
   global. Un test substitue la configuration sans monkeypatch.
@@ -33,10 +33,10 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 import structlog
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from karria.shared.config.providers import PROFILES, Provider, ProviderProfile
@@ -399,6 +399,130 @@ class GeminiSettings(BaseModel):
         return bool(self.api_key.get_secret_value())
 
 
+#: Les fournisseurs que le routeur connaît (`shared/llm/ports.py::Provider`, même liste).
+LLM_PROVIDERS: Final[tuple[str, ...]] = ("gemini", "anthropic", "openai", "compatible")
+
+
+class LlmProviderSettings(BaseModel):
+    """Un fournisseur de modèles : sa clé, son adresse, son délai."""
+
+    api_key: SecretStr = SecretStr("")
+    #: Vide : l'adresse par défaut du fournisseur (`shared/llm/*.py`).
+    base_url: str = ""
+    request_timeout_seconds: float = Field(default=60.0, gt=0)
+    #: Pour `compatible` seulement : `json_schema` si le serveur sait imposer
+    #: un schéma (vLLM, Mistral), `json_object` sinon (le schéma est alors
+    #: rappelé dans la consigne).
+    structured_output: Literal["json_schema", "json_object"] = "json_schema"
+
+    def is_configured(self, provider: str) -> bool:
+        """A-t-on de quoi l'appeler ? Une clé — ou, pour un serveur `compatible` local, une adresse."""
+        if self.api_key.get_secret_value():
+            return True
+        return provider == "compatible" and bool(self.base_url)
+
+
+class LlmProvidersSettings(BaseModel):
+    """`LLM__PROVIDERS__<FOURNISSEUR>__API_KEY`, `__BASE_URL`…"""
+
+    gemini: LlmProviderSettings = Field(default_factory=LlmProviderSettings)
+    anthropic: LlmProviderSettings = Field(default_factory=LlmProviderSettings)
+    openai: LlmProviderSettings = Field(default_factory=LlmProviderSettings)
+    compatible: LlmProviderSettings = Field(default_factory=LlmProviderSettings)
+
+
+class LlmTaskRoutes(BaseModel):
+    """`LLM__TASKS__<TACHE>=fournisseur:modèle` — une route par tâche que les modules nomment.
+
+    Vide : la route par défaut, dérivée de `GEMINI__TEXT_MODEL` /
+    `GEMINI__IMAGE_MODEL` (`Settings._default_llm_routes`), pour qu'une
+    configuration d'avant l'ADR-0018 continue de fonctionner telle quelle.
+    """
+
+    search_dialogue: str = ""
+    cv_interpret: str = ""
+    cv_extract: str = ""
+    transcribe: str = ""
+    portrait: str = ""
+    #: L'enrichissement des offres (champs manquants) et la mémoire de Karria.
+    enrich: str = ""
+    memory: str = ""
+
+
+class LlmSettings(BaseModel):
+    """Le routage des modèles de langage (ADR-0018)."""
+
+    providers: LlmProvidersSettings = Field(default_factory=LlmProvidersSettings)
+    tasks: LlmTaskRoutes = Field(default_factory=LlmTaskRoutes)
+    #: `LLM__FALLBACKS__<TACHE>=fournisseur:modèle` : le repli sur panne, facultatif.
+    fallbacks: LlmTaskRoutes = Field(default_factory=LlmTaskRoutes)
+
+
+class QdrantSettings(BaseModel):
+    """Accès au moteur de recherche vectorielle (module `offers`).
+
+    Les collections portent l'environnement dans leur nom
+    (`karria-production-offers`), comme les buckets : une recette ne peut
+    pas écrire dans l'index de la production. La clé voyage en en-tête.
+    """
+
+    url: str = "http://localhost:6333"
+    api_key: SecretStr = SecretStr("")
+    collection_prefix: str = Field(default="karria", min_length=1, max_length=32)
+    request_timeout_seconds: float = Field(default=30.0, gt=0)
+
+
+class InferenceSettings(BaseModel):
+    """Le serveur d'inférence local (Text Embeddings Inference) : les plongements.
+
+    Le nom du modèle est de la configuration parce qu'il décrit ce que le
+    serveur sert ; il entre aussi dans la **version d'index** : un vecteur
+    calculé par un autre modèle n'est pas comparable, et tout changement de
+    modèle impose un ré-indexage explicite (jamais au démarrage).
+    """
+
+    embeddings_url: str = "http://localhost:8080"
+    #: Ce que le serveur sert, quantification comprise : `@int8` distingue
+    #: deux plongements qui ne sont pas comparables entre eux.
+    embedding_model: str = "intfloat/multilingual-e5-base@int8"
+    embedding_dimension: int = Field(default=768, ge=8)
+    #: Textes par appel au serveur de plongements, et appels simultanés.
+    #: TEI (ONNX) traite huit textes par passe ; quatre appels de huit
+    #: occupent les huit cœurs du serveur (mesuré le 2026-10-22). Une
+    #: machine différente se règle ici, pas dans le code.
+    embedding_batch_size: int = Field(default=8, ge=1, le=256)
+    embedding_concurrency: int = Field(default=4, ge=1, le=32)
+    request_timeout_seconds: float = Field(default=120.0, gt=0)
+
+    @property
+    def enabled(self) -> bool:
+        """Le serveur est-il renseigné ? (Le défaut pointe le poste local.)"""
+        return bool(self.embeddings_url)
+
+
+class GeocodingSettings(BaseModel):
+    """Le géocodeur : la Base Adresse Nationale, ou un miroir."""
+
+    ban_url: str = "https://api-adresse.data.gouv.fr"
+    request_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
+class CollectorAccessSettings(BaseModel):
+    """L'accès du collecteur d'offres aux routes internes (`/internal/offers/*`).
+
+    Le collecteur est un processus à part (`python -m karria.collector`) ;
+    il s'authentifie par ce jeton de service, partagé par ses seules deux
+    configurations. Vide : les routes internes répondent 401 à tout le monde.
+    """
+
+    token: SecretStr = SecretStr("")
+
+    @property
+    def enabled(self) -> bool:
+        """Un jeton est-il configuré ?"""
+        return bool(self.token.get_secret_value())
+
+
 class ObservabilitySettings(BaseModel):
     """Journalisation et traçabilité."""
 
@@ -417,6 +541,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    _explicit_llm_routes: dict[str, str] = PrivateAttr(default_factory=dict)
+
     app: AppSettings = Field(default_factory=AppSettings)
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
@@ -425,6 +551,11 @@ class Settings(BaseSettings):
     social: SocialSettings = Field(default_factory=SocialSettings)
     push: PushSettings = Field(default_factory=PushSettings)
     gemini: GeminiSettings = Field(default_factory=GeminiSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+    qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
+    inference: InferenceSettings = Field(default_factory=InferenceSettings)
+    geocoding: GeocodingSettings = Field(default_factory=GeocodingSettings)
+    collector: CollectorAccessSettings = Field(default_factory=CollectorAccessSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:
@@ -441,6 +572,77 @@ class Settings(BaseSettings):
                 "MAIL__PROVIDER=console : les codes de connexion s'afficheraient "
                 "dans les journaux au lieu d'atteindre leur destinataire."
             )
+        return problems
+
+    @model_validator(mode="after")
+    def _default_llm_routes(self) -> Self:
+        """Avant l'ADR-0018, Gemini seul : ses variables restent la source par défaut.
+
+        `GEMINI__API_KEY` alimente `LLM__PROVIDERS__GEMINI__API_KEY` s'il est
+        vide, et chaque tâche sans route part sur `GEMINI__TEXT_MODEL`
+        (`GEMINI__IMAGE_MODEL` pour le portrait). Les routes **explicites**
+        sont retenues à part : ce sont elles que le démarrage vérifie
+        strictement (`llm_problems`) ; une route par défaut sans clé n'est
+        qu'une fonctionnalité d'IA absente, qui avertit sans bloquer.
+        """
+        self._explicit_llm_routes = {
+            task: value
+            for task, value in {
+                **self.llm.tasks.model_dump(),
+                **{f"fallback:{t}": v for t, v in self.llm.fallbacks.model_dump().items()},
+            }.items()
+            if value.strip()
+        }
+        gemini = self.llm.providers.gemini
+        if not gemini.api_key.get_secret_value() and self.gemini.enabled:
+            gemini.api_key = self.gemini.api_key
+        if not gemini.base_url:
+            gemini.base_url = self.gemini.base_url
+        text = f"gemini:{self.gemini.text_model}"
+        for task in (
+            "search_dialogue",
+            "cv_interpret",
+            "cv_extract",
+            "transcribe",
+            "enrich",
+            "memory",
+        ):
+            if not getattr(self.llm.tasks, task).strip():
+                setattr(self.llm.tasks, task, text)
+        if not self.llm.tasks.portrait.strip():
+            self.llm.tasks.portrait = f"gemini:{self.gemini.image_model}"
+        return self
+
+    def llm_problems(self) -> list[str]:
+        """Les routes LLM explicites qui ne tiendraient pas : mal formées, ou vers un fournisseur sans clé.
+
+        Vérifié au démarrage en environnement déployé (bloque) ; en local,
+        `build_language_model` l'avertit seulement. Une route laissée par
+        défaut (Gemini) sans clé n'est pas un problème de configuration mais
+        une IA absente : `config.gemini_disabled` l'annonce. La lecture est
+        faite ici, sans importer `shared/llm` : la configuration est lue par
+        le collecteur aussi, qui ne doit pas connaître le client sortant.
+        """
+        problems: list[str] = []
+        for task, value in self._explicit_llm_routes.items():
+            variable = (
+                f"LLM__FALLBACKS__{task.removeprefix('fallback:').upper()}"
+                if task.startswith("fallback:")
+                else f"LLM__TASKS__{task.upper()}"
+            )
+            provider, sep, model = value.strip().partition(":")
+            provider = provider.strip().lower()
+            if not sep or not model.strip() or provider not in LLM_PROVIDERS:
+                problems.append(
+                    f"{variable}=« {value} » : la forme attendue est fournisseur:modèle, "
+                    f"fournisseur parmi {', '.join(LLM_PROVIDERS)}."
+                )
+                continue
+            if not getattr(self.llm.providers, provider).is_configured(provider):
+                problems.append(
+                    f"{variable} est routée vers {provider}, mais "
+                    f"LLM__PROVIDERS__{provider.upper()}__API_KEY est vide."
+                )
         return problems
 
     @model_validator(mode="after")
@@ -482,6 +684,7 @@ class Settings(BaseSettings):
                 "table de sessions suffit à casser les codes à six chiffres."
             )
         problems.extend(self._provider_problems())
+        problems.extend(self.llm_problems())
         if not self.gemini.enabled:
             # Avertit sans bloquer : seule la création du CV en est privée,
             # et retenir un correctif urgent pour une clé d'IA manquante

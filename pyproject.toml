@@ -52,11 +52,27 @@ dependencies = [
     # Aucun SDK Google ni Firebase : les jetons sont des JWT standard, et
     # un SDK par fournisseur serait deux fois plus de surface à suivre.
     "pyjwt[crypto]>=2.10",
-    # --- Ce qui n'est PAS ici, et pourquoi ---------------------------
-    # Aucun SDK de modèle (Gemini), aucun client de source d'offres, aucun
-    # hachage de mot de passe : chaque dépendance arrive avec le module
-    # qui la justifie, dans le commit qui le crée (AGENTS.md §6.11).
+    # --- Lecture des CV importés (module `cv`) -----------------------
     "pypdf>=6.21.1",
+    # --- Offres d'emploi (module `offers`, ADR-0016) -----------------
+    # Collecte : JobSpy interroge Indeed et HelloWork. Il tire pandas et
+    # BeautifulSoup ; il n'est importé que par `karria.collector`, un
+    # processus à part (même image, autre commande) — import-linter
+    # interdit à l'API de le charger.
+    "python-jobspy>=1.4.0",
+    # File de travaux durable sur PostgreSQL (collecte planifiée, index,
+    # alertes, suite du fil) : pas de Redis à opérer, pas d'éviction
+    # silencieuse de travaux (la V1 a perdu des travaux ARQ sous
+    # `allkeys-lru`), et un dédoublonnage par verrou de file natif.
+    "procrastinate>=3.10.0",
+    # Le pilote de procrastinate ; `binary` embarque libpq (rien à
+    # installer dans l'image), `pool` sert le connecteur asynchrone.
+    "psycopg[binary,pool]>=3.3.6",
+    # --- Ce qui n'est PAS ici, et pourquoi ---------------------------
+    # Aucun SDK de modèle (Gemini), aucun client Qdrant ni TEI (trois
+    # appels REST chacun, sur le client sortant du socle), aucun hachage
+    # de mot de passe : chaque dépendance arrive avec le module qui la
+    # justifie, dans le commit qui le crée (AGENTS.md §6.11).
 ]
 
 [project.optional-dependencies]
@@ -186,7 +202,7 @@ enable_error_code = [
 # l'imprécision à la frontière de la bibliothèque, JAMAIS dans notre propre
 # code : le client S3 est typé `Any` derrière le port `ObjectStorage`, et
 # aucun appelant ne voit jamais ce type.
-module = ["tortoise.*", "aerich.*", "aioboto3.*", "aiobotocore.*", "botocore.*"]
+module = ["tortoise.*", "aerich.*", "aioboto3.*", "aiobotocore.*", "botocore.*", "jobspy.*", "pandas.*"]
 ignore_missing_imports = true
 
 
@@ -196,7 +212,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = [
@@ -275,6 +291,37 @@ layers = ["karria.main", "karria.bootstrap", "karria.modules", "karria.shared"]
 # dessus. `shared` ignore donc `modules` et `bootstrap` ; `modules` ignore
 # `bootstrap`. Seul l'assemblage voit l'ensemble — c'est son rôle.
 
+# --- Le collecteur, de l'autre côté du contrat (ADR-0016) -------------
+[[tool.importlinter.contracts]]
+name = "Collecteur — il ne connaît de l'API que son contrat HTTP"
+type = "forbidden"
+source_modules = ["karria.collector"]
+forbidden_modules = [
+    "karria.main",
+    "karria.bootstrap",
+    "karria.modules",
+    "karria.shared.database",
+    "karria.shared.storage",
+    "karria.shared.queue",
+    "karria.shared.http",
+    "karria.shared.auth",
+    "karria.shared.mail",
+    "tortoise",
+    "fastapi",
+    "procrastinate",
+]
+# Le collecteur parle à des sites tiers et peut être banni ou cassé : il
+# ne doit pouvoir atteindre ni la base, ni le stockage, ni la file. Il
+# n'emprunte au socle que la journalisation (et sa configuration).
+
+[[tool.importlinter.contracts]]
+name = "Collecteur — l'API ne l'importe jamais"
+type = "forbidden"
+source_modules = ["karria.main", "karria.bootstrap", "karria.modules", "karria.shared"]
+forbidden_modules = ["karria.collector", "jobspy"]
+# JobSpy (et pandas derrière lui) ne se charge que dans le processus du
+# collecteur : une API qui l'importerait hériterait de ses pannes.
+
 # --- Règle 2 ---------------------------------------------------------
 [[tool.importlinter.contracts]]
 name = "Règle 2 — les dépendances vont vers l'intérieur"
@@ -289,6 +336,7 @@ containers = [
     "karria.modules.identity",
     "karria.modules.devices",
     "karria.modules.cv",
+    "karria.modules.offers",
 ]
 
 [[tool.importlinter.contracts]]
@@ -299,6 +347,7 @@ source_modules = [
     "karria.modules.identity.domain",
     "karria.modules.devices.domain",
     "karria.modules.cv.domain",
+    "karria.modules.offers.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -326,6 +375,7 @@ modules = [
     "karria.modules.identity",
     "karria.modules.devices",
     "karria.modules.cv",
+    "karria.modules.offers",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.

@@ -128,6 +128,15 @@ class JsonClient:
         suffixe = f"?{urllib.parse.urlencode(params)}" if params else ""
         return await self._call("GET", f"{path}{suffixe}", None)
 
+    async def request_json(self, method: str, path: str, payload: Any = None) -> JsonResponse:
+        """Envoie une requête de méthode quelconque (`PUT`, `DELETE`, `PATCH`…).
+
+        Les API REST qui distinguent la création (`PUT`) de l'interrogation
+        (`POST`) — Qdrant, par exemple — en ont besoin ; `post_json` et
+        `get_json` restent les formes courantes.
+        """
+        return await self._call(method.upper(), path, payload)
+
     async def _call(self, method: str, path: str, payload: Any) -> JsonResponse:
         url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         derniere: OutboundError | None = None

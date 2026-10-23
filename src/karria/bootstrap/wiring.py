@@ -37,9 +37,9 @@ Les branchements d'aujourd'hui
 - `identity.get_main_device_lookup` ← `devices.GetMainDevice`. Sans lui,
   la trace de départ ignore la plateforme et la version de l'app
   (ADR-0015) : dégradé, pas cassé.
-- `devices.get_send_push_to_user` n'est branché sur rien : aucun module
-  n'a encore de port « prévenir cette personne ». Le jour venu, la ligne
-  s'écrit ici, pas dans le module demandeur.
+- `offers.get_user_notifier` ← `devices.SendPushToUser`. Sans lui, les
+  alertes d'offres enrichissent le fil mais aucune notification ne part
+  (`offers.notifier_unwired`) : dégradé, pas cassé.
 
 Les ponts du bus
 ----------------
@@ -47,11 +47,13 @@ Un module ne peut pas s'abonner à l'événement d'un autre : il faudrait
 qu'il importe son type. Les abonnements **entre** modules se font donc ici,
 dans `subscribe_bridges`, appelé par le `lifespan` une fois les ressources
 ouvertes. Aujourd'hui : `identity.AccountDeleted` → `devices` oublie les
-appareils, `cv` oublie brouillon, CV et photos (ADR-0015).
+appareils, `cv` oublie brouillon, CV et photos, `offers` oublie critères,
+fil, états et conversations (ADR-0015).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
@@ -60,8 +62,10 @@ from fastapi import Depends, Request
 from karria.modules.cv import build_forget_user
 from karria.modules.devices import (
     GetMainDevice,
+    SendPushToUser,
     build_forget_user_devices,
     get_get_main_device,
+    get_send_push_to_user,
 )
 from karria.modules.identity import (
     AccountDeleted,
@@ -70,6 +74,13 @@ from karria.modules.identity import (
     ResolveSession,
     get_main_device_lookup,
     get_resolve_session,
+)
+from karria.modules.offers import (
+    UserNotifier,
+    get_user_notifier,
+)
+from karria.modules.offers import (
+    build_forget_user as build_forget_user_offers,
 )
 from karria.shared.auth import Principal, resolve_principal
 from karria.shared.logging import get_logger
@@ -143,6 +154,47 @@ def main_device_lookup_from_devices(
     return DevicesMainDeviceLookup(main_device)
 
 
+class DevicesUserNotifier:
+    """Implémente le port `UserNotifier` d'`offers` avec `devices.SendPushToUser`."""
+
+    def __init__(self, send: SendPushToUser) -> None:
+        self._send = send
+
+    async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
+        """Achemine, et rend le nombre d'appareils qui ont accepté."""
+        summary = await self._send.execute(user_id=user_id, title=title, body=body, data=data)
+        return summary.accepted
+
+
+def user_notifier_from_devices(
+    send: Annotated[SendPushToUser, Depends(get_send_push_to_user)],
+) -> UserNotifier:
+    """La réponse du module `devices` au besoin d'`offers`."""
+    return DevicesUserNotifier(send)
+
+
+def build_user_notifier() -> UserNotifier:
+    """Le même branchement, hors requête, pour `scripts/offers_worker.py`."""
+    from karria.modules.devices.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
+        get_clock,
+        get_device_repository,
+        get_push_gateway,
+        get_ticket_repository,
+    )
+    from karria.shared.config import get_settings  # noqa: PLC0415
+    from karria.shared.database import TortoiseUnitOfWork  # noqa: PLC0415
+
+    return DevicesUserNotifier(
+        get_send_push_to_user(
+            devices=get_device_repository(),
+            tickets=get_ticket_repository(),
+            gateway=get_push_gateway(get_settings()),
+            clock=get_clock(),
+            uow=TortoiseUnitOfWork(),
+        )
+    )
+
+
 def wire_modules(app: FastAPI) -> None:
     """Branche les ports inter-modules sur leurs implémentations réelles.
 
@@ -155,8 +207,11 @@ def wire_modules(app: FastAPI) -> None:
     # Sans cette ligne : la trace de départ ne sait ni la plateforme ni la
     # version de l'app. Rien ne casse ; l'équipe produit perd deux colonnes.
     app.dependency_overrides[get_main_device_lookup] = main_device_lookup_from_devices
+    # Sans cette ligne : les alertes d'offres remplissent le fil mais
+    # aucune notification ne part.
+    app.dependency_overrides[get_user_notifier] = user_notifier_from_devices
 
-    logger.debug("bootstrap.modules_wired", bindings=2)
+    logger.debug("bootstrap.modules_wired", bindings=3)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
@@ -174,6 +229,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     """
     forget_devices = build_forget_user_devices()
     forget_cv = build_forget_user(storage)
+    forget_offers = build_forget_user_offers()
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -181,9 +237,13 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def cv_forget(event: AccountDeleted) -> None:
         await forget_cv.execute(event.user_id)
 
-    # Sans ces lignes : un compte supprimé laisse ses appareils, son CV et
-    # ses photos — c'est-à-dire exactement ce que la personne a demandé
-    # d'effacer.
+    async def offers_forget(event: AccountDeleted) -> None:
+        await forget_offers.execute(event.user_id)
+
+    # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
+    # photos, ses critères et ses conversations — c'est-à-dire exactement
+    # ce que la personne a demandé d'effacer.
     bus.subscribe(AccountDeleted, devices_forget)
     bus.subscribe(AccountDeleted, cv_forget)
-    logger.debug("bootstrap.bridges_subscribed", bridges=2)
+    bus.subscribe(AccountDeleted, offers_forget)
+    logger.debug("bootstrap.bridges_subscribed", bridges=3)

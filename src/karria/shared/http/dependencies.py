@@ -21,6 +21,8 @@ from fastapi import Depends, Request
 from karria.shared.config import Settings, get_settings
 from karria.shared.database import TortoiseUnitOfWork, UnitOfWork
 from karria.shared.events import EventBus
+from karria.shared.llm import LanguageModel, build_language_model
+from karria.shared.queue import App as QueueApp
 from karria.shared.storage import ObjectStorage
 
 
@@ -41,6 +43,21 @@ def get_object_storage(request: Request) -> ObjectStorage:
     return cast(ObjectStorage, request.app.state.object_storage)
 
 
+def get_queue_app(request: Request) -> QueueApp:
+    """Retourne la file de travaux ouverte par le `lifespan` (pour différer, pas exécuter)."""
+    return cast(QueueApp, request.app.state.queue_app)
+
+
+def get_language_model(settings: Annotated[Settings, Depends(get_settings)]) -> LanguageModel:
+    """Le routeur de modèles de langage, assemblé depuis la configuration (ADR-0018).
+
+    Construit à chaque requête : les adaptateurs sont des clients sortants
+    immuables, sans connexion ouverte ; un test le remplace par
+    `dependency_overrides` avec une doublure.
+    """
+    return build_language_model(settings)
+
+
 def get_unit_of_work() -> UnitOfWork:
     """Retourne une unité de travail adossée à Tortoise."""
     return TortoiseUnitOfWork()
@@ -50,3 +67,5 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 EventBusDep = Annotated[EventBus, Depends(get_event_bus)]
 UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
 ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
+QueueAppDep = Annotated[QueueApp, Depends(get_queue_app)]
+LanguageModelDep = Annotated[LanguageModel, Depends(get_language_model)]

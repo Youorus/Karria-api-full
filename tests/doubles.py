@@ -31,7 +31,6 @@ from karria.modules.cv.domain import (
     DocumentInfo,
     Draft,
 )
-from karria.modules.cv.infrastructure import GenerationRequest, GenerationResult
 from karria.modules.devices.application import StoredTicket
 from karria.modules.devices.domain import (
     Device,
@@ -61,8 +60,8 @@ from karria.modules.identity.domain import (
 from karria.modules.identity.infrastructure import Sha256TokenFactory
 from karria.shared.database import NullUnitOfWork
 from karria.shared.events import DomainEvent, EventBus
-from karria.shared.http.outbound import JsonResponse
 from karria.shared.i18n import Language
+from karria.shared.llm import Blob, LlmRequest, LlmResult, Provider
 
 # ---------------------------------------------------------------------
 # Le temps
@@ -761,14 +760,14 @@ class FakeInspector:
         return AudioInfo(content_type=content_type, duration_seconds=self._duration)
 
 
-class FakeTransport:
-    """Implémente `GenerationTransport` : rend des résultats préparés, dans l'ordre."""
+class FakeLanguageModel:
+    """Implémente `LanguageModel` : rend des résultats préparés, dans l'ordre, et garde les requêtes."""
 
-    def __init__(self, *results: GenerationResult | Exception) -> None:
+    def __init__(self, *results: LlmResult | Exception) -> None:
         self._results = list(results)
-        self.requests: list[GenerationRequest] = []
+        self.requests: list[LlmRequest] = []
 
-    async def generate(self, request: GenerationRequest) -> GenerationResult:
+    async def generate(self, request: LlmRequest) -> LlmResult:
         self.requests.append(request)
         result = self._results.pop(0)
         if isinstance(result, Exception):
@@ -776,38 +775,39 @@ class FakeTransport:
         return result
 
 
-class FakePoster:
-    """Ce que `GeminiClient` attend du client HTTP, sans réseau."""
-
-    def __init__(self, *responses: JsonResponse | Exception) -> None:
-        self._responses = list(responses)
-        self.calls: list[tuple[str, Any]] = []
-
-    async def post_json(self, path: str, payload: Any) -> JsonResponse:
-        self.calls.append((path, payload))
-        response = self._responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
+def text_result(text: str, *, finish_reason: str = "STOP") -> LlmResult:
+    """Un résultat textuel, prêt pour une doublure."""
+    return LlmResult(
+        text=text,
+        image=None,
+        finish_reason=finish_reason,
+        refused=False,
+        provider=Provider.GEMINI,
+        model="fake",
+    )
 
 
-def text_result(text: str, *, finish_reason: str = "STOP") -> GenerationResult:
-    """Un résultat Gemini textuel, prêt pour une doublure."""
-    return GenerationResult(text=text, image=None, finish_reason=finish_reason, block_reason=None)
-
-
-def refused_result(reason: str = "SAFETY") -> GenerationResult:
-    """Un résultat Gemini refusé."""
-    return GenerationResult(text=None, image=None, finish_reason=reason, block_reason=None)
-
-
-def image_result(payload: bytes, content_type: str = "image/jpeg") -> GenerationResult:
-    """Un résultat Gemini portant une image."""
-    return GenerationResult(
+def refused_result(reason: str = "SAFETY") -> LlmResult:
+    """Un résultat refusé par le fournisseur."""
+    return LlmResult(
         text=None,
-        image=GeneratedImage(payload=payload, content_type=content_type),
+        image=None,
+        finish_reason=reason,
+        refused=True,
+        provider=Provider.GEMINI,
+        model="fake",
+    )
+
+
+def image_result(payload: bytes, content_type: str = "image/jpeg") -> LlmResult:
+    """Un résultat portant une image."""
+    return LlmResult(
+        text=None,
+        image=Blob(payload, content_type),
         finish_reason="STOP",
-        block_reason=None,
+        refused=False,
+        provider=Provider.GEMINI,
+        model="fake",
     )
 
 

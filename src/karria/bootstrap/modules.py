@@ -18,6 +18,7 @@ from karria.modules.cv import MODULE as CV_MODULE
 from karria.modules.devices import MODULE as DEVICES_MODULE
 from karria.modules.health import MODULE as HEALTH_MODULE
 from karria.modules.identity import MODULE as IDENTITY_MODULE
+from karria.modules.offers import MODULE as OFFERS_MODULE
 
 if TYPE_CHECKING:
     from karria.shared.events import EventBus
@@ -30,6 +31,7 @@ ENABLED_MODULES: Final[tuple[ModuleDescriptor, ...]] = (
     IDENTITY_MODULE,
     DEVICES_MODULE,
     CV_MODULE,
+    OFFERS_MODULE,
 )
 
 

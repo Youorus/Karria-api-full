@@ -37,6 +37,7 @@ from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.events import EventBus
 from karria.shared.logging import get_logger
+from karria.shared.queue import build_queue_app
 from karria.shared.storage import build_object_storage
 
 logger = get_logger(__name__)
@@ -68,6 +69,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Une fois démarré, le stockage redevient une dépendance NON
         # critique — l'API sert encore beaucoup de choses sans lui.
         await storage.check_health()
+
+        # La file de travaux : l'API diffère (la suite d'un fil, une
+        # resynchronisation), le worker exécute. Ouverte pour la durée du
+        # processus, comme le stockage.
+        queue_app = build_queue_app(settings.db)
+        await resources.enter_async_context(queue_app.open_async())
+        app.state.queue_app = queue_app
 
         # Les réactions croisées (un compte supprimé → `devices` et `cv`
         # oublient la personne) : ici et pas plus haut, parce que l'oubli du

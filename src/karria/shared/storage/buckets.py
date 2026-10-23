@@ -38,6 +38,9 @@ class Bucket(StrEnum):
     #: Travaux intermédiaires : un fichier audio le temps d'une
     #: transcription, un rendu avant validation. Purgé automatiquement.
     TEMP = "temp"
+    #: Données brutes de collecte d'offres (un fichier JSONL compressé par
+    #: passage), gardées le temps de pouvoir rejouer une normalisation.
+    LANDING = "landing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,11 @@ REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
         image=ImagePolicy(max_edge=2_048, quality=85),
     ),
     Bucket.TEMP: BucketPolicy(expire_after_days=7),
+    Bucket.LANDING: BucketPolicy(
+        allowed_content_types=frozenset({"application/gzip", "application/x-ndjson"}),
+        max_bytes=200 * 1024 * 1024,
+        expire_after_days=90,
+    ),
 }
 
 
