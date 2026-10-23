@@ -7,8 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
-from karria.modules.devices.domain import MAX_BODY_LENGTH, MAX_TITLE_LENGTH
 from scripts.push_campaign import (
     CAMPAIGN_BODY,
     CAMPAIGN_ID,
@@ -17,6 +15,8 @@ from scripts.push_campaign import (
     eligible,
     notification,
 )
+
+from karria.modules.devices.domain import MAX_BODY_LENGTH, MAX_TITLE_LENGTH
 
 pytestmark = pytest.mark.unit
 

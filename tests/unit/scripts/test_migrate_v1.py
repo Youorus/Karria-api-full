@@ -698,3 +698,7 @@ def test_les_echantillons_sont_des_resumes_sans_adresse():
     samples = anonymous_samples(converted, limit=2)
     assert samples == ["[deterministic] serveur · Lille (59) (30 km) · CDI, CDD, Intérim"] * 2
     assert all("@" not in line for line in samples)
+
+
+def test_sans_criteres_il_n_y_a_pas_d_echantillon():
+    assert anonymous_samples([convert_record(make_record(criteria=None))]) == []
