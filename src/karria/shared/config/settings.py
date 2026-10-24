@@ -245,6 +245,10 @@ class StorageSettings(BaseModel):
     #: Échappatoire : force l'endpoint quand un fournisseur sort du
     #: catalogue. À n'employer que le temps d'ajouter son profil.
     endpoint_url: str | None = None
+    #: Adresse publique du stockage (`https://storage.karria.fr`) quand l'API
+    #: le joint par une adresse interne (`http://karria-minio:9000`) : les URL
+    #: présignées sont signées pour cet hôte-là, celui qu'ouvrira le téléphone.
+    public_endpoint_url: str | None = None
     access_key: SecretStr = SecretStr("")
     secret_key: SecretStr = SecretStr("")
 
@@ -465,6 +469,10 @@ class LlmTaskRoutes(BaseModel):
     #: L'enrichissement des offres (champs manquants) et la mémoire de Karria.
     enrich: str = ""
     memory: str = ""
+    #: Modèles de CV (ADR-0020) : rôle des lignes d'un PDF (vision), et
+    #: explication d'un score ATS déjà calculé.
+    template_extract: str = ""
+    ats_explain: str = ""
 
 
 class LlmSettings(BaseModel):
@@ -525,6 +533,20 @@ class GeocodingSettings(BaseModel):
     request_timeout_seconds: float = Field(default=10.0, gt=0)
 
 
+class DocumentsSettings(BaseModel):
+    """Modèles de CV et exports (ADR-0020).
+
+    `gotenberg_url` vise le service interne de la composition `karria-donnees`
+    (Chromium + LibreOffice, jamais exposé). `admin_token` ouvre les routes
+    `/internal/templates` (dépôt et revue des modèles) ; vide, elles répondent
+    401 à tout le monde.
+    """
+
+    gotenberg_url: str = "http://localhost:3005"
+    gotenberg_timeout_seconds: float = Field(default=60.0, gt=0)
+    admin_token: SecretStr = SecretStr("")
+
+
 class CollectorAccessSettings(BaseModel):
     """L'accès du collecteur d'offres aux routes internes (`/internal/offers/*`).
 
@@ -574,6 +596,7 @@ class Settings(BaseSettings):
     inference: InferenceSettings = Field(default_factory=InferenceSettings)
     geocoding: GeocodingSettings = Field(default_factory=GeocodingSettings)
     collector: CollectorAccessSettings = Field(default_factory=CollectorAccessSettings)
+    documents: DocumentsSettings = Field(default_factory=DocumentsSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:
@@ -624,6 +647,8 @@ class Settings(BaseSettings):
             "transcribe",
             "enrich",
             "memory",
+            "template_extract",
+            "ats_explain",
         ):
             if not getattr(self.llm.tasks, task).strip():
                 setattr(self.llm.tasks, task, text)

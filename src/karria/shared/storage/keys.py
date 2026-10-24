@@ -130,4 +130,7 @@ _EXTENSIONS: Final[dict[str, str]] = {
     "image/png": "png",
     "image/webp": "webp",
     "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/json": "json",
+    "font/ttf": "ttf",
 }

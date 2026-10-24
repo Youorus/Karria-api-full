@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 
 from karria.modules.cv import MODULE as CV_MODULE
 from karria.modules.devices import MODULE as DEVICES_MODULE
+from karria.modules.documents import MODULE as DOCUMENTS_MODULE
 from karria.modules.health import MODULE as HEALTH_MODULE
 from karria.modules.identity import MODULE as IDENTITY_MODULE
 from karria.modules.offers import MODULE as OFFERS_MODULE
@@ -32,6 +33,7 @@ ENABLED_MODULES: Final[tuple[ModuleDescriptor, ...]] = (
     DEVICES_MODULE,
     CV_MODULE,
     OFFERS_MODULE,
+    DOCUMENTS_MODULE,
 )
 
 

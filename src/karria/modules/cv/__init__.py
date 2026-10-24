@@ -9,7 +9,8 @@ Ce que le module possède : le brouillon de CV (chapitre par chapitre), le
 CV lui-même, les photos en attente de choix, et tout appel à Gemini qui les
 concerne — interprétation, transcription, extraction, portrait. Ce qu'il ne
 possède pas : le compte (référencé par `user_id`, sans clé étrangère), la
-génération de documents (qui lira ce CV par cette API publique).
+génération de documents (le module `documents` lit ce CV par `GetMyCv`,
+branché dans `bootstrap/wiring.py`).
 
 `ForgetUser` et `build_forget_user` sont la réaction à la suppression d'un
 compte : `bootstrap/wiring.py` les abonne à l'événement du module des
@@ -17,8 +18,8 @@ comptes (ADR-0015). Aucun autre module ne les appelle.
 """
 
 from karria.modules.cv.api import router
-from karria.modules.cv.api.dependencies import build_forget_user
-from karria.modules.cv.application import CvFinalized, ForgetOutcome, ForgetUser
+from karria.modules.cv.api.dependencies import build_forget_user, get_get_my_cv
+from karria.modules.cv.application import CvFinalized, ForgetOutcome, ForgetUser, GetMyCv
 from karria.modules.cv.domain import (
     Chapter,
     ChapterStatus,
@@ -56,6 +57,7 @@ __all__ = [
     "Experience",
     "ForgetOutcome",
     "ForgetUser",
+    "GetMyCv",
     "Identity",
     "Interest",
     "Language",
@@ -64,4 +66,5 @@ __all__ = [
     "Skill",
     "SkillLevel",
     "build_forget_user",
+    "get_get_my_cv",
 ]

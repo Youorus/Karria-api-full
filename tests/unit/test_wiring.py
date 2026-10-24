@@ -59,12 +59,12 @@ class TestMainDeviceLookup:
         assert await lookup.main_device_of(uuid4()) is None
 
 
-def test_les_ponts_abonnent_devices_cv_et_offers_a_la_suppression_de_compte() -> None:
+def test_les_ponts_abonnent_devices_cv_offers_et_documents_a_la_suppression_de_compte() -> None:
     bus = CollectingBus()
 
     subscribe_bridges(bus, storage=InMemoryObjectStorage(StorageSettings()))
 
-    assert bus.subscriptions() == {AccountDeleted.__name__: 3}
+    assert bus.subscriptions() == {AccountDeleted.__name__: 4}
 
 
 class TestUserNotifier:

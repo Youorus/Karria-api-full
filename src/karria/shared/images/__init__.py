@@ -7,7 +7,15 @@ est une `ImagePolicy` portée par le bucket de destination, dans
 fichier reçu et laisse passer intact ce qui n'est pas une image.
 """
 
-from karria.shared.images.pillow import normalize_image, sniff_content_type
+from karria.shared.images.pillow import (
+    blurhash,
+    crop_to_frame,
+    image_size,
+    normalize_image,
+    resize_to_png,
+    sniff_content_type,
+    to_webp,
+)
 from karria.shared.images.ports import (
     MAX_PIXELS,
     OUTPUT_CONTENT_TYPES,
@@ -28,6 +36,11 @@ __all__ = [
     "ImageTooLargeError",
     "NormalizedImage",
     "NotAnImageError",
+    "blurhash",
+    "crop_to_frame",
+    "image_size",
     "normalize_image",
+    "resize_to_png",
     "sniff_content_type",
+    "to_webp",
 ]

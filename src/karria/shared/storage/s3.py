@@ -40,8 +40,20 @@ _MISSING_CODES = frozenset({"NoSuchKey", "NoSuchBucket", "404", "NotFound"})
 class S3ObjectStorage:
     """Implémente `ObjectStorage` au-dessus d'un service compatible S3."""
 
-    def __init__(self, client: Any, settings: StorageSettings, environment: str) -> None:
+    def __init__(
+        self,
+        client: Any,
+        settings: StorageSettings,
+        environment: str,
+        *,
+        signing_client: Any | None = None,
+    ) -> None:
         self._client = client
+        # Les URL présignées portent l'hôte dans leur signature (SigV4) : signées
+        # avec l'adresse interne, elles ne s'ouvrent pas depuis un téléphone.
+        # `STORAGE__PUBLIC_ENDPOINT_URL` donne un second client, qui ne sert
+        # qu'à signer (calcul local, aucun appel réseau).
+        self._signer = signing_client or client
         self._settings = settings
         self._environment = environment
 
@@ -60,29 +72,40 @@ class S3ObjectStorage:
         """
         session = aioboto3.Session()
         client = await stack.enter_async_context(
-            session.client(
-                "s3",
-                endpoint_url=settings.resolved_endpoint,
-                region_name=settings.resolved_region,
-                aws_access_key_id=settings.access_key.get_secret_value(),
-                aws_secret_access_key=settings.secret_key.get_secret_value(),
-                config=Config(
-                    # v4 est exigée par Scaleway, R2 et MinIO ; AWS l'accepte.
-                    signature_version="s3v4",
-                    s3={"addressing_style": settings.profile.addressing},
-                    retries={"max_attempts": settings.max_attempts, "mode": "standard"},
-                    connect_timeout=settings.request_timeout_seconds,
-                    read_timeout=settings.request_timeout_seconds,
-                ),
-            )
+            cls._client_for(session, settings, settings.resolved_endpoint)
         )
+        signer = None
+        if settings.public_endpoint_url:
+            signer = await stack.enter_async_context(
+                cls._client_for(session, settings, settings.public_endpoint_url)
+            )
         logger.info(
             "storage.connected",
             provider=settings.provider.value,
             region=settings.resolved_region,
             addressing=settings.profile.addressing,
+            public_signing=bool(signer),
         )
-        return cls(client, settings, environment)
+        return cls(client, settings, environment, signing_client=signer)
+
+    @staticmethod
+    def _client_for(session: Any, settings: StorageSettings, endpoint: str | None) -> Any:
+        """Un client S3 vers `endpoint` (interne pour lire/écrire, public pour signer)."""
+        return session.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=settings.resolved_region,
+            aws_access_key_id=settings.access_key.get_secret_value(),
+            aws_secret_access_key=settings.secret_key.get_secret_value(),
+            config=Config(
+                # v4 est exigée par Scaleway, R2 et MinIO ; AWS l'accepte.
+                signature_version="s3v4",
+                s3={"addressing_style": settings.profile.addressing},
+                retries={"max_attempts": settings.max_attempts, "mode": "standard"},
+                connect_timeout=settings.request_timeout_seconds,
+                read_timeout=settings.request_timeout_seconds,
+            ),
+        )
 
     def bucket_name(self, bucket: Bucket) -> str:
         """Nom physique du bucket chez le fournisseur."""
@@ -216,7 +239,7 @@ class S3ObjectStorage:
                 f'attachment; filename="{_sanitize_filename(download_as)}"'
             )
         try:
-            url: str = await self._client.generate_presigned_url(
+            url: str = await self._signer.generate_presigned_url(
                 "get_object", Params=params, ExpiresIn=self._ttl(ttl_seconds)
             )
         except (ClientError, BotoCoreError) as exc:
@@ -243,7 +266,7 @@ class S3ObjectStorage:
         )
         ttl = self._ttl(ttl_seconds)
         try:
-            url: str = await self._client.generate_presigned_url(
+            url: str = await self._signer.generate_presigned_url(
                 "put_object",
                 Params={
                     "Bucket": self.bucket_name(bucket),

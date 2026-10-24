@@ -362,32 +362,40 @@ l'app V1.
 
 ## Modèles de CV et exports (ADR-0020)
 
-### Rien n'est construit dans l'API : module, dépendances et Gotenberg attendent Marc
+### Le module est construit ; ce qui reste à mesurer ou à décider
 
-**Fait (2026-10-24) :** ADR-0020, contrat `karria_app/docs/contrat-api-modeles.md`,
-preuve de concept hors dépôt (`~/Documents/Karria-modeles-poc-2026-10-24/`) :
-Meridian et Minimalist passent le seuil de fidélité PDF (0,924 / 0,922), Marketing non.
-**Ce qui attend :** le module `documents` (AGENTS § 9), les dépendances `python-docx`,
-`pdfplumber`, `fonttools`, `numpy` (AGENTS § 6.11), le conteneur Gotenberg 8.38.1 dans
-`karria-donnees`. **Déclencheur :** la validation de l'ADR-0020 par Marc.
+**Fait (2026-10-24) :** module `documents`, Gotenberg 8.38.1 en production, polices
+gérées (bibliothèque libre gardée, substitution mesurée et déclarée), DOCX avec
+ornements et polices incorporées (Meridian 0,88, Minimalist 0,84), poste visé
+toujours sous le nom, score ATS lu par pdfminer. Voir ADR-0020 § « Mise en œuvre ».
 
-### Le DOCX n'a pas les ornements du modèle
+### Les puces du DOCX sont des glyphes, pas des formes
 
-Frises, pastilles d'élément, filets de rubrique et pictogrammes de contact manquent au
-DOCX (décor 0 %, score 0,81 / 0,73 contre 0,92 en PDF). **Ce qu'il faudrait :** des
-formes DrawingML ancrées au paragraphe (elles suivent le texte quand la personne
-modifie) et les pictogrammes en images en ligne. **Déclencheur :** le premier export DOCX
-en production.
+Les puces du DOCX sont de vraies listes Word (« • » de la police du texte, au corps du
+texte) : la personne ajoute une mission d'un retour à la ligne. Le glyphe est plus petit
+que la pastille dessinée du modèle (0,5 mm contre 1,06 mm sur Minimalist), et la mesure
+« décor » du DOCX ne compte pas les glyphes (Meridian 0,45, Minimalist 0,32). **Ce qu'il
+faudrait :** une puce image (`w:lvlPicBulletId`) ou une police de puces incorporée.
+**Déclencheur :** la revue Fable, ou un retour de Marc sur l'aspect du DOCX.
 
-### Polices non libres et modèles fautifs
+### Marketing reste en revue
 
-Marketing utilise Aileron (absente, substituée) et contient une erreur de modèle (un bloc
-« références » sous un second titre « LANGUAGES ») : fidélité 0,70, non publié.
-**Ce qu'il faudrait :** à l'ingestion, refuser ou faire déclarer une substitution de
-police ; signaler les titres de rubrique en double. **Déclencheur :** le premier lot de
-modèles de Marc (`~/Desktop/Modele de CV/v2/cv1…cv10`).
+Aileron est désormais servie (Fontsource, CC0) : PDF 0,82, DOCX 0,77, sous le seuil.
+Restent les défauts du **modèle** (un bloc « références » sous un second titre
+« LANGUAGES », des puces de formation non reconnues, des étiquettes « Phone : » collées
+aux coordonnées). **Ce qu'il faudrait :** signaler les titres de rubrique en double à
+l'ingestion, ou que Marc corrige le modèle Canva. **Déclencheur :** le lot
+`~/Desktop/Modele de CV/v2/cv1…cv10`.
 
-### Seconde page et mots-clés manquants
+### Les URL signées visent l'adresse interne du stockage
+
+Sans `STORAGE__PUBLIC_ENDPOINT_URL`, les URL présignées (aperçus, exports) sont
+signées pour `karria-minio:9000`, injoignable depuis un téléphone. **Ce qu'il faudrait :**
+DNS `storage.karria.fr` → serveur, domaine Dokploy (Traefik, Let's Encrypt) vers le
+service MinIO port 9000, puis la variable dans l'API et le worker. **Déclencheur :**
+immédiat (Marc).
+
+### La seconde page n'est pas mesurée sur un vrai CV long
 
 Au-delà de l'ajustement (espacements ×0,6, corps ×0,88), le flux déborde sur une seconde
 page sans rompre proprement les colonnes. Les mots-clés manquants s'affichent sans

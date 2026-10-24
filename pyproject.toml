@@ -73,6 +73,10 @@ dependencies = [
     # appels REST chacun, sur le client sortant du socle), aucun hachage
     # de mot de passe : chaque dépendance arrive avec le module qui la
     # justifie, dans le commit qui le crée (AGENTS.md §6.11).
+    "python-docx>=1.2",
+    "pdfplumber>=0.11",
+    "fonttools>=4.60",
+    "numpy>=2.3",
 ]
 
 [project.optional-dependencies]
@@ -150,6 +154,10 @@ ignore = [
     "PLR0913",   # nombre d'arguments — un use case injecté a naturellement des dépendances
 ]
 
+# Typographie française des textes rendus aux personnes et des docstrings :
+# apostrophe courbe, tiret demi-cadratin, signe ×, espace insécable.
+allowed-confusables = ["’", "–", "×", "−", "σ", "\u00a0"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
     "S101",      # assert : c'est littéralement le rôle d'un test
@@ -204,6 +212,14 @@ enable_error_code = [
 # aucun appelant ne voit jamais ce type.
 module = ["tortoise.*", "aerich.*", "aioboto3.*", "aiobotocore.*", "botocore.*", "jobspy.*", "pandas.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Bibliothèques PDF, polices et XML du module `documents` (ADR-0020), sans
+# stubs. Elles ne sont appelées que dans son infrastructure ; les types qui
+# en sortent sont convertis en types du projet à la frontière.
+module = ["pypdfium2.*", "fontTools.*", "lxml.*", "docx.*"]
+ignore_missing_imports = true
+disallow_any_unimported = false
 
 
 ### =====================================================================
@@ -337,6 +353,7 @@ containers = [
     "karria.modules.devices",
     "karria.modules.cv",
     "karria.modules.offers",
+    "karria.modules.documents",
 ]
 
 [[tool.importlinter.contracts]]
@@ -348,6 +365,7 @@ source_modules = [
     "karria.modules.devices.domain",
     "karria.modules.cv.domain",
     "karria.modules.offers.domain",
+    "karria.modules.documents.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -376,6 +394,7 @@ modules = [
     "karria.modules.devices",
     "karria.modules.cv",
     "karria.modules.offers",
+    "karria.modules.documents",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.

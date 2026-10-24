@@ -19,6 +19,7 @@ from typing import Final
 
 from karria.bootstrap.orm import TORTOISE_ORM
 from karria.bootstrap.wiring import build_user_notifier
+from karria.modules.documents import register_tasks as register_documents_tasks
 from karria.modules.offers import register_tasks as register_offers_tasks
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
@@ -76,6 +77,7 @@ def build_worker_app() -> App:
     app = build_queue_app(get_settings().db)
     register_queue_maintenance(app)
     register_offers_tasks(app, notifier=build_user_notifier)
+    register_documents_tasks(app)
     return app
 
 

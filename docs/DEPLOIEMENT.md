@@ -120,3 +120,27 @@ Le serveur d'inférence (`karria-embeddings`, composition `karria-donnees`)
 sert `/opt/karria/models/e5-base-int8`, produit par
 `scripts/quantize_onnx.py` à partir de la révision `d128750` de
 `intfloat/multilingual-e5-base`. Il n'y a plus de reclasseur.
+
+## Modèles de CV et exports (ADR-0020, 2026-10-24)
+
+- **Gotenberg 8.38.1** (`karria-gotenberg`) dans la composition Dokploy
+  `karria-donnees` : Chromium + LibreOffice, 1 Gio, réseau `dokploy-network`
+  seulement (aucun port publié). L'API et le worker le joignent par
+  `DOCUMENTS__GOTENBERG_URL=http://karria-gotenberg:3000`.
+- **Variables** (API **et** worker — l'ingestion tourne dans le worker) :
+  `DOCUMENTS__GOTENBERG_URL`, `DOCUMENTS__ADMIN_TOKEN` (routes
+  `/internal/templates`, jeton gardé dans `/root/karria-documents-admin.token`,
+  mode 600, jamais affiché), facultatives `LLM__TASKS__TEMPLATE_EXTRACT` et
+  `LLM__TASKS__ATS_EXPLAIN` (Gemini par défaut).
+- **Bucket** `karria-production-templates` (PDF sources, aperçus, pictogrammes,
+  bibliothèque de polices `fonts/…`) : `python -m scripts.storage_provision`.
+  Le bucket `documents` accepte désormais le DOCX.
+- **Migration** 8 (`modeles_de_cv`) : `aerich upgrade`.
+- **Déposer un modèle** :
+  `docker run --rm --network dokploy-network --env-file /root/karria-api.env -v /root/templates:/in:ro karria-api-ujqvaj:latest python -m scripts.templates submit /in/x.pdf --name x --label X --inline`
+  (ou `POST /api/v1/internal/templates`, analyse dans le worker). Revue :
+  `python -m scripts.templates list`.
+- **URL signées** : tant que `STORAGE__ENDPOINT_URL` est interne, poser
+  `STORAGE__PUBLIC_ENDPOINT_URL=https://storage.karria.fr` après avoir créé le
+  domaine (DNS + domaine Dokploy sur MinIO:9000) — sinon les liens d'aperçu et
+  d'export ne s'ouvrent pas depuis l'app.

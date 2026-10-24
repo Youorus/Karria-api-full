@@ -40,6 +40,8 @@ Les branchements d'aujourd'hui
 - `offers.get_user_notifier` ← `devices.SendPushToUser`. Sans lui, les
   alertes d'offres enrichissent le fil mais aucune notification ne part
   (`offers.notifier_unwired`) : dégradé, pas cassé.
+- `documents.get_cv_source` ← `cv.GetMyCv`. Sans lui, aperçus et exports
+  répondent `cv_missing` (le refus par défaut de `documents`).
 
 Les ponts du bus
 ----------------
@@ -48,7 +50,8 @@ qu'il importe son type. Les abonnements **entre** modules se font donc ici,
 dans `subscribe_bridges`, appelé par le `lifespan` une fois les ressources
 ouvertes. Aujourd'hui : `identity.AccountDeleted` → `devices` oublie les
 appareils, `cv` oublie brouillon, CV et photos, `offers` oublie critères,
-fil, états et conversations (ADR-0015).
+fil, états et conversations, `documents` oublie exports (fichiers compris),
+modèles possédés et choix (ADR-0015).
 """
 
 from __future__ import annotations
@@ -59,7 +62,7 @@ from uuid import UUID
 
 from fastapi import Depends, Request
 
-from karria.modules.cv import build_forget_user
+from karria.modules.cv import CurriculumVitae, GetMyCv, build_forget_user, get_get_my_cv
 from karria.modules.devices import (
     GetMainDevice,
     SendPushToUser,
@@ -67,6 +70,8 @@ from karria.modules.devices import (
     get_get_main_device,
     get_send_push_to_user,
 )
+from karria.modules.documents import CvSnapshot, CvSource, get_cv_source
+from karria.modules.documents import build_forget_user as build_forget_user_documents
 from karria.modules.identity import (
     AccountDeleted,
     MainDeviceLookup,
@@ -173,6 +178,44 @@ def user_notifier_from_devices(
     return DevicesUserNotifier(send)
 
 
+class CvModuleSource:
+    """Implémente le port `CvSource` de `documents` avec `cv.GetMyCv`.
+
+    Rend le CV sous la forme de `GET /cv/me` (JSON), ou `None` s'il est encore
+    vide : `documents` répond alors `cv_missing`.
+    """
+
+    def __init__(self, get_my_cv: GetMyCv) -> None:
+        self._get_my_cv = get_my_cv
+
+    async def snapshot(self, user_id: UUID) -> CvSnapshot | None:
+        """Le CV de la personne, dans les termes de `documents`."""
+        cv = await self._get_my_cv.execute(user_id)
+        if cv.is_blank:
+            return None
+        return CvSnapshot(data=cv_as_json(cv), image_key=cv.image_key, updated_at=cv.updated_at)
+
+
+def cv_as_json(cv: CurriculumVitae) -> dict[str, object]:
+    """Le CV au format du contrat (`GET /cv/me`), sans la photo."""
+    return {
+        "identity": cv.identity.model_dump(mode="json") if cv.identity else None,
+        "contact": cv.contact.model_dump(mode="json") if cv.contact else None,
+        "summary": cv.summary,
+        "experiences": [e.model_dump(mode="json") for e in cv.experiences],
+        "educations": [e.model_dump(mode="json") for e in cv.educations],
+        "skills": [s.model_dump(mode="json") for s in cv.skills],
+        "languages": [lg.model_dump(mode="json") for lg in cv.languages],
+        "interests": [i.model_dump(mode="json") for i in cv.interests],
+        "projects": [p.model_dump(mode="json") for p in cv.projects],
+    }
+
+
+def cv_source_from_cv(get_my_cv: Annotated[GetMyCv, Depends(get_get_my_cv)]) -> CvSource:
+    """La réponse du module `cv` au besoin de `documents`."""
+    return CvModuleSource(get_my_cv)
+
+
 def build_user_notifier() -> UserNotifier:
     """Le même branchement, hors requête, pour `scripts/offers_worker.py`."""
     from karria.modules.devices.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
@@ -210,8 +253,11 @@ def wire_modules(app: FastAPI) -> None:
     # Sans cette ligne : les alertes d'offres remplissent le fil mais
     # aucune notification ne part.
     app.dependency_overrides[get_user_notifier] = user_notifier_from_devices
+    # Sans cette ligne : aucun CV n'est visible des modèles, tout aperçu et
+    # tout export répondent `cv_missing`.
+    app.dependency_overrides[get_cv_source] = cv_source_from_cv
 
-    logger.debug("bootstrap.modules_wired", bindings=3)
+    logger.debug("bootstrap.modules_wired", bindings=4)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
@@ -230,6 +276,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     forget_devices = build_forget_user_devices()
     forget_cv = build_forget_user(storage)
     forget_offers = build_forget_user_offers()
+    forget_documents = build_forget_user_documents(storage)
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -240,10 +287,14 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def offers_forget(event: AccountDeleted) -> None:
         await forget_offers.execute(event.user_id)
 
+    async def documents_forget(event: AccountDeleted) -> None:
+        await forget_documents.execute(event.user_id)
+
     # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
     # photos, ses critères et ses conversations — c'est-à-dire exactement
     # ce que la personne a demandé d'effacer.
     bus.subscribe(AccountDeleted, devices_forget)
     bus.subscribe(AccountDeleted, cv_forget)
     bus.subscribe(AccountDeleted, offers_forget)
-    logger.debug("bootstrap.bridges_subscribed", bridges=3)
+    bus.subscribe(AccountDeleted, documents_forget)
+    logger.debug("bootstrap.bridges_subscribed", bridges=4)

@@ -246,3 +246,133 @@ def _encode_png(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Images produites (aperçus de documents, photo recadrée pour un cadre)
+# ---------------------------------------------------------------------------
+
+
+def resize_to_png(payload: bytes, *, max_edge: int) -> bytes:
+    """Réduit une image (PNG, JPEG…) pour que son plus grand côté tienne dans `max_edge`, en PNG."""
+    with Image.open(BytesIO(payload)) as image:
+        out = _fit(image.convert("RGB"), max_edge)
+        return _encode_png(out)
+
+
+def to_webp(payload: bytes, *, max_edge: int, quality: int = 82) -> bytes:
+    """Une vignette WebP (galerie) d'au plus `max_edge` pixels de côté."""
+    with Image.open(BytesIO(payload)) as image:
+        out = _fit(image.convert("RGB"), max_edge)
+        buffer = BytesIO()
+        out.save(buffer, "WEBP", quality=quality, method=6)
+        return buffer.getvalue()
+
+
+def image_size(payload: bytes) -> tuple[int, int]:
+    """Largeur et hauteur d'une image, en pixels."""
+    with Image.open(BytesIO(payload)) as image:
+        width, height = image.size
+        return int(width), int(height)
+
+
+def crop_to_frame(
+    payload: bytes,
+    *,
+    ratio: float,
+    focus: tuple[float, float] = (0.5, 0.3),
+    circle: bool = False,
+    width: int = 600,
+) -> bytes:
+    """Recadre une photo au rapport d'un cadre (largeur / hauteur), en PNG.
+
+    Args:
+        focus: Point gardé dans le recadrage, en fraction (0,5 ; 0,3 = centré,
+            un peu haut : le visage d'un portrait).
+        circle: Détoure en disque (transparence autour) pour un cadre rond.
+    """
+    with Image.open(BytesIO(payload)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+    w, h = image.size
+    if w / h > ratio:
+        crop_w, crop_h = int(h * ratio), h
+    else:
+        crop_w, crop_h = w, int(w / ratio)
+    x0, y0 = int((w - crop_w) * focus[0]), int((h - crop_h) * focus[1])
+    out = image.crop((x0, y0, x0 + crop_w, y0 + crop_h)).resize((width, max(1, int(width / ratio))))
+    if circle:
+        from PIL import ImageDraw  # noqa: PLC0415 - ne sert qu'au détourage
+
+        mask = Image.new("L", out.size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, *out.size), fill=255)
+        disc = Image.new("RGBA", out.size, (255, 255, 255, 0))
+        disc.paste(out, (0, 0), mask)
+        return _encode_png(disc)
+    return _encode_png(out)
+
+
+_BASE83: Final = (
+    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~"
+)
+
+
+def _base83(value: int, length: int) -> str:
+    return "".join(_BASE83[(value // 83 ** (length - i - 1)) % 83] for i in range(length))
+
+
+def _to_linear(value: int) -> float:
+    v = value / 255
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4  # noqa: PLR2004
+
+
+def _to_srgb(value: float) -> int:
+    v = max(0.0, min(1.0, value))
+    if v <= 0.0031308:  # noqa: PLR2004
+        return int(v * 12.92 * 255 + 0.5)
+    return int((1.055 * v ** (1 / 2.4) - 0.055) * 255 + 0.5)
+
+
+def blurhash(payload: bytes, *, components_x: int = 4, components_y: int = 5) -> str:
+    """Le BlurHash d'une image (https://blurha.sh) : l'app l'affiche pendant le chargement.
+
+    Calculé sur une réduction 32 × 32 : le résultat ne garde que des basses
+    fréquences, la pleine résolution n'apporterait rien.
+    """
+    import math  # noqa: PLC0415
+
+    with Image.open(BytesIO(payload)) as image:
+        small = image.convert("RGB").resize((32, 32))
+    width, height = small.size
+    raw = small.tobytes()
+    pixels = [[_to_linear(c) for c in raw[k : k + 3]] for k in range(0, len(raw), 3)]
+    factors: list[tuple[float, float, float]] = []
+    for j in range(components_y):
+        for i in range(components_x):
+            norm = 1.0 if i == j == 0 else 2.0
+            r = g = b = 0.0
+            for y in range(height):
+                for x in range(width):
+                    basis = math.cos(math.pi * i * x / width) * math.cos(math.pi * j * y / height)
+                    pr, pg, pb = pixels[y * width + x]
+                    r, g, b = r + basis * pr, g + basis * pg, b + basis * pb
+            scale = norm / (width * height)
+            factors.append((r * scale, g * scale, b * scale))
+    dc, ac = factors[0], factors[1:]
+    out = _base83((components_x - 1) + (components_y - 1) * 9, 1)
+    if ac:
+        actual = max(abs(v) for f in ac for v in f)
+        quantised = int(max(0, min(82, math.floor(actual * 166 - 0.5))))
+        maximum = (quantised + 1) / 166
+        out += _base83(quantised, 1)
+    else:
+        maximum = 1.0
+        out += _base83(0, 1)
+    out += _base83((_to_srgb(dc[0]) << 16) + (_to_srgb(dc[1]) << 8) + _to_srgb(dc[2]), 4)
+
+    def quant(v: float) -> int:
+        signed = math.copysign(abs(v / maximum) ** 0.5, v)
+        return int(max(0, min(18, math.floor(signed * 9 + 9.5))))
+
+    for f in ac:
+        out += _base83(quant(f[0]) * 19 * 19 + quant(f[1]) * 19 + quant(f[2]), 2)
+    return out

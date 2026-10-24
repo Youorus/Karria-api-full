@@ -69,3 +69,5 @@ prouvée) ; les jetons push FCM bruts — tous les jetons de la sauvegarde du
 2026-09-12 le sont — qu'Expo ne sait pas acheminer (`docs/PLUS-TARD.md`).
 Les fichiers intermédiaires portent des adresses : ils ne se commitent pas
 et s'effacent après usage. Les sorties ne contiennent que des comptes.
+
+- `templates.py` — modèles de CV (ADR-0020) : `submit` (dépôt d'un PDF, `--inline` pour analyser sur place), `ingest`, `list` (versions, fidélité, verdict, polices).

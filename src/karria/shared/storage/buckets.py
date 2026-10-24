@@ -41,6 +41,10 @@ class Bucket(StrEnum):
     #: Données brutes de collecte d'offres (un fichier JSONL compressé par
     #: passage), gardées le temps de pouvoir rejouer une normalisation.
     LANDING = "landing"
+    #: Modèles de CV : PDF source, spécification, aperçus, icônes, et la
+    #: bibliothèque de polices libres (`fonts/…`), téléchargée une fois.
+    #: Privé ; la galerie sert ses aperçus par URL signée.
+    TEMPLATES = "templates"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +82,15 @@ class BucketPolicy:
 REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
     Bucket.DOCUMENTS: BucketPolicy(
         versioning=True,
-        allowed_content_types=frozenset({"application/pdf", "image/jpeg", "image/png"}),
+        allowed_content_types=frozenset(
+            {
+                "application/pdf",
+                "image/jpeg",
+                "image/png",
+                # Les CV exportés en Word (ADR-0020).
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+        ),
         max_bytes=10 * 1024 * 1024,
         # Un CV photographié se lit : réduction douce, qualité haute,
         # plancher élevé — une ligne d'expérience floue ne s'extrait pas.
@@ -96,6 +108,14 @@ REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
         image=ImagePolicy(max_edge=2_048, quality=85),
     ),
     Bucket.TEMP: BucketPolicy(expire_after_days=7),
+    Bucket.TEMPLATES: BucketPolicy(
+        allowed_content_types=frozenset(
+            {"application/pdf", "application/json", "image/png", "image/webp", "font/ttf"}
+        ),
+        max_bytes=20 * 1024 * 1024,
+        # Une version de modèle est immuable : ses aperçus se gardent en cache.
+        cache_seconds=86_400,
+    ),
     Bucket.LANDING: BucketPolicy(
         allowed_content_types=frozenset({"application/gzip", "application/x-ndjson"}),
         max_bytes=200 * 1024 * 1024,

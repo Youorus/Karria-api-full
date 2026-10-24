@@ -84,7 +84,7 @@ _FRENCH_NUMERIC: Final = re.compile(r"^(?:(\d{1,2})[-/.])?(\d{1,2})[-/.](\d{4})$
 _MONTH_NAME: Final = re.compile(r"^([a-z]+)\.?\s+(\d{4})$")
 
 #: Puces et tirets qu'un modèle ou un copier-coller laisse en tête de ligne.
-_BULLETS: Final = re.compile(r"^[\s•\-–—▪*·●]+")  # noqa: RUF001 - tirets voulus
+_BULLETS: Final = re.compile(r"^[\s•\-–—▪*·●]+")
 
 
 def fold(text: str) -> str:

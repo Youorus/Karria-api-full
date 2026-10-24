@@ -1,6 +1,6 @@
 # ADR-0020 — Modèles de CV : une spécification canonique tirée du PDF, deux rendus (PDF, DOCX), un score ATS déterministe
 
-**Statut :** Proposée — 2026-10-24 (à valider par Marc ; dépendances en attente de son accord, § 9)
+**Statut :** Acceptée — 2026-10-24 (validée par Marc : un module `documents`, Gotenberg 8.38.1, `python-docx`, `pdfplumber`, `fonttools`, `numpy` ; pas de PyMuPDF)
 **Complète :** ADR-0008 (stockage objet), ADR-0013 (sortie de modèle = donnée), ADR-0014 (CV en JSONB, éléments à `id` stable), ADR-0018 (couche LLM, routage par tâche)
 **Contexte :** futur module des documents (modèles, exports) — **non créé** : son découpage attend la décision de Marc (§ 8)
 
@@ -267,3 +267,55 @@ Pillow est déjà là (ADR-0009). Ni `pdf2docx`, ni Playwright, ni WeasyPrint.
   fixe que l'en-tête.
 - **Un texte caché pour les ATS** (V1) : assimilable à du bourrage ; on corrige le
   document visible (polices statiques, ordre de peinture, variante optimisée).
+
+
+## Mise en œuvre (2026-10-24)
+
+Complète la décision sans la réécrire. Module `src/karria/modules/documents/`
+(README), migration 8, Gotenberg 8.38.1 dans `karria-donnees`.
+
+- **Sans PyMuPDF.** Texte par pdfplumber (lignes rebâties par l'écart entre
+  glyphes : « B E N J A M I N » se lit « BENJAMIN », les mots retrouvés),
+  formes, détourages, alpha, polices incorporées et rastérisation par
+  pypdfium2 (bornes des objets de formulaire recomposées, boîte de recadrage
+  respectée). Résultat identique à la preuve sur les lignes (0,00 mm d'écart).
+- **Polices.** Ordre : incorporée si sa licence le permet (`name` 13/14, `fsType`)
+  **et** qu'elle couvre le français (un sous-ensemble Canva ne le couvre jamais :
+  il sert alors de mesure) ; même famille libre (Google Fonts, instances
+  statiques complètes ; sinon Fontsource) ; sinon remplaçante de la liste
+  curée (34 familles OFL/Apache, dont les jumelles métriques d'Arial, Times,
+  Calibri, Cambria) choisie par classe puis par hauteur d'x, capitales et chasse
+  sur les caractères communs. Téléchargées une fois, gardées dans
+  `templates/fonts/…`, servies à Gotenberg avec chaque requête et **incorporées
+  au DOCX** (obfuscation ECMA-376 ; LibreOffice les lit). Chaque substitution
+  est journalisée et rangée dans le rapport de version. Aileron (Marketing)
+  s'avère libre (CC0, Fontsource) : servie telle quelle.
+- **Géométrie de ligne** posée avec les métriques verticales de la police
+  **servie** (celles de Chromium) ; un titre de rubrique sur deux lignes garde
+  son interligne mesuré (`title_pitch_mm`) ; le trait d'un dernier élément de
+  frise est gardé (`last_bottom_inset_mm`).
+- **DOCX.** Interligne exact, espace avant compensé de l'excédent **entier**
+  (Word et LibreOffice le posent au-dessus), réduction de l'interligne quand
+  le modèle fait chevaucher deux lignes (nom en grand corps), piles d'en-tête
+  indépendantes dans des cellules, puces = vraies listes Word, séparateurs
+  « | » aux blancs mesurés, frises, pastilles et filets en formes DrawingML
+  ancrées à la ligne, photo flottante détourée, styles nommés par rôle.
+- **ATS.** Lu par pdfminer (paramètres par défaut). Mesuré : pdfminer insère
+  une espace dès 0,1 em d'écart entre glyphes ; le plafond de la variante
+  « optimisée ATS » et du poste visé synthétisé passe donc de 0,12 à **0,08 em**.
+- **Galerie.** BlurHash (4 × 5) calculé à l'ingestion (`thumbnail_blurhash`) ;
+  `version` = numéro de la version publiée, qui augmente à chaque nouvelle
+  analyse (un changement de rendu passe par une ré-ingestion).
+- **Stockage.** `STORAGE__PUBLIC_ENDPOINT_URL` : un second client ne sert qu'à
+  signer les URL pour l'hôte public.
+
+Mesures (contenu d'exemple, Gotenberg 8.38.1 officiel, mesure pypdfium2) :
+
+| Modèle | PDF | DOCX (aperçu LibreOffice) | Verdict |
+|---|---|---|---|
+| Meridian | **0,934** (SSIM tol. 0,910, mots 0,938, style 1, décor 0,936) | **0,881** (0,81 dans la preuve) | publié |
+| Minimalist | **0,916** (0,883 / 1,0 / 1 / 0,794) | **0,836** (0,73 dans la preuve) | publié |
+| Marketing | 0,822 (0,833 / 0,723 / 0,999 / 0,781) | 0,766 | revue |
+
+La composante « décor » du DOCX ne compte pas les puces (glyphes de liste) ni les
+pictogrammes (images) : Meridian 0,45, Minimalist 0,32 — voir `PLUS-TARD.md`.
