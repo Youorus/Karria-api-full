@@ -359,3 +359,37 @@ dans Expo ne suffit pas : Expo n'accepte pas un jeton FCM brut en entrée.
 **Déclencheur :** décider que la relance « à froid » vaut le compte de
 service Firebase et une passerelle de plus. Sinon, laisser mourir avec
 l'app V1.
+
+## Modèles de CV et exports (ADR-0020)
+
+### Rien n'est construit dans l'API : module, dépendances et Gotenberg attendent Marc
+
+**Fait (2026-10-24) :** ADR-0020, contrat `karria_app/docs/contrat-api-modeles.md`,
+preuve de concept hors dépôt (`~/Documents/Karria-modeles-poc-2026-10-24/`) :
+Meridian et Minimalist passent le seuil de fidélité PDF (0,924 / 0,922), Marketing non.
+**Ce qui attend :** le module `documents` (AGENTS § 9), les dépendances `python-docx`,
+`pdfplumber`, `fonttools`, `numpy` (AGENTS § 6.11), le conteneur Gotenberg 8.38.1 dans
+`karria-donnees`. **Déclencheur :** la validation de l'ADR-0020 par Marc.
+
+### Le DOCX n'a pas les ornements du modèle
+
+Frises, pastilles d'élément, filets de rubrique et pictogrammes de contact manquent au
+DOCX (décor 0 %, score 0,81 / 0,73 contre 0,92 en PDF). **Ce qu'il faudrait :** des
+formes DrawingML ancrées au paragraphe (elles suivent le texte quand la personne
+modifie) et les pictogrammes en images en ligne. **Déclencheur :** le premier export DOCX
+en production.
+
+### Polices non libres et modèles fautifs
+
+Marketing utilise Aileron (absente, substituée) et contient une erreur de modèle (un bloc
+« références » sous un second titre « LANGUAGES ») : fidélité 0,70, non publié.
+**Ce qu'il faudrait :** à l'ingestion, refuser ou faire déclarer une substitution de
+police ; signaler les titres de rubrique en double. **Déclencheur :** le premier lot de
+modèles de Marc (`~/Desktop/Modele de CV/v2/cv1…cv10`).
+
+### Seconde page et mots-clés manquants
+
+Au-delà de l'ajustement (espacements ×0,6, corps ×0,88), le flux déborde sur une seconde
+page sans rompre proprement les colonnes. Les mots-clés manquants s'affichent sans
+accents (forme repliée). **Déclencheur :** un CV réel qui dépasse une page ; la première
+revue du score ATS par Marc.

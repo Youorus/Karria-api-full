@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-22**
+**Dernière mise à jour : 2026-10-24**
 
 ## Où on en est
 
@@ -23,6 +23,61 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-24 (mode du fil, espace Anthropic, modèles de CV — conception et preuve)
+
+**Livré et déployé** (commits `febf602`, `267f5dd` sur `main`, déploiement Dokploy manuel
+de `karria-api-ujqvaj`, vérifié en production) :
+
+- **Item 0 — `GET /job-matches/me?mode=all_offers|search`** (et `/me/filter-options`) :
+  `all_offers` montre tout le corpus **sans toucher aux critères** (recherche et alertes
+  restent actives) ; `search` sans critères retombe sur `all_offers` ; absent = déduit des
+  critères ; la réponse rend le mode réellement servi et `criteria_summary`. L'app ne doit
+  plus faire `DELETE` puis `PUT /search/criteria` pour « mettre en pause » (contrat
+  `karria_app/docs/contrat-api-offres.md` mis à jour, **non commité** côté app : le dépôt
+  de l'app avait déjà des modifications en cours d'une autre main).
+- **Item 1 — `LLM__PROVIDERS__ANTHROPIC__WORKSPACE_ID`** : envoyé en en-tête
+  `anthropic-workspace-id`. Vide → Anthropic **hors routage** (journal
+  `llm.provider_disabled` à la construction du routeur, qui est paresseuse), sans erreur ;
+  une route `LLM__TASKS__*=anthropic:…` sans lui bloque le démarrage en nommant la
+  variable. Vérifié dans le conteneur de prod : adaptateurs `['gemini']`, aucun problème.
+  **Reste :** l'identifiant d'espace de travail (Marc) dans `.env` et
+  `/root/karria-api.env`, puis redéployer.
+
+**Modèles de CV (item 2) — conçu et prouvé, rien dans le dépôt hors docs :**
+
+- **ADR-0020** (Proposée) : spécification canonique tirée du PDF (extraction déterministe
+  + étiquetage des lignes par vision via `shared/llm`), deux moteurs (HTML → PDF par
+  Chromium/Gotenberg, DOCX natif python-docx), métrique de fidélité et seuils, score ATS
+  déterministe expliqué par le modèle, adaptation à une offre conçue, routage
+  (`template_extract`, `ats_explain`, plus tard `cv_tailor`), tableau V1 → v2.
+- **Contrat** : `karria_app/docs/contrat-api-modeles.md` (galerie, détail, aperçus, choix,
+  exports PDF/DOCX, objet `ats`) — non commité côté app (même raison).
+- **Preuve de concept** (hors dépôt, venv jetable) :
+  `~/Documents/Karria-modeles-poc-2026-10-24/` — `code/` (extract, label, spec, view,
+  render_html, render_docx, fidelity, ats, explain, run_*), `sources/` (PDF Canva),
+  `extraction/`, `resultats/<modèle>/` (spec.json, sample_render.pdf, cv_camille.pdf/.docx,
+  ats_*.json, côte-à-côte `sbs*.png`, aperçus) et `resultats/summary.json`.
+  Fidélité PDF : **Meridian 0,924, Minimalist 0,922** (seuil 0,90 atteint), Marketing 0,705
+  (police Aileron absente + erreur dans le modèle → refusé, comme prévu). DOCX 0,81 / 0,73
+  (sans ornements). V1 0,32 ; option B (pdf2docx) 0,38–0,44. ATS du CV fictif : Meridian
+  PDF 86 / DOCX 92, Minimalist 91 / 93 ; variante « optimisée ATS » 93 / 94.
+- **Relancer la preuve** : recréer à côté de `code/` les dossiers `fonts/` (Raleway,
+  Montserrat variables + Lato, Google Fonts) et `fonts/static/` (instances statiques par
+  `fontTools.varLib.instancer`, voir `code/polices-utilisees.txt`), `src/`, `extract/`,
+  `out/poc/` ; un venv avec pymupdf, python-docx, numpy, pillow, fonttools ; Gotenberg
+  local (`docker run -p 3005:3000 gotenberg/gotenberg:8.38.1`, le conteneur
+  `karria-gotenberg-poc` tourne encore sur la machine de Marc, image avec polices,
+  `code/gotenberg-fonts.Dockerfile`). Puis `spec.py`, `run_sample.py`, `run_cv.py` ;
+  `label.py` et `explain.py` se lancent avec `uv run` depuis `karria_api_v2` (clé Gemini
+  du `.env`).
+- **Décisions ouvertes pour Marc** : valider l'ADR-0020 ; créer **un** module `documents`
+  (ou autre découpage) ; accepter `python-docx`, `pdfplumber`, `fonttools`, `numpy`
+  (PyMuPDF **écarté : AGPL**) ; ajouter Gotenberg 8.38.1 (1 Gio) à `karria-donnees` ;
+  politique pour les polices non libres ; variante ATS proposée (défaut = fidélité).
+- **Prochaine étape proposée** : après validation — module et migrations (modèles,
+  versions, possession, choix, exports), ingestion en commande + travail de file, porte de
+  qualité, routes du contrat ; puis ornements DOCX et le lot `~/Desktop/Modele de CV/v2`.
 
 ### Session du 2026-10-23, suite (élargissements, journal d'apprentissage, migration V1)
 
@@ -189,8 +244,9 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    l'image ; retrait des traits du texte plongé (ré-indexage) ; champs qui
    valent un appel au modèle. Puis la relecture du travail (Tâche 3) et la
    purge des offres inactives en production.
-3. **Modules suivants**, à décider par Marc un par un : modèles de CV,
-   génération de CV (PDF), abonnement Stripe.
+3. **Modules suivants**, à décider par Marc un par un : modèles de CV et
+   exports (ADR-0020 proposée, preuve faite — voir la session du 2026-10-24),
+   abonnement Stripe.
 4. **Points listés dans `docs/PLUS-TARD.md`** :
    - purge planifiée ;
    - limiteur de débit et cache JWKS multi-réplicas (Redis) ;

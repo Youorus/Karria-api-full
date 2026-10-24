@@ -50,4 +50,6 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0015](0015-suppression-de-compte-et-retention.md) | Suppression de compte : effacement physique, trace de départ anonyme, oubli par événement | Acceptée |
 | [0016](0016-moteur-de-recherche-d-offres.md) | Moteur d'offres : collecte découplée, base de vérité, index hybride, porte d'intitulé | Proposée |
 | [0017](0017-france-travail-et-planificateur-de-collecte.md) | France Travail en couche de base, collecte continue, planificateur piloté par la demande | Proposée |
+| [0018](0018-couche-llm-et-agent-karria.md) | Une couche LLM indépendante du fournisseur, et Karria : constitution, mémoire, garde-fous | Proposée |
 | [0019](0019-apprentissage-continu.md) | Apprentissage continu : journal des gestes avec leur place, classement appris, porte de promotion, dérive | Proposée |
+| [0020](0020-modeles-de-cv-et-exports.md) | Modèles de CV : spécification canonique tirée du PDF, deux rendus (PDF, DOCX), score ATS déterministe | Proposée |
