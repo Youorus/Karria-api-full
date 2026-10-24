@@ -414,12 +414,30 @@ class LlmProviderSettings(BaseModel):
     #: un schéma (vLLM, Mistral), `json_object` sinon (le schéma est alors
     #: rappelé dans la consigne).
     structured_output: Literal["json_schema", "json_object"] = "json_schema"
+    #: Pour `anthropic` seulement : l'espace de travail, envoyé en en-tête
+    #: `anthropic-workspace-id`. La clé de Karria est une clé d'utilisateur,
+    #: rattachée à aucun espace : sans cet identifiant, ses appels échouent.
+    #: Tant qu'il est vide, Anthropic reste **hors routage** (journal
+    #: `llm.provider_disabled`), sans bloquer le démarrage.
+    workspace_id: str = ""
 
     def is_configured(self, provider: str) -> bool:
-        """A-t-on de quoi l'appeler ? Une clé — ou, pour un serveur `compatible` local, une adresse."""
-        if self.api_key.get_secret_value():
-            return True
-        return provider == "compatible" and bool(self.base_url)
+        """A-t-on de quoi l'appeler ?
+
+        Une clé — ou, pour un serveur `compatible` local, une adresse. Anthropic
+        exige en plus l'espace de travail (voir `workspace_id`).
+        """
+        return not self.missing(provider)
+
+    def missing(self, provider: str) -> str:
+        """Le nom court du réglage qui manque pour appeler ce fournisseur, `""` sinon."""
+        if not self.api_key.get_secret_value():
+            if provider == "compatible" and self.base_url:
+                return ""
+            return "API_KEY"
+        if provider == "anthropic" and not self.workspace_id.strip():
+            return "WORKSPACE_ID"
+        return ""
 
 
 class LlmProvidersSettings(BaseModel):
@@ -638,10 +656,11 @@ class Settings(BaseSettings):
                     f"fournisseur parmi {', '.join(LLM_PROVIDERS)}."
                 )
                 continue
-            if not getattr(self.llm.providers, provider).is_configured(provider):
+            missing = getattr(self.llm.providers, provider).missing(provider)
+            if missing:
                 problems.append(
                     f"{variable} est routée vers {provider}, mais "
-                    f"LLM__PROVIDERS__{provider.upper()}__API_KEY est vide."
+                    f"LLM__PROVIDERS__{provider.upper()}__{missing} est vide."
                 )
         return problems
 

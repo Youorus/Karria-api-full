@@ -338,6 +338,12 @@ class TestAnthropic:
             "anthropic-version": anthropic_adapter.API_VERSION,
         }  # type: ignore[attr-defined]
 
+    def test_l_espace_de_travail_part_en_en_tete_quand_il_est_donne(self) -> None:
+        adapter = AnthropicAdapter.from_credentials("k", workspace_id="wrkspc_1")
+        headers = adapter._http.headers  # type: ignore[attr-defined]
+        assert headers["anthropic-workspace-id"] == "wrkspc_1"
+        assert headers["x-api-key"] == "k"
+
 
 class TestOpenAI:
     async def test_le_corps_chat_completions_porte_system_schema_et_contenus(self) -> None:
@@ -543,7 +549,7 @@ class TestConfiguration:
         settings = Settings(
             llm=LlmSettings(
                 providers=LlmProvidersSettings(
-                    anthropic=LlmProviderSettings(api_key=SecretStr("a"))
+                    anthropic=LlmProviderSettings(api_key=SecretStr("a"), workspace_id="w")
                 ),
                 tasks=LlmTaskRoutes(cv_extract="anthropic:claude-x"),
             )
@@ -570,7 +576,7 @@ class TestConfiguration:
             gemini=GeminiSettings(api_key=SecretStr("g")),
             llm=LlmSettings(
                 providers=LlmProvidersSettings(
-                    anthropic=LlmProviderSettings(api_key=SecretStr("a")),
+                    anthropic=LlmProviderSettings(api_key=SecretStr("a"), workspace_id="w"),
                     compatible=LlmProviderSettings(
                         base_url="http://vllm:8000/v1", structured_output="json_object"
                     ),
@@ -591,3 +597,40 @@ class TestConfiguration:
         )
         assert settings.llm_problems()
         assert isinstance(build_language_model(settings), LlmRouter)
+
+    def test_anthropic_sans_espace_de_travail_reste_hors_routage_sans_bloquer(self) -> None:
+        settings = production(
+            gemini=GeminiSettings(api_key=SecretStr("g")),
+            llm=LlmSettings(
+                providers=LlmProvidersSettings(
+                    anthropic=LlmProviderSettings(api_key=SecretStr("a"))
+                )
+            ),
+        )
+        assert settings.llm_problems() == []
+        llm = build_language_model(settings)
+        assert isinstance(llm, LlmRouter)
+        assert set(llm._adapters) == {Provider.GEMINI}  # type: ignore[attr-defined]
+
+    def test_une_route_vers_anthropic_sans_espace_de_travail_nomme_la_variable(self) -> None:
+        with pytest.raises(ValueError, match="LLM__PROVIDERS__ANTHROPIC__WORKSPACE_ID"):
+            production(
+                llm=LlmSettings(
+                    providers=LlmProvidersSettings(
+                        anthropic=LlmProviderSettings(api_key=SecretStr("a"))
+                    ),
+                    tasks=LlmTaskRoutes(cv_extract="anthropic:claude-x"),
+                )
+            )
+
+    def test_anthropic_complet_recoit_l_espace_de_travail(self) -> None:
+        settings = Settings(
+            llm=LlmSettings(
+                providers=LlmProvidersSettings(
+                    anthropic=LlmProviderSettings(api_key=SecretStr("a"), workspace_id=" w ")
+                )
+            )
+        )
+        llm = build_language_model(settings)
+        adapter = llm._adapters[Provider.ANTHROPIC]  # type: ignore[attr-defined]
+        assert adapter._http.headers["anthropic-workspace-id"] == "w"

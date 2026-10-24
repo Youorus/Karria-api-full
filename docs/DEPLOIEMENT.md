@@ -33,6 +33,11 @@
   avertit) et `PUSH__*` (service push d'Expo). Voir `.env.example`.
 - Une tâche planifiée lit les reçus de notifications toutes les quinze
   minutes : `uv run python -m scripts.push_receipts` (ADR-0012).
+- Anthropic (`LLM__PROVIDERS__ANTHROPIC__API_KEY`) n'entre dans le routage
+  qu'avec `LLM__PROVIDERS__ANTHROPIC__WORKSPACE_ID` (en-tête
+  `anthropic-workspace-id`, la clé de Karria étant une clé d'utilisateur) ;
+  sans lui, `llm.provider_disabled` au démarrage et rien d'autre — sauf si
+  une route `LLM__TASKS__*=anthropic:…` est posée, ce qui bloque le démarrage.
 - `SECURITY__TOKEN_PEPPER` poivre les condensats de jetons et de codes : le
   changer déconnecte **tous** les utilisateurs.
 

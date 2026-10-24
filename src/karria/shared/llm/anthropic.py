@@ -57,16 +57,23 @@ class AnthropicAdapter:
 
     @classmethod
     def from_credentials(
-        cls, api_key: str, *, base_url: str = DEFAULT_BASE_URL, timeout_seconds: float = 60.0
+        cls,
+        api_key: str,
+        *,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout_seconds: float = 60.0,
+        workspace_id: str = "",
     ) -> AnthropicAdapter:
-        """Le client sortant du socle, la clé et la version en en-tête."""
-        return cls(
-            JsonClient(
-                base_url=base_url,
-                headers={"x-api-key": api_key, "anthropic-version": API_VERSION},
-                timeout_seconds=timeout_seconds,
-            )
-        )
+        """Le client sortant du socle, la clé et la version en en-tête.
+
+        `workspace_id` part en `anthropic-workspace-id` quand il est donné :
+        une clé d'utilisateur, rattachée à aucun espace de travail, doit dire
+        dans lequel la requête s'exécute (et se facture).
+        """
+        headers = {"x-api-key": api_key, "anthropic-version": API_VERSION}
+        if workspace_id:
+            headers["anthropic-workspace-id"] = workspace_id
+        return cls(JsonClient(base_url=base_url, headers=headers, timeout_seconds=timeout_seconds))
 
     async def generate(self, model: str, request: LlmRequest) -> LlmResult:
         """Appelle `/v1/messages` et décode la réponse."""

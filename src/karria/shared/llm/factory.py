@@ -32,7 +32,10 @@ def _adapter(provider: Provider, conf: LlmProviderSettings) -> ProviderAdapter:
         )
     if provider is Provider.ANTHROPIC:
         return AnthropicAdapter.from_credentials(
-            key, base_url=conf.base_url or ANTHROPIC_URL, timeout_seconds=timeout
+            key,
+            base_url=conf.base_url or ANTHROPIC_URL,
+            timeout_seconds=timeout,
+            workspace_id=conf.workspace_id.strip(),
         )
     return OpenAIAdapter.from_credentials(
         key,
@@ -51,8 +54,17 @@ def build_language_model(settings: Settings) -> LanguageModel:
     adapters: dict[Provider, ProviderAdapter] = {}
     for provider in Provider:
         conf: LlmProviderSettings = getattr(settings.llm.providers, provider.value)
-        if conf.is_configured(provider.value):
+        missing = conf.missing(provider.value)
+        if not missing:
             adapters[provider] = _adapter(provider, conf)
+        elif missing != "API_KEY":
+            # Une clé est là mais pas de quoi s'en servir (l'espace de travail
+            # d'Anthropic) : on le dit, sans bloquer — aucune route n'en dépend.
+            logger.info(
+                "llm.provider_disabled",
+                provider=provider.value,
+                missing=f"LLM__PROVIDERS__{provider.value.upper()}__{missing}",
+            )
     if not adapters:
         return DisabledLanguageModel()
     table = RoutingTable.parse(settings.llm.tasks.model_dump(), settings.llm.fallbacks.model_dump())
