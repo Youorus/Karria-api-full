@@ -1612,10 +1612,19 @@ class FeedRequest:
     contract_types: tuple[str, ...] = ()
     cities: tuple[str, ...] = ()
     published_after: datetime | None = None
+    #: Le mode voulu par l'app ; `None` le déduit des critères (le comportement d'origine).
+    #: `ALL_OFFERS` montre tout le corpus **sans toucher aux critères** : la recherche reste
+    #: enregistrée et ses alertes actives. `SEARCH` sans critères retombe sur `ALL_OFFERS`
+    #: (il n'y a rien à montrer d'autre) ; la page rend toujours le mode réellement servi.
+    mode: FeedMode | None = None
 
 
 class GetFeed:
-    """Le fil : les offres retenues si des critères existent, tout le corpus sinon."""
+    """Le fil : les offres retenues si des critères existent, tout le corpus sinon.
+
+    L'app peut demander `ALL_OFFERS` alors que des critères existent : c'est la « pause »
+    de la recherche, qui ne supprime plus les critères et laisse donc les alertes vivre.
+    """
 
     def __init__(
         self,
@@ -1634,6 +1643,8 @@ class GetFeed:
         """Une page."""
         stored = await self._criteria.find(request.user_id)
         mode = FeedMode.SEARCH if stored else FeedMode.ALL_OFFERS
+        if request.mode is FeedMode.ALL_OFFERS:
+            mode = FeedMode.ALL_OFFERS
         summary = stored.criteria.summary() if stored else None
 
         if request.saved_only:
@@ -1908,10 +1919,15 @@ class GetFeedFilters:
         self._feed = feed
         self._offers = offers
 
-    async def execute(self, user_id: UUID) -> FeedFilterOptions:
-        """Contrats et villes du fil (ou de tout le corpus actif sans critères)."""
+    async def execute(self, user_id: UUID, mode: FeedMode | None = None) -> FeedFilterOptions:
+        """Contrats et villes du fil (ou de tout le corpus actif sans critères).
+
+        `mode` suit la même règle que `GetFeed` : `ALL_OFFERS` lit tout le corpus actif même
+        si des critères existent ; `None` ou `SEARCH` le déduisent des critères.
+        """
         stored = await self._criteria.find(user_id)
-        ids = list(await self._feed.offer_ids_of(user_id)) if stored else None
+        searching = stored is not None and mode is not FeedMode.ALL_OFFERS
+        ids = list(await self._feed.offer_ids_of(user_id)) if searching else None
         contracts, cities = await self._offers.filter_options(ids)
         return FeedFilterOptions(
             contract_types={kind.value: count for kind, count in contracts.items()}, cities=cities

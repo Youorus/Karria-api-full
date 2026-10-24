@@ -142,6 +142,44 @@ class TestFilDeRecherche:
         assert env.feed.queries[0].sort == "recent"
         assert page.total == 3
 
+    async def test_le_mode_toutes_les_offres_montre_le_corpus_sans_toucher_aux_criteres(
+        self, env: Env
+    ) -> None:
+        stored = make_stored(USER)
+        env.criteria.stored[USER] = stored
+        in_feed, elsewhere = make_offer(), make_offer(published_at=NOW - timedelta(days=1))
+        env.offers.add(in_feed, elsewhere)
+        env.feed.add(make_entry(USER, in_feed.id))
+
+        page = await env.get_feed.execute(env.request(mode=FeedMode.ALL_OFFERS))
+
+        assert page.mode is FeedMode.ALL_OFFERS
+        assert {item.offer.id for item in page.items} == {in_feed.id, elsewhere.id}
+        assert page.criteria_summary == stored.criteria.summary()
+        assert env.criteria.stored[USER] is stored
+        assert env.feed.queries == []
+
+    async def test_le_mode_recherche_sans_criteres_retombe_sur_toutes_les_offres(
+        self, env: Env
+    ) -> None:
+        env.offers.add(make_offer())
+
+        page = await env.get_feed.execute(env.request(mode=FeedMode.SEARCH))
+
+        assert page.mode is FeedMode.ALL_OFFERS
+        assert page.total == 1
+
+    async def test_le_mode_recherche_explicite_sert_le_fil(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        offer = make_offer()
+        env.offers.add(offer, make_offer())
+        env.feed.add(make_entry(USER, offer.id))
+
+        page = await env.get_feed.execute(env.request(mode=FeedMode.SEARCH))
+
+        assert page.mode is FeedMode.SEARCH
+        assert [item.offer.id for item in page.items] == [offer.id]
+
     async def test_les_sauvegardees_quelle_que_soit_la_recherche_dernieres_d_abord(
         self, env: Env
     ) -> None:
@@ -312,3 +350,15 @@ class TestOptionsDeFiltre:
         options = await env.filters.execute(USER)
 
         assert options.contract_types == {"stage": 1}
+
+    async def test_en_mode_toutes_les_offres_les_options_couvrent_le_corpus_malgre_la_recherche(
+        self, env: Env
+    ) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        in_feed = make_offer(contract_type=ContractType.STAGE)
+        env.offers.add(in_feed, make_offer())
+        env.feed.add(make_entry(USER, in_feed.id))
+
+        options = await env.filters.execute(USER, FeedMode.ALL_OFFERS)
+
+        assert options.contract_types == {"stage": 1, "cdi": 1}

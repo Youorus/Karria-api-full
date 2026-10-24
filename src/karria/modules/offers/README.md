@@ -50,5 +50,9 @@
   `search_terms` (1 à 4 mots, validés contre les titres réels de l'index),
   la ville du géocodeur, le contrat ; les `preferences` servent au dialogue
   et au classement, jamais à la collecte.
+- **Montrer tout le corpus n'est pas abandonner la recherche** : `mode=all_offers`
+  sur `GET /job-matches/me` lit le corpus actif sans toucher aux critères, qui
+  continuent de nourrir le fil et les alertes. Seul `DELETE /search/criteria`
+  arrête la recherche.
 - Les décisions et leurs mesures : ADR-0016 (moteur), ADR-0017 (France
   Travail, collecte continue, planificateur).

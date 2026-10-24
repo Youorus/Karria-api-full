@@ -251,6 +251,25 @@ class TestFil:
             "cities": [{"value": "Paris", "label": "Paris", "count": 5}],
         }
 
+    async def test_le_mode_demande_passe_au_cas_d_usage_et_un_mode_inconnu_est_refuse(
+        self, client: AsyncClient, user: UUID, use: Callable[..., Stub]
+    ) -> None:
+        feed = use(deps.get_get_feed, Stub(FeedPage(FeedMode.ALL_OFFERS, [], 0, "Serveur")))
+        filters = use(
+            deps.get_get_feed_filters, Stub(FeedFilterOptions(contract_types={}, cities={}))
+        )
+
+        body = (await client.get(f"{API}/job-matches/me", params={"mode": "all_offers"})).json()
+        await client.get(f"{API}/job-matches/me/filter-options", params={"mode": "all_offers"})
+        await client.get(f"{API}/job-matches/me")
+        refused = await client.get(f"{API}/job-matches/me", params={"mode": "everything"})
+
+        assert (body["mode"], body["criteria_summary"]) == ("all_offers", "Serveur")
+        assert feed.calls[0][0].mode is FeedMode.ALL_OFFERS
+        assert feed.calls[1][0].mode is None
+        assert filters.calls[0][1] is FeedMode.ALL_OFFERS
+        assert refused.status_code == 422
+
     async def test_le_vu_par_lots(
         self, client: AsyncClient, user: UUID, use: Callable[..., Stub]
     ) -> None:

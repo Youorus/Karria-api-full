@@ -58,6 +58,7 @@ from karria.modules.offers.domain import (
     HANDOFF_VERSION,
     BatchRejectedError,
     CriteriaNotFoundError,
+    FeedMode,
 )
 from karria.shared.auth import CurrentPrincipalDep
 from karria.shared.errors import ErrorCode, InvalidInputError, error_responses
@@ -87,7 +88,12 @@ FEED_MAX_LIMIT = 50
         "`saved_only` : les sauvegardées, quelle que soit la recherche. `unseen_only` : jamais "
         "affichées. `unapplied_only` : sans candidature. `contract_types` et `cities` : les "
         "`value` de `GET /job-matches/me/filter-options`, séparées par des virgules. "
-        "`published_after` : instant ISO 8601."
+        "`published_after` : instant ISO 8601.\n\n"
+        "`mode` (facultatif) : `all_offers` montre toutes les offres actives **sans toucher "
+        "aux critères** — la recherche reste enregistrée et ses alertes actives ; `search` "
+        "montre le fil de la recherche (sans critères, retombe sur `all_offers`). Absent : "
+        "déduit des critères. La réponse rend toujours le `mode` réellement servi, et "
+        "`criteria_summary` dès que des critères existent."
     ),
     responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
 )
@@ -105,6 +111,7 @@ async def get_feed(
     contract_types: Annotated[str | None, Query(max_length=200)] = None,
     cities: Annotated[str | None, Query(max_length=1_000)] = None,
     published_after: datetime | None = None,
+    mode: FeedMode | None = None,
 ) -> FeedPageResponse:
     """Une page du fil."""
     page = await feed.execute(
@@ -119,6 +126,7 @@ async def get_feed(
             contract_types=parse_csv(contract_types),
             cities=parse_csv(cities),
             published_after=published_after,
+            mode=mode,
         )
     )
     return FeedPageResponse.from_page(page, limit=limit, offset=offset, now=clock.now())
@@ -130,15 +138,17 @@ async def get_feed(
     summary="Les valeurs de filtre du fil",
     description=(
         "Contrats et villes présents dans le fil de la personne (dans tout le corpus actif "
-        "sans recherche), avec leurs effectifs."
+        "sans recherche, ou avec `mode=all_offers`), avec leurs effectifs."
     ),
-    responses=error_responses(ErrorCode.UNAUTHENTICATED),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
 )
 async def get_filter_options(
-    principal: CurrentPrincipalDep, filters: GetFeedFiltersDep
+    principal: CurrentPrincipalDep,
+    filters: GetFeedFiltersDep,
+    mode: FeedMode | None = None,
 ) -> FilterOptionsResponse:
     """Les options."""
-    return FilterOptionsResponse.from_options(await filters.execute(principal.subject_id))
+    return FilterOptionsResponse.from_options(await filters.execute(principal.subject_id, mode))
 
 
 @matches_router.post(
