@@ -22,7 +22,59 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `DELETE /auth/me` |
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
+| `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-24, suite (module `documents` : modèles de CV, exports, ATS) — en production
+
+**Livré** (commits `a3f6cd9`, `c0338e5` sur `main`, déploiement Dokploy manuel de l'API
+et du worker, migration 8 appliquée, bucket `karria-production-templates` créé) :
+
+- **Module `documents`** (README du module, ADR-0020 « Acceptée » + § « Mise en œuvre ») :
+  ingestion d'un PDF sans PyMuPDF (pdfplumber + pypdfium2), rôles des lignes par
+  `template_extract`, spécification canonique, porte de qualité PDF ≥ 0,90 + planchers,
+  aperçus (PNG, WebP) et **BlurHash**, versions immuables (`version` +1 à chaque analyse).
+- **Polices** : incorporée si licence + couverture du français, sinon même famille libre
+  (Google Fonts / Fontsource, gardée dans `templates/fonts/…`), sinon remplaçante mesurée
+  (34 familles curées) ; instances statiques ; rapport par version ; incorporées au DOCX.
+- **DOCX** fidèle (interligne exact compensé, espaces avant, taquets, colonnes en tableau,
+  piles d'en-tête, frises/pastilles/filets DrawingML ancrés, puces = listes Word, polices
+  incorporées).
+- **Poste visé** toujours sous le nom (synthétisé dans le style du modèle s'il manque ;
+  omis s'il est vide). Flux de création vérifié : la question « quel métier tu vises ? »
+  remplit `identity.headline`, l'interprète le redemande s'il manque — rien à corriger.
+- **ATS** lu par pdfminer ; plafond de la variante optimisée **0,08 em** (mesuré) ;
+  explication rédigée par le worker (`ats_explain`).
+- **Gotenberg 8.38.1** (`karria-gotenberg`, 1 Gio, interne) ajouté à `karria-donnees`
+  (Dokploy mis à jour + `docker compose up -d gotenberg`, les autres services intacts).
+- **Variables** posées (API + worker + `/root/karria-api.env`) :
+  `DOCUMENTS__GOTENBERG_URL`, `DOCUMENTS__ADMIN_TOKEN` (valeur dans
+  `/root/karria-documents-admin.token`, 600). `STORAGE__PUBLIC_ENDPOINT_URL` **non posée**.
+- **Modèles en production** : Meridian v1 **publié** (PDF 0,934 ; DOCX 0,881), Minimalist v1
+  **publié** (0,916 ; 0,836), Marketing v1 **en revue** (0,822 ; 0,755 — défauts du modèle,
+  Aileron servie en CC0). Sources dans `/root/templates/` sur le serveur.
+- **Test de fumée en production** (pile complète en processus, session substituée, CV
+  « Marc Test », supprimé ensuite) : exports 201 en 1,5 à 3,9 s, aperçu 0,6 s ; ATS PDF/DOCX
+  Meridian 80/96 (variante ATS 85/96), Minimalist 87/96 (variante 83/96) — après le correctif `c0338e5` (style du lien LinkedIn) ; explications
+  `ready`. Fichiers : scratchpad `prod-smoke/` (hors dépôt).
+- **Tests** : `make check` vert, 2 410 tests ; `documents` à 100 % (lignes + branches)
+  hors `repositories.py`/`queue.py` (tests d'intégration). Couverture par chemin
+  (`--cov=src/karria/modules/documents`) : la forme pointée échoue à cause de numpy.
+- **Contrat app** : `karria_app/docs/contrat-api-modeles.md` passé à « servi », commit
+  `4d5c64d` sur `karria-app-full` main.
+
+**Reste (par priorité)** :
+1. **Marc** : DNS `storage.karria.fr` → 128.140.80.204, domaine Dokploy (Let's Encrypt) sur
+   le service MinIO port 9000 de `karria-donnees`, puis
+   `STORAGE__PUBLIC_ENDPOINT_URL=https://storage.karria.fr` dans l'API et le worker
+   (et `/root/karria-api.env`) et redéployer. Sans cela, les URL signées (vignettes,
+   aperçus, exports) visent `karria-minio:9000` et ne s'ouvrent pas depuis l'app.
+2. Revue Fable du module ; `suggest_ats_safe` se fie aux intitulés espacés et peut
+   proposer une variante qui ne gagne rien (Minimalist : 87 → 83 par l'ordre de lecture
+   de pdfminer) — mesurer les deux et ne proposer que si le score monte.
+3. Puces du DOCX en glyphes (plus petites que les pastilles du modèle), Marketing en revue,
+   seconde page : voir `PLUS-TARD.md` § Modèles de CV.
+4. Le lot `~/Desktop/Modele de CV/v2/cv1…cv10` : `scripts.templates submit … --inline`.
 
 ### Session du 2026-10-24 (mode du fil, espace Anthropic, modèles de CV — conception et preuve)
 
@@ -244,9 +296,8 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    l'image ; retrait des traits du texte plongé (ré-indexage) ; champs qui
    valent un appel au modèle. Puis la relecture du travail (Tâche 3) et la
    purge des offres inactives en production.
-3. **Modules suivants**, à décider par Marc un par un : modèles de CV et
-   exports (ADR-0020 proposée, preuve faite — voir la session du 2026-10-24),
-   abonnement Stripe.
+3. **Modules suivants**, à décider par Marc un par un : abonnement Stripe
+   (les modèles de CV sont en production, voir la session du 2026-10-24, suite).
 4. **Points listés dans `docs/PLUS-TARD.md`** :
    - purge planifiée ;
    - limiteur de débit et cache JWKS multi-réplicas (Redis) ;
