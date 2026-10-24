@@ -138,6 +138,15 @@ class TestOutils:
         assert style_key(styles, "projects", "headline") == "section_title"
         assert style_key({"section_title": {}}, "x", "item_text") == "section_title"
 
+    def test_une_coordonnee_sans_emplacement_prend_le_style_dune_coordonnee_voisine(self) -> None:
+        styles = {"section_title": {}, "contact.email": {}, "header.phone": {}}
+        assert style_key(styles, "contact", "website") == "contact.email"
+        assert (
+            style_key({"section_title": {}, "header.phone": {}}, "contact", "website")
+            == "header.phone"
+        )
+        assert style_key({"section_title": {}}, "contact", "website") == "section_title"
+
     def test_un_filet_vertical_est_une_bordure_gauche(self) -> None:
         css = deco_css({"kind": "vline", "h_mm": 10, "stroke": "#111111"}, 1, 2)
         assert "border-left:0.75pt solid #111111" in css

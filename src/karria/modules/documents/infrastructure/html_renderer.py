@@ -26,6 +26,7 @@ Json = dict[str, Any]
 
 LIST_ROLE: Final = {"skills": "skill", "languages": "language", "interests": "interest"}
 ROLE_MARKER: Final = frozenset({"bullet", "skill", "language", "interest"})
+CONTACT_ROLES: Final = ("phone", "email", "address", "website")
 LIST_KINDS: Final = frozenset({"skills", "languages", "interests"})
 SIBLINGS: Final[dict[str, list[str]]] = {
     "languages": ["skills", "interests"],
@@ -69,6 +70,13 @@ def style_key(styles: dict[str, Json], kind: str, role: str) -> str:
     for k in styles:
         if k.endswith("." + role) and not k.startswith("header."):
             return k
+    if role in CONTACT_ROLES:
+        # Une coordonnée sans emplacement (le site, LinkedIn) prend le style
+        # d'une coordonnée voisine, jamais celui d'un titre.
+        for prefix in (kind, "contact", "header"):
+            for other in CONTACT_ROLES:
+                if f"{prefix}.{other}" in styles:
+                    return f"{prefix}.{other}"
     if role in ROLE_MARKER:
         for other in ("skill", "language", "interest", "bullet"):
             for k in styles:
