@@ -7,6 +7,8 @@ RUN_IN_TRANSACTION = True
 # `documents_template_versions.thumbnail_blurhash` manquait à l'instantané de
 # la migration 8, mais la colonne existe déjà (créée par son SQL) : aerich
 # l'ajoutait ici, retiré à la main.
+# Idempotente (`IF NOT EXISTS`) : appliquée en production avant le déploiement
+# du code qui la lit, puis enregistrée par `aerich upgrade`.
 
 
 async def upgrade(db: BaseDBAsyncClient) -> str:
@@ -42,8 +44,8 @@ COMMENT ON COLUMN "offers_companies"."v1_id" IS '`companies.id` de la V1.';
 COMMENT ON COLUMN "offers_companies"."logo_origin" IS 'SOURCE: source\nV1: v1\nFAVICON: favicon';
 COMMENT ON COLUMN "offers_companies"."logo_status" IS 'PENDING: pending\nREADY: ready\nMISSING: missing';
 COMMENT ON TABLE "offers_companies" IS 'Employeurs reconnus par clé de nom et domaine ; leur logo normalisé vit dans le bucket public `logos`, adressé par `logo_hash`.';
-        ALTER TABLE "offers_offers" ADD "company_id" UUID;
-        ALTER TABLE "offers_offers" ADD "company_logo_hash" VARCHAR(64);
+        ALTER TABLE "offers_offers" ADD COLUMN IF NOT EXISTS "company_id" UUID;
+        ALTER TABLE "offers_offers" ADD COLUMN IF NOT EXISTS "company_logo_hash" VARCHAR(64);
         COMMENT ON COLUMN offers_offers."company_id" IS 'L''entreprise rattachée (`offers_companies`).';
 COMMENT ON COLUMN offers_offers."company_logo_hash" IS 'Copie du logo de l''entreprise : le fil se lit sans jointure.';
         CREATE INDEX IF NOT EXISTS "idx_offers_offe_company_f003bd" ON "offers_offers" ("company_id");"""
