@@ -160,9 +160,12 @@ class TestNommageDesBuckets:
         """Une valeur ajoutée à l'énumération sans politique casse ici."""
         assert set(Bucket) == set(REGISTRY)
 
-    def test_aucun_bucket_nest_public_par_defaut(self) -> None:
-        """Un bucket public est une fuite de données à un mauvais nom près."""
-        assert not any(policy.public_read for policy in REGISTRY.values())
+    def test_seul_le_bucket_des_logos_est_public(self) -> None:
+        """Un bucket public est une fuite de données à un mauvais nom près : un seul,
+        qui n'accepte que des logos WebP adressés par condensat."""
+        public = [bucket for bucket, policy in REGISTRY.items() if policy.public_read]
+        assert public == [Bucket.LOGOS]
+        assert REGISTRY[Bucket.LOGOS].allowed_content_types == frozenset({"image/webp"})
 
 
 class TestPolitiqueALecriture:

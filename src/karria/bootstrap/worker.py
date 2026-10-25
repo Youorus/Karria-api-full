@@ -31,8 +31,10 @@ logger = get_logger(__name__)
 #: Travaux exécutés en même temps par un worker. Deux : une collecte (qui
 #: attend surtout le réseau) et une synchronisation de l'index (qui occupe
 #: le serveur d'inférence) peuvent avancer ensemble ; davantage se battrait
-#: pour les mêmes huit cœurs.
-WORKER_CONCURRENCY: Final = 2
+#: pour les mêmes huit cœurs. Une troisième place pour la recherche des
+#: logos (`offers.fetch_logos`), qui attend des sites tiers et ne doit pas
+#: retarder l'ingestion.
+WORKER_CONCURRENCY: Final = 3
 #: Un travail « en cours » dont le worker ne donne plus signe de vie depuis
 #: ce délai est relancé. Sans cela, un worker tué en plein travail laisse
 #: son verrou d'exécution pris, et tous les travaux du même verrou

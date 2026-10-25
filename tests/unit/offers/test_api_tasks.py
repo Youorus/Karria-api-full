@@ -9,9 +9,10 @@ import pytest
 from procrastinate import App, testing
 
 from karria.modules.offers.api import tasks
-from karria.modules.offers.application import SyncReport
+from karria.modules.offers.application import LogoReport, SyncReport
 from karria.modules.offers.infrastructure.queue import (
     TASK_EXPIRE,
+    TASK_FETCH_LOGOS,
     TASK_INGEST_BATCH,
     TASK_RECONCILE,
     TASK_REFRESH_TARGETS,
@@ -67,6 +68,7 @@ def test_tous_les_travaux_sont_inscrits(app: App) -> None:
         TASK_EXPIRE,
         TASK_RECONCILE,
         TASK_UPDATE_MEMORY,
+        TASK_FETCH_LOGOS,
     } <= set(app.tasks)
 
 
@@ -164,3 +166,67 @@ async def test_au_dela_du_budget_la_synchronisation_se_re_differe(
     assert total == 64
     assert notifiers == ["notificateur"]
     assert queued(connector) == [TASK_SYNC_INDEX]
+
+
+class LogoRecorder(Recorder):
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append(tuple(kwargs.items()))
+        return self.results.pop(0) if self.results else LogoReport()
+
+
+async def test_les_logos_se_cherchent_jusqu_a_epuisement(
+    app: App, connector: testing.InMemoryConnector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetch = LogoRecorder(results=[LogoReport(claimed=200), LogoReport(claimed=4)])
+    storage = object()
+    built: list[Any] = []
+
+    async def open_storage(settings: Settings, resources: Any) -> Any:
+        return storage
+
+    def build(given: Any, fetcher: Any) -> LogoRecorder:
+        built.append((given, type(fetcher).__name__))
+        return fetch
+
+    monkeypatch.setattr(tasks, "build_object_storage", open_storage)
+    monkeypatch.setattr(tasks, "build_fetch_logos", build)
+
+    await app.tasks[TASK_FETCH_LOGOS].func()
+
+    assert len(fetch.calls) == 3
+    assert built == [(storage, "HttpLogoFetcher")]
+    assert queued(connector) == []
+
+
+async def test_au_dela_du_budget_les_logos_se_re_different(
+    connector: testing.InMemoryConnector, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    application = App(connector=connector)
+    fetch = LogoRecorder(results=[LogoReport(claimed=200)])
+
+    async def open_storage(settings: Settings, resources: Any) -> Any:
+        return object()
+
+    monkeypatch.setattr(tasks, "build_object_storage", open_storage)
+    monkeypatch.setattr(tasks, "build_fetch_logos", lambda storage, fetcher: fetch)
+
+    async with application.open_async():
+        total = await tasks.run_logos(application, budget=-1.0)
+
+    assert total == 200
+    assert queued(connector) == [TASK_FETCH_LOGOS]
+    assert fetch.calls == [(("concurrency", 16),)]
+
+
+async def test_la_commande_de_rattrapage_ne_re_differe_rien(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fetch = LogoRecorder(results=[LogoReport(claimed=5)])
+
+    async def open_storage(settings: Settings, resources: Any) -> Any:
+        return object()
+
+    monkeypatch.setattr(tasks, "build_object_storage", open_storage)
+    monkeypatch.setattr(tasks, "build_fetch_logos", lambda storage, fetcher: fetch)
+
+    assert await tasks.fetch_logos_within(budget=-1.0, concurrency=4) == 5

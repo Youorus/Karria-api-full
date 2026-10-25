@@ -14,6 +14,7 @@ from karria.shared.images.pillow import (
     normalize_image,
     resize_to_png,
     sniff_content_type,
+    square_icon,
     to_webp,
 )
 from karria.shared.images.ports import (
@@ -25,6 +26,7 @@ from karria.shared.images.ports import (
     ImageTooLargeError,
     NormalizedImage,
     NotAnImageError,
+    SquareIcon,
 )
 
 __all__ = [
@@ -36,11 +38,13 @@ __all__ = [
     "ImageTooLargeError",
     "NormalizedImage",
     "NotAnImageError",
+    "SquareIcon",
     "blurhash",
     "crop_to_frame",
     "image_size",
     "normalize_image",
     "resize_to_png",
     "sniff_content_type",
+    "square_icon",
     "to_webp",
 ]

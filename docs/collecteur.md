@@ -92,8 +92,9 @@ Une ligne :
   "title": "Serveur H/F",           // obligatoire
   "description": "…",               // Markdown léger, "" si inconnue
   "company_name": "Temporis",       // les champs suivants sont facultatifs
-  "company_logo_url": null,
-  "company_url": null,
+  "company_logo_url": null,        // le logo chez la source : l'API le télécharge une fois (ADR-0021)
+  "company_url": null,              // souvent la page de l'employeur SUR la source
+  "company_website": null,          // son vrai site, quand la source le donne (Indeed : company_url_direct)
   "location_label": "Vienne, 38, France",
   "date_posted": "2026-10-22",      // AAAA-MM-JJ
   "job_types": ["temporary", "fulltime"],
@@ -146,6 +147,23 @@ et `src/karria/modules/offers/domain/handoff.py` (lecture). Un test
   lieu de `<p>`) : JobSpy rendait zéro annonce sans erreur. Corrigé par
   `collector/sources.py::patch_hellowork`. C'est le genre de panne qui doit
   rester de ce côté-ci.
+- `fetch_description` vaut pour tous les sites, LinkedIn compris
+  (`linkedin_fetch_description` en est l'ancien nom, déprécié depuis 1.2.0).
+- JobSpy **range les erreurs d'un site dans `frame.attrs["errors"]`** et rend
+  un tableau vide : un LinkedIn bloqué (429, 999, « blocked? ») ressemblerait à
+  « rien trouvé ». `sources.raise_for_errors` les relève : `SiteBlockedError`
+  (blocage, avec les annonces déjà lues) ouvre le disjoncteur du site ;
+  `SiteError` (échec sans résultat) compte comme un échec ordinaire.
+- **LinkedIn** (ajouté le 2026-10-25) : sans compte ni mandataire, depuis le
+  serveur, 25 annonces par recherche dont 21 à 24 avec description et logo,
+  ~28 s par recherche (une requête de description par annonce). D'où ses
+  réglages propres : 25 annonces par recherche, **40 recherches par heure**,
+  12 s ± 50 % de pause, et un disjoncteur qui le laisse de côté 30 min après un
+  blocage, doublé à chaque blocage consécutif jusqu'à 6 h (sur plusieurs
+  passages). Le zéro silencieux le surveille comme les autres. Les cibles
+  sont les mêmes pour tous les sites : le planificateur ne connaît pas les
+  sites, LinkedIn sert les cibles les plus prioritaires de chaque passage
+  tant que son budget le permet.
 - La mention « CDI » est perdue par JobSpy sur les deux sites ; l'API la
   retrouve dans le texte, et déduit un CDI d'une carte HelloWork sans type
   de contrat.

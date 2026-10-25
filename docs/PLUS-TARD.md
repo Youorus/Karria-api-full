@@ -401,3 +401,29 @@ Au-delà de l'ajustement (espacements ×0,6, corps ×0,88), le flux déborde sur
 page sans rompre proprement les colonnes. Les mots-clés manquants s'affichent sans
 accents (forme repliée). **Déclencheur :** un CV réel qui dépasse une page ; la première
 revue du score ATS par Marc.
+
+## Entreprises et logos (ADR-0021)
+
+### Les icônes SVG ne sont pas rastérisées
+
+Un site qui ne déclare qu'une icône SVG (Lidl) retombe sur le service d'icônes de
+Google, souvent trop petit (48–60 px, refusé). Rastériser demanderait `resvg`
+ou `cairosvg` : à peser contre le gain mesuré (`scripts.companies coverage`).
+
+### Un logo prêt n'est jamais rafraîchi
+
+Une entreprise qui change de logo garde l'ancien. Une passe mensuelle sur les
+logos de plus de 90 jours, quand la source donne une adresse nouvelle, suffirait.
+
+### La résolution DNS n'est pas épinglée
+
+`HttpLogoFetcher` vérifie que chaque hôte résout vers une adresse publique, puis
+httpx résout de nouveau : un DNS malveillant qui change entre les deux passerait.
+Épingler l'adresse (transport httpx sur IP + en-tête `Host`, SNI) le fermerait.
+
+### LinkedIn ne voit que les cibles les plus prioritaires
+
+Son budget (40 recherches/h) est consommé par les premières cibles de chaque
+passage ; les cibles moins prioritaires ne passent jamais par LinkedIn. Un
+tourniquet par site dans le planificateur le corrigerait si la couverture
+LinkedIn de la longue traîne s'avère utile.

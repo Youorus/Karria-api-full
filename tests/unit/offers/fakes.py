@@ -19,12 +19,15 @@ from uuid import UUID, uuid4
 from karria.modules.offers.application import (
     CriteriaMatch,
     FeedQuery,
+    FetchedImage,
     IndexedOffer,
     IndexQuery,
     IngestionReport,
     Message,
     OfferFilters,
+    OfferLink,
     OutboxItem,
+    ProcessedLogo,
     StoredCriteria,
     StoredTarget,
 )
@@ -59,6 +62,7 @@ from karria.modules.offers.domain import (
     fold,
     simhash64,
 )
+from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits, LogoStatus
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 PARIS = GeocodedPlace(
@@ -944,6 +948,11 @@ class RecordingQueue:
         self.index_syncs = 0
         self.batches: list[tuple[str, str | None]] = []
         self.memory_updates: list[tuple[UUID, str, str]] = []
+        self.logo_fetches = 0
+
+    async def defer_logo_fetch(self) -> None:
+        """Compte."""
+        self.logo_fetches += 1
 
     async def defer_index_sync(self) -> None:
         """Compte."""
@@ -1003,3 +1012,124 @@ class RecordingNotifier:
         """Retient et rend `accepted`."""
         self.sent.append({"user_id": user_id, "title": title, "body": body, "data": dict(data)})
         return self.accepted
+
+
+class InMemoryCompanyRepository:
+    """`CompanyRepository` en mémoire ; les offres rattachées sont lues dans `offers`."""
+
+    def __init__(self, offers: InMemoryOfferRepository | None = None) -> None:
+        self.companies: dict[UUID, CompanyRecord] = {}
+        self.links: dict[tuple[str, str], UUID] = {}
+        self.offers = offers
+        self.saved_logos: list[CompanyRecord] = []
+
+    async def find_by_keys(self, keys: Sequence[str]) -> dict[str, list[CompanyRecord]]:
+        """Par clé, dans l'ordre d'insertion."""
+        found: dict[str, list[CompanyRecord]] = {}
+        for record in self.companies.values():
+            if record.key in keys:
+                found.setdefault(record.key, []).append(record)
+        return found
+
+    async def save_many(self, records: Sequence[CompanyRecord]) -> None:
+        """Remplace."""
+        for record in records:
+            self.companies[record.id] = record
+
+    async def link_offers(self, links: Sequence[OfferLink]) -> int:
+        """Ne compte que ce qui change."""
+        changed = 0
+        for link in links:
+            key = (link.source, link.source_id)
+            if self.links.get(key) != link.company_id:
+                self.links[key] = link.company_id
+                changed += 1
+        return changed
+
+    async def claim_logo_work(
+        self, *, now: datetime, until: datetime, limit: int
+    ) -> list[CompanyRecord]:
+        """Les dues, sous bail."""
+        due = [
+            r
+            for r in self.companies.values()
+            if r.logo_status is LogoStatus.PENDING
+            and r.logo_next_attempt_at is not None
+            and r.logo_next_attempt_at <= now
+        ][:limit]
+        for record in due:
+            self.companies[record.id] = dataclasses.replace(record, logo_next_attempt_at=until)
+        return due
+
+    async def save_logo(self, record: CompanyRecord) -> int:
+        """Retient."""
+        self.companies[record.id] = record
+        self.saved_logos.append(record)
+        return sum(1 for cid in self.links.values() if cid == record.id)
+
+    async def unlinked_offers(
+        self, *, after: UUID | None, limit: int, active_only: bool
+    ) -> list[Offer]:
+        """Celles du dépôt d'offres que rien ne rattache."""
+        pool = sorted((self.offers.offers.values() if self.offers else []), key=lambda o: o.id.int)
+        return [
+            o
+            for o in pool
+            if o.company is not None
+            and (o.source.value, o.source_id) not in self.links
+            and (not active_only or o.is_active)
+            and (after is None or o.id.int > after.int)
+        ][:limit]
+
+
+class ScriptedLogoFetcher:
+    """`LogoFetcher` scripté : adresse → réponse ; tout le reste est un 404."""
+
+    def __init__(
+        self,
+        images: Mapping[str, FetchedImage] | None = None,
+        icons: Mapping[str, list[str]] | None = None,
+    ) -> None:
+        self.images = dict(images or {})
+        self.icons = dict(icons or {})
+        self.fetched: list[str] = []
+
+    async def fetch_image(self, url: str) -> FetchedImage:
+        """Rend le scénario."""
+        self.fetched.append(url)
+        return self.images.get(url, FetchedImage(payload=None, permanent=True))
+
+    async def site_icons(self, domain: str) -> list[str]:
+        """Rend le scénario."""
+        return self.icons.get(domain, [])
+
+
+class TraitsProcessor:
+    """`LogoProcessor` : les octets sont la clé d'un jeu de mesures ; inconnus = illisibles."""
+
+    def __init__(self, traits: Mapping[bytes, ImageTraits]) -> None:
+        self.traits = dict(traits)
+
+    def process(self, payload: bytes) -> ProcessedLogo | None:
+        """Rend des tailles factices."""
+        if payload not in self.traits:
+            return None
+        digest = payload.decode().ljust(32, "0")[:32]
+        return ProcessedLogo(
+            digest=digest, traits=self.traits[payload], renditions={128: b"s", 256: b"l"}
+        )
+
+
+class InMemoryLogoStore:
+    """`LogoStore` en mémoire."""
+
+    def __init__(self) -> None:
+        self.stored: dict[str, ProcessedLogo] = {}
+
+    async def has(self, digest: str) -> bool:
+        """Présent ?"""
+        return digest in self.stored
+
+    async def put(self, logo: ProcessedLogo) -> None:
+        """Range."""
+        self.stored[logo.digest] = logo

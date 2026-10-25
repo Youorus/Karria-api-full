@@ -53,3 +53,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0018](0018-couche-llm-et-agent-karria.md) | Une couche LLM indépendante du fournisseur, et Karria : constitution, mémoire, garde-fous | Proposée |
 | [0019](0019-apprentissage-continu.md) | Apprentissage continu : journal des gestes avec leur place, classement appris, porte de promotion, dérive | Proposée |
 | [0020](0020-modeles-de-cv-et-exports.md) | Modèles de CV : spécification canonique tirée du PDF, deux rendus (PDF, DOCX), score ATS déterministe | Proposée |
+| [0021](0021-entreprises-et-logos.md) | Entreprises communes aux sources, logos téléchargés une fois et servis par un bucket public adressé par condensat | Proposée |

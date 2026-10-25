@@ -17,6 +17,7 @@ from __future__ import annotations
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 from typing import Any, Self
+from urllib.parse import quote
 
 import aioboto3
 from botocore.config import Config
@@ -137,7 +138,11 @@ class S3ObjectStorage:
         extra: dict[str, Any] = {"ContentType": content_type}
         seconds = cache_seconds if cache_seconds is not None else REGISTRY[bucket].cache_seconds
         if seconds is not None:
-            extra["CacheControl"] = f"max-age={seconds}"
+            extra["CacheControl"] = (
+                f"public, max-age={seconds}, immutable"
+                if REGISTRY[bucket].public_read
+                else f"max-age={seconds}"
+            )
 
         response = await self._call(
             "put_object",
@@ -245,6 +250,26 @@ class S3ObjectStorage:
         except (ClientError, BotoCoreError) as exc:
             raise self._translate(exc, operation="presign_get", bucket=bucket, key=key) from exc
         return url
+
+    def public_url(self, bucket: Bucket, key: str) -> str:
+        """`{public}/{bucket}/{clé}` en adressage par chemin (MinIO), `{bucket}.{hôte}` sinon."""
+        if not REGISTRY[bucket].public_read:
+            raise StorageError(
+                f"Le bucket « {bucket.value} » n'est pas public.",
+                operation="public_url",
+                bucket=bucket.value,
+                key=key,
+            )
+        name = self.bucket_name(bucket)
+        path = quote(key)
+        base = self._settings.public_endpoint_url or self._settings.resolved_endpoint
+        if base is None:
+            return f"https://{name}.s3.{self._settings.resolved_region}.amazonaws.com/{path}"
+        base = base.rstrip("/")
+        if self._settings.profile.addressing == "path":
+            return f"{base}/{name}/{path}"
+        scheme, _, host = base.partition("://")
+        return f"{scheme}://{name}.{host}/{path}"
 
     async def presigned_put_url(
         self,

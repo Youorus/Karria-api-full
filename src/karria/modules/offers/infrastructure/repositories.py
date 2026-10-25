@@ -102,7 +102,10 @@ def _to_offer(row: OfferModel) -> Offer:
         source_id=row.source_id,
         title=row.title,
         company=Company(
-            name=row.company_name, logo_url=row.company_logo_url, website=row.company_url
+            name=row.company_name,
+            logo_url=row.company_logo_url,
+            website=row.company_url,
+            logo_hash=row.company_logo_hash,
         )
         if row.company_name
         else None,
@@ -133,6 +136,8 @@ def _to_offer(row: OfferModel) -> Offer:
 
 
 def _columns(offer: Offer) -> dict[str, Any]:
+    """Les colonnes qu'écrit l'ingestion. `company_id` et `company_logo_hash` n'en sont pas :
+    seul le rattachement aux entreprises les écrit (`TortoiseCompanyRepository`)."""
     b0, b1, b2, b3 = bands(offer.simhash)
     return {
         "source": offer.source,

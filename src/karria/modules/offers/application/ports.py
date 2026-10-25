@@ -33,6 +33,7 @@ from karria.modules.offers.domain import (
     TargetStats,
     Widening,
 )
+from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits
 
 # ---------------------------------------------------------------------
 # Le corpus
@@ -688,10 +689,114 @@ class JobQueue(Protocol):
         """Demande de mettre à jour la mémoire de la personne après ce tour, hors du chemin de la réponse."""
         ...
 
+    async def defer_logo_fetch(self) -> None:
+        """Demande un passage de recherche de logos (un seul en attente à la fois)."""
+        ...
+
 
 class UserNotifier(Protocol):
     """Port : prévenir une personne. Branché sur `devices` par `bootstrap/wiring.py`."""
 
     async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
         """Envoie à tous les appareils joignables. Rend le nombre accepté."""
+        ...
+
+
+# ---------------------------------------------------------------------
+# Les employeurs et leurs logos
+# ---------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OfferLink:
+    """Une offre à rattacher à son entreprise : (source, identifiant) → entreprise."""
+
+    source: str
+    source_id: str
+    company_id: UUID
+
+
+class CompanyRepository(Protocol):
+    """Port : les entreprises (`offers_companies`) et leur lien aux offres."""
+
+    async def find_by_keys(self, keys: Sequence[str]) -> dict[str, list[CompanyRecord]]:
+        """Les entreprises connues sous chaque clé de nom, la plus ancienne d'abord."""
+        ...
+
+    async def save_many(self, records: Sequence[CompanyRecord]) -> None:
+        """Crée ou met à jour (par identifiant)."""
+        ...
+
+    async def link_offers(self, links: Sequence[OfferLink]) -> int:
+        """Rattache les offres et y recopie le logo de l'entreprise. Rend le nombre modifié."""
+        ...
+
+    async def claim_logo_work(
+        self, *, now: datetime, until: datetime, limit: int
+    ) -> list[CompanyRecord]:
+        """Prend les entreprises dont le logo est à chercher maintenant, celles qui ont des offres
+        actives d'abord, et les met sous bail jusqu'à `until` (sans double prise)."""
+        ...
+
+    async def save_logo(self, record: CompanyRecord) -> int:
+        """Enregistre l'issue d'une recherche et recopie le logo sur ses offres. Rend leur nombre."""
+        ...
+
+    async def unlinked_offers(
+        self, *, after: UUID | None, limit: int, active_only: bool
+    ) -> list[Offer]:
+        """Les offres qui nomment un employeur sans y être rattachées, par identifiant croissant
+        après `after` (rattrapage)."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedImage:
+    """Ce qu'un téléchargement a rendu."""
+
+    #: Les octets, ou `None` si rien n'est venu.
+    payload: bytes | None
+    #: L'échec est définitif (404, pas une image, trop gros) : inutile de réessayer.
+    permanent: bool = False
+
+
+class LogoFetcher(Protocol):
+    """Port : aller chercher une image chez un tiers, poliment."""
+
+    async def fetch_image(self, url: str) -> FetchedImage:
+        """Télécharge une image (délais, taille et débit bornés)."""
+        ...
+
+    async def site_icons(self, domain: str) -> list[str]:
+        """Les icônes que déclare la page d'accueil du domaine, la plus grande d'abord."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessedLogo:
+    """Une image mise au carré, mesurée, déclinée dans chaque taille servie."""
+
+    digest: str
+    traits: ImageTraits
+    #: Taille → octets WebP.
+    renditions: Mapping[int, bytes]
+
+
+class LogoProcessor(Protocol):
+    """Port : normaliser une image en logo carré (rognage, fond, tailles)."""
+
+    def process(self, payload: bytes) -> ProcessedLogo | None:
+        """`None` si les octets ne sont pas une image lisible."""
+        ...
+
+
+class LogoStore(Protocol):
+    """Port : le stock des logos normalisés, adressés par condensat."""
+
+    async def has(self, digest: str) -> bool:
+        """Le logo est déjà en stock (une autre entreprise a le même)."""
+        ...
+
+    async def put(self, logo: ProcessedLogo) -> None:
+        """Écrit chaque taille ; idempotent."""
         ...

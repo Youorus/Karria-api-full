@@ -25,6 +25,7 @@ FIELDS: Final[tuple[str, ...]] = (
     "company_name",
     "company_logo_url",
     "company_url",
+    "company_website",
     "location_label",
     "date_posted",
     "job_types",

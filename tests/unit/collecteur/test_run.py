@@ -10,7 +10,7 @@ import pytest
 
 from karria.collector.run import Collector
 from karria.collector.settings import CollectorSettings
-from karria.collector.sources import Target
+from karria.collector.sources import SiteBlockedError, Target
 
 pytestmark = pytest.mark.unit
 
@@ -345,3 +345,97 @@ async def test_une_annonce_france_travail_sans_titre_est_ecartee_du_lot() -> Non
     summary = await collector.poll_once()
 
     assert (summary.fetched, summary.postings) == (2, 1)
+
+
+class LinkedInScraper(FakeScraper):
+    """LinkedIn bloque (429/999) à partir d'un appel donné ; les autres sites répondent."""
+
+    def __init__(self, blocked_from: int, records: list[dict[str, Any]] | None = None) -> None:
+        super().__init__()
+        self.blocked_from = blocked_from
+        self.records = records or []
+        self.options: list[dict[str, Any]] = []
+        self.linkedin: list[tuple[str, str]] = []
+
+    def __call__(self, site: str, target: Target, **options: Any) -> list[dict[str, Any]]:
+        self.options.append({"site": site, **options})
+        if site == "linkedin":
+            self.linkedin.append((site, target.key))
+            if len(self.linkedin) >= self.blocked_from:
+                raise SiteBlockedError("response status code 429 (blocked)", self.records)
+            return [{"source": "linkedin", "source_id": target.key, "title": "Serveur"}]
+        return super().__call__(site, target, **options)
+
+
+def linkedin_run(
+    scraper: LinkedInScraper, clock: dict[str, float], **settings: Any
+) -> tuple[Collector, list[float]]:
+    pauses: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        pauses.append(seconds)
+
+    configured = CollectorSettings(sites=["indeed", "linkedin"], pause_seconds=2.0, **settings)
+    made = Collector(
+        configured,
+        FakeApi([PARIS, LYON, PARIS]),
+        scraper=scraper,
+        sleep=sleep,
+        clock=lambda: clock["now"],
+        jitter=lambda: 0.5,
+    )  # type: ignore[arg-type]
+    return made, pauses
+
+
+async def test_linkedin_a_sa_pause_son_budget_et_sa_taille_de_page() -> None:
+    clock = {"now": 0.0}
+    scraper = LinkedInScraper(blocked_from=99)
+    run, pauses = linkedin_run(scraper, clock, site_hourly_budgets={"linkedin": 2})
+
+    summary = await run.run_once()
+
+    linkedin = [o for o in scraper.options if o["site"] == "linkedin"]
+    assert len(linkedin) == 2
+    assert all(o["results_wanted"] == 25 for o in linkedin)
+    assert {o["results_wanted"] for o in scraper.options if o["site"] == "indeed"} == {60}
+    assert summary.over_budget == {"linkedin": 1}
+    assert pauses == [2.0, 12.0, 2.0, 12.0, 2.0]
+
+
+async def test_un_blocage_linkedin_ouvre_le_disjoncteur_d_un_passage_a_l_autre() -> None:
+    clock = {"now": 0.0}
+    kept = [{"source": "linkedin", "source_id": "lu", "title": "Serveur"}]
+    scraper = LinkedInScraper(blocked_from=2, records=kept)
+    run, _ = linkedin_run(
+        scraper, clock, blocked_cooldown_seconds=100, blocked_cooldown_max_seconds=150
+    )
+
+    summary = await run.run_once()
+
+    assert scraper.linkedin == [("linkedin", PARIS.key), ("linkedin", LYON.key)]
+    assert summary.sites_blocked == ["linkedin"]
+    assert run.blocked_until["linkedin"] == 100
+    lyon_batch = run._api.batches[1][0]  # type: ignore[attr-defined]
+    assert {"source": "linkedin", "source_id": "lu", "title": "Serveur"} in lyon_batch
+
+    again = await run.run_once()
+    assert again.sites_blocked == []
+    assert len(scraper.linkedin) == 2
+
+    clock["now"] = 101.0
+    await run.run_once()
+    assert run.blocked_until["linkedin"] == 251.0  # doublé, plafonné à 150
+
+
+async def test_un_succes_remet_le_compteur_de_blocages_a_zero() -> None:
+    clock = {"now": 0.0}
+    scraper = LinkedInScraper(blocked_from=1)
+    run, _ = linkedin_run(scraper, clock, blocked_cooldown_seconds=10)
+    await run.run_once()
+    scraper.blocked_from = 99
+    clock["now"] = 11.0
+    await run.run_once()
+    scraper.blocked_from = 0
+    clock["now"] = 1_000.0
+    await run.run_once()
+    assert run.blocked_until["linkedin"] == 1_010.0

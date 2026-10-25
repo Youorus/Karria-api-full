@@ -14,12 +14,17 @@ Ce qu'il expose, et pour qui :
 - `register_tasks` — les travaux de la file durable, inscrits par
   `bootstrap/worker.py` ;
 - `build_*`, `ensure_indexes` — pour les commandes `scripts/offers.py` ;
-- `SearchCriteria`, `RawPosting` — les valeurs que ces commandes manipulent.
+- `SearchCriteria`, `RawPosting` — les valeurs que ces commandes manipulent ;
+- `build_attach_companies`, `build_backfill_companies`, `fetch_logos_within`,
+  `CompanySighting`, `company_key`, `company_domain` — pour
+  `scripts/companies.py` (entreprises de la V1, rattrapage, logos).
 """
 
 from karria.modules.offers.api import router
 from karria.modules.offers.api.dependencies import (
     build_apply_criteria,
+    build_attach_companies,
+    build_backfill_companies,
     build_expire_offers,
     build_forget_user,
     build_ingest_batch,
@@ -32,9 +37,10 @@ from karria.modules.offers.api.dependencies import (
     ensure_indexes,
     get_user_notifier,
 )
-from karria.modules.offers.api.tasks import register_tasks
+from karria.modules.offers.api.tasks import fetch_logos_within, register_tasks
 from karria.modules.offers.application import UserNotifier
 from karria.modules.offers.domain import RawPosting, SearchCriteria
+from karria.modules.offers.domain.companies import CompanySighting, company_domain, company_key
 from karria.shared.module import ModuleDescriptor
 
 MODULE = ModuleDescriptor(
@@ -45,10 +51,13 @@ MODULE = ModuleDescriptor(
 
 __all__ = [
     "MODULE",
+    "CompanySighting",
     "RawPosting",
     "SearchCriteria",
     "UserNotifier",
     "build_apply_criteria",
+    "build_attach_companies",
+    "build_backfill_companies",
     "build_expire_offers",
     "build_forget_user",
     "build_ingest_batch",
@@ -58,7 +67,10 @@ __all__ = [
     "build_refresh_targets",
     "build_search_offers",
     "build_sync_index",
+    "company_domain",
+    "company_key",
     "ensure_indexes",
+    "fetch_logos_within",
     "get_user_notifier",
     "register_tasks",
 ]

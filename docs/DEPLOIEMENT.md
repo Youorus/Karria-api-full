@@ -144,3 +144,26 @@ sert `/opt/karria/models/e5-base-int8`, produit par
   `STORAGE__PUBLIC_ENDPOINT_URL=https://storage.karria.fr` après avoir créé le
   domaine (DNS + domaine Dokploy sur MinIO:9000) — sinon les liens d'aperçu et
   d'export ne s'ouvrent pas depuis l'app.
+
+## Entreprises et logos (ADR-0021, 2026-10-25)
+
+- **Migration** 9 (`entreprises_et_logos`) : `aerich upgrade`.
+- **Bucket** `karria-production-logos`, **public en lecture** (seul de son
+  espèce) : `python -m scripts.storage_provision`. Servi par
+  `https://storage.karria.fr/karria-production-logos/<condensat>/<128|256>.webp`
+  (`STORAGE__PUBLIC_ENDPOINT_URL` doit être posée, sinon les adresses visent
+  l'hôte interne).
+- **Worker** : 3 places (`WORKER_CONCURRENCY`) ; le travail `offers.fetch_logos`
+  tourne toutes les 5 min.
+- **Amorçage**, une fois, dans l'ordre (conteneurs ponctuels avec
+  `/root/karria-api.env`) :
+  1. `python -m scripts.companies import-v1 /in/companies.jsonl.gz` — l'export
+     de `public.companies` de la V1, tiré d'une base de travail où le dump
+     `karria_essentiel_2026-09-12.sql.gz` a été restauré ;
+  2. `python -m scripts.companies backfill` (puis `--all`) — rattache les offres en base ;
+  3. `python -m scripts.companies fetch-logos --budget 14400 --concurrency 32` —
+     le rattrapage des logos, en parallèle du worker (bail commun, pas de double prise) ;
+  4. `python -m scripts.companies coverage` — la couverture par source.
+- **Collecteur** : LinkedIn est dans les sites par défaut (`COLLECTOR__SITES` le
+  retire au besoin) ; ses réglages propres (`COLLECTOR__SITE_HOURLY_BUDGETS`,
+  `…_SITE_PAUSE_SECONDS`, `…_BLOCKED_COOLDOWN_SECONDS`) ont des défauts prudents.

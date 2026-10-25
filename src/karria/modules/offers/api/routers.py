@@ -24,6 +24,7 @@ from karria.modules.offers.api.dependencies import (
     GetMemoryDep,
     GetOfferDep,
     LeaseTargetsDep,
+    LogoUrlDep,
     MarkSeenDep,
     ReceiveBatchDep,
     ResetMemoryDep,
@@ -102,6 +103,7 @@ async def get_feed(
     principal: CurrentPrincipalDep,
     feed: GetFeedDep,
     clock: ClockDep,
+    logo_url: LogoUrlDep,
     limit: Annotated[int, Query(ge=1, le=FEED_MAX_LIMIT)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
     sort: Literal["relevance", "fresh"] = "relevance",
@@ -129,7 +131,9 @@ async def get_feed(
             mode=mode,
         )
     )
-    return FeedPageResponse.from_page(page, limit=limit, offset=offset, now=clock.now())
+    return FeedPageResponse.from_page(
+        page, limit=limit, offset=offset, now=clock.now(), logo_url=logo_url
+    )
 
 
 @matches_router.get(
@@ -181,11 +185,15 @@ async def mark_seen(
     responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
 )
 async def get_match(
-    offer_id: UUID, principal: CurrentPrincipalDep, get: GetOfferDep, clock: ClockDep
+    offer_id: UUID,
+    principal: CurrentPrincipalDep,
+    get: GetOfferDep,
+    clock: ClockDep,
+    logo_url: LogoUrlDep,
 ) -> JobMatchResponse:
     """Le détail."""
     item = await get.execute(principal.subject_id, offer_id)
-    return JobMatchResponse.from_item(item, now=clock.now(), detail=True)
+    return JobMatchResponse.from_item(item, now=clock.now(), detail=True, logo_url=logo_url)
 
 
 @matches_router.patch(
@@ -203,11 +211,13 @@ async def get_match(
     ),
 )
 async def update_interaction(
+    *,
     offer_id: UUID,
     body: InteractionRequest,
     principal: CurrentPrincipalDep,
     update: UpdateStateDep,
     clock: ClockDep,
+    logo_url: LogoUrlDep,
 ) -> JobMatchResponse:
     """Met à jour."""
     if not body.model_fields_set:
@@ -225,7 +235,7 @@ async def update_interaction(
             dwell_ms=body.dwell_ms,
         ),
     )
-    return JobMatchResponse.from_item(item, now=clock.now())
+    return JobMatchResponse.from_item(item, now=clock.now(), logo_url=logo_url)
 
 
 @assistant_router.post(

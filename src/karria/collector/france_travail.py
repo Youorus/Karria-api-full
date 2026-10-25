@@ -351,13 +351,31 @@ def _backoff(exc: FranceTravailError, attempt: int) -> float:
 # ---------------------------------------------------------------------
 
 
-def window_params(start: datetime, end: datetime) -> dict[str, str]:
-    """Les paramètres d'une fenêtre de création, dans le fuseau de l'API, des plus récentes aux plus anciennes."""
-    return {
-        "minCreationDate": start.astimezone(FT_TIMEZONE).strftime(DATE_FORMAT),
-        "maxCreationDate": end.astimezone(FT_TIMEZONE).strftime(DATE_FORMAT),
-        "sort": "1",
-    }
+def window_params(start: datetime, end: datetime) -> dict[str, str] | None:
+    """Les paramètres d'une fenêtre de création, dans le fuseau de l'API ; `None` si elle est vide.
+
+    L'API compare des heures **murales** de Paris (voir l'en-tête). Au
+    passage à l'heure d'hiver, l'heure de 2 h à 3 h se joue deux fois : une
+    fenêtre de cinq minutes à cheval sur 3 h (heure d'été) donne
+    `min = 02:57`, `max = 02:02`, et l'API répond 400 (« maxCreationDate
+    doit être strictement supérieur à minCreationDate » — constaté le
+    2026-10-25 à 1 h 02 et 1 h 05 UTC). On lit donc l'enveloppe des heures
+    murales que la fenêtre a pu porter : `[min(début, fin - durée),
+    max(fin, début + durée)]`. Hors changement d'heure, c'est la fenêtre
+    elle-même ; au passage à l'heure d'été, l'heure sautée n'a aucune
+    annonce. Un recouvrement ne coûte qu'un `last_seen_at`.
+    """
+    if end <= start:
+        return None
+    span = end - start
+    low = start.astimezone(FT_TIMEZONE).replace(tzinfo=None)
+    high = end.astimezone(FT_TIMEZONE).replace(tzinfo=None)
+    first = min(low, high - span).strftime(DATE_FORMAT)
+    last = max(high, low + span).strftime(DATE_FORMAT)
+    if last <= first:
+        # Moins d'une seconde : l'API ne lit qu'à la seconde, rien à demander.
+        return None
+    return {"minCreationDate": first, "maxCreationDate": last, "sort": "1"}
 
 
 def collect_window(
@@ -374,7 +392,11 @@ def collect_window(
     Au-delà, on prend ce que l'API donne et on le journalise — c'est une
     perte visible, pas silencieuse.
     """
-    params = window_params(start, end)
+    window = window_params(start, end)
+    if window is None:
+        logger.info("france_travail.window_skipped", start=start.isoformat(), end=end.isoformat())
+        return
+    params = dict(window)
     if department is not None:
         params["departement"] = department
     total = client.count(params)

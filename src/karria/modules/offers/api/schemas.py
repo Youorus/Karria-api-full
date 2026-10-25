@@ -10,6 +10,7 @@ consigné dans le contrat, section « Ce que l'app doit changer ».
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Literal, Self
 from uuid import UUID
@@ -27,6 +28,7 @@ from karria.modules.offers.application import (
 from karria.modules.offers.domain import (
     CONTRACT_LABELS,
     MESSAGE_MAX_LENGTH,
+    Company,
     ContractType,
     DialogueStatus,
     ExperienceLevel,
@@ -55,12 +57,37 @@ SEEN_BATCH_MAX = 100
 # ---------------------------------------------------------------------
 
 
+#: (condensat du logo, taille en pixels) → URL publique stable. Fourni par
+#: la route (`get_logo_url`), qui seule connaît le stockage.
+LogoUrl = Callable[[str, int], str]
+
+
 class CompanyResponse(BaseModel):
     """L'employeur."""
 
     name: str
-    logo: str | None = Field(default=None, description="URL du logo chez la source, telle quelle.")
+    logo: str | None = Field(
+        default=None,
+        description="Logo carré 128 px (WebP) chez Karria, adresse stable et immuable "
+        "(mise en cache sans limite). `null` : pas de logo jugé présentable — initiales.",
+    )
+    logo_large: str | None = Field(
+        default=None, description="Le même logo en 256 px, pour le détail. `null` avec `logo`."
+    )
     website: str | None = None
+
+    @classmethod
+    def from_domain(cls, company: Company, logo_url: LogoUrl | None) -> CompanyResponse:
+        """Projette ; l'adresse du logo chez la source n'est jamais servie."""
+        digest = company.logo_hash
+        if digest is None or logo_url is None:
+            return cls(name=company.name, website=company.website)
+        return cls(
+            name=company.name,
+            logo=logo_url(digest, 128),
+            logo_large=logo_url(digest, 256),
+            website=company.website,
+        )
 
 
 class CityResponse(BaseModel):
@@ -116,7 +143,9 @@ class JobOfferResponse(BaseModel):
     )
 
     @classmethod
-    def from_domain(cls, offer: Offer, *, detail: bool = False) -> JobOfferResponse:
+    def from_domain(
+        cls, offer: Offer, *, detail: bool = False, logo_url: LogoUrl | None = None
+    ) -> JobOfferResponse:
         """Projette."""
         location = offer.location
         return cls(
@@ -124,13 +153,7 @@ class JobOfferResponse(BaseModel):
             title=offer.title,
             excerpt=excerpt_of(offer.description),
             description=offer.description if detail else None,
-            company=CompanyResponse(
-                name=offer.company.name,
-                logo=offer.company.logo_url,
-                website=offer.company.website,
-            )
-            if offer.company
-            else None,
+            company=CompanyResponse.from_domain(offer.company, logo_url) if offer.company else None,
             city=CityResponse(name=location.city, postal_code=location.postal_code)
             if location is not None and location.city
             else None,
@@ -192,7 +215,14 @@ class JobMatchResponse(BaseModel):
     job_offer: JobOfferResponse
 
     @classmethod
-    def from_item(cls, item: FeedItem, *, now: datetime, detail: bool = False) -> JobMatchResponse:
+    def from_item(
+        cls,
+        item: FeedItem,
+        *,
+        now: datetime,
+        detail: bool = False,
+        logo_url: LogoUrl | None = None,
+    ) -> JobMatchResponse:
         """Projette."""
         entry, state, offer = item.entry, item.state, item.offer
         fresh = (now - offer.published_at).total_seconds() < NEW_WITHIN_HOURS * 3600
@@ -209,7 +239,7 @@ class JobMatchResponse(BaseModel):
             saved=state.saved,
             applied=state.applied,
             dismissed=state.dismissed,
-            job_offer=JobOfferResponse.from_domain(offer, detail=detail),
+            job_offer=JobOfferResponse.from_domain(offer, detail=detail, logo_url=logo_url),
         )
 
 
@@ -231,11 +261,19 @@ class FeedPageResponse(BaseModel):
 
     @classmethod
     def from_page(
-        cls, page: FeedPage, *, limit: int, offset: int, now: datetime
+        cls,
+        page: FeedPage,
+        *,
+        limit: int,
+        offset: int,
+        now: datetime,
+        logo_url: LogoUrl | None = None,
     ) -> FeedPageResponse:
         """Projette."""
         return cls(
-            items=[JobMatchResponse.from_item(item, now=now) for item in page.items],
+            items=[
+                JobMatchResponse.from_item(item, now=now, logo_url=logo_url) for item in page.items
+            ],
             count=page.total,
             limit=limit,
             offset=offset,

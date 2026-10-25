@@ -24,6 +24,7 @@ TASK_REFRESH_TARGETS: Final = "offers.refresh_targets"
 TASK_EXPIRE: Final = "offers.expire"
 TASK_RECONCILE: Final = "offers.reconcile"
 TASK_UPDATE_MEMORY: Final = "offers.update_memory"
+TASK_FETCH_LOGOS: Final = "offers.fetch_logos"
 
 
 class ProcrastinateJobQueue:
@@ -46,6 +47,10 @@ class ProcrastinateJobQueue:
         await self._app.configure_task(TASK_UPDATE_MEMORY).defer_async(
             user_id=str(user_id), user_message=user_message, reply=reply
         )
+
+    async def defer_logo_fetch(self) -> None:
+        """Un seul passage en attente à la fois ; il se re-diffère tant qu'il reste du travail."""
+        await self._defer(TASK_FETCH_LOGOS, TASK_FETCH_LOGOS)
 
     async def _defer(self, task: str, lock: str, **kwargs: str) -> None:
         try:

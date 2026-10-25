@@ -11,12 +11,18 @@ Deux particularités de JobSpy 1.4.0, vérifiées dans son code :
   ville (une requête de plus par annonce, mais une annonce lisible) ;
 - JobSpy compte les rayons en **miles** ;
 - HelloWork ne connaît pas « France » comme lieu (mesuré le 2026-10-22 :
-  zéro résultat en 46 s) ; sans lieu, il cherche dans tout le pays.
+  zéro résultat en 46 s) ; sans lieu, il cherche dans tout le pays ;
+- `fetch_description` vaut pour tous les sites, LinkedIn compris
+  (`linkedin_fetch_description` est l'ancien nom, déprécié depuis 1.2.0) ;
+- JobSpy **avale** les erreurs d'un site (`frame.attrs["errors"]`) et rend
+  un tableau vide : sans les relire, un LinkedIn bloqué (429, 999)
+  ressemblerait à « rien trouvé ». `scrape` les relève en exceptions.
 """
 
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Final
@@ -54,6 +60,35 @@ RAW_COLUMNS: Final[tuple[str, ...]] = (
     "experience_range",
     "work_from_home_type",
 )
+
+
+class SiteError(Exception):
+    """Le site a échoué (et n'a rien rendu)."""
+
+
+class SiteBlockedError(SiteError):
+    """Le site nous limite ou nous bloque (429, 999, 403) : il faut le laisser respirer.
+
+    Porte ce qui a été lu avant le blocage : une page lue n'est pas perdue.
+    """
+
+    def __init__(self, message: str, records: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(message)
+        self.records = records or []
+
+
+_BLOCKED: Final = re.compile(r"\b(?:429|999|403)\b|blocked", re.IGNORECASE)
+
+
+def raise_for_errors(site: str, errors: Any, records: list[dict[str, Any]]) -> None:
+    """Relève l'erreur que JobSpy a rangée dans `attrs` : blocage, ou échec sans résultat."""
+    message = errors.get(site) if isinstance(errors, dict) else None
+    if not message:
+        return
+    if _BLOCKED.search(str(message)):
+        raise SiteBlockedError(str(message), records)
+    if not records:
+        raise SiteError(str(message))
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +159,7 @@ def row_to_record(row: dict[str, Any], site: str) -> dict[str, Any] | None:
         "company_name": _text(row.get("company")),
         "company_logo_url": _text(row.get("company_logo")),
         "company_url": _text(row.get("company_url")),
+        "company_website": _text(row.get("company_url_direct")),
         "location_label": _text(row.get("location")),
         "date_posted": posted[:10] if posted else None,
         "job_types": job_types,
@@ -197,4 +233,6 @@ def scrape(
         verbose=0,
     )
     rows: list[dict[str, Any]] = frame.to_dict(orient="records")
-    return [record for record in (row_to_record(row, site) for row in rows) if record is not None]
+    records = [r for r in (row_to_record(row, site) for row in rows) if r is not None]
+    raise_for_errors(site, getattr(frame, "attrs", {}).get("errors"), records)
+    return records

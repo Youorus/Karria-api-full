@@ -127,6 +127,18 @@ class ObjectStorage(Protocol):
         """
         ...
 
+    def public_url(self, bucket: Bucket, key: str) -> str:
+        """L'adresse **stable** d'un objet d'un bucket en lecture publique.
+
+        Calcul local, sans réseau ni signature : la même clé donne toujours la
+        même URL, que le téléphone peut garder en cache aussi longtemps que
+        l'objet vit. Réservé aux buckets `public_read` (les logos).
+
+        Raises:
+            StorageError: Le bucket n'est pas en lecture publique.
+        """
+        ...
+
     async def presigned_put_url(
         self,
         bucket: Bucket,

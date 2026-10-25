@@ -54,6 +54,9 @@ class RawPosting:
     company_name: str | None = None
     company_logo_url: str | None = None
     company_url: str | None = None
+    #: Le site de l'employeur quand la source le donne à part (Indeed :
+    #: `company_url_direct`) ; `company_url` mène souvent à sa page sur la source.
+    company_website: str | None = None
     location_label: str | None = None
     date_posted: date | None = None
     job_types: tuple[str, ...] = ()

@@ -160,8 +160,13 @@ class Company:
     """L'employeur, tel que la source le nomme."""
 
     name: str
+    #: L'adresse du logo **chez la source**, gardée pour provenance ; jamais
+    #: servie à l'app (elle expire et livrerait l'IP de la personne).
     logo_url: str | None = None
     website: str | None = None
+    #: Le condensat du logo normalisé en stock (`domain/companies.py`),
+    #: recopié de l'entreprise rattachée ; `None` tant qu'il n'y en a pas.
+    logo_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

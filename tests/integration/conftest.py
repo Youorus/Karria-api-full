@@ -66,6 +66,7 @@ TABLES_TO_TRUNCATE: Final[tuple[str, ...]] = (
     "cv_curricula",
     "cv_photos",
     "offers_offers",
+    "offers_companies",
     "offers_index_outbox",
     "offers_target_demands",
     "offers_scrape_targets",

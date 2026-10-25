@@ -14,6 +14,7 @@ Le calendrier
 | `offers.expire` | chaque nuit, 3 h 15 | une offre expire au jour près |
 | `offers.reconcile` | chaque nuit, 3 h 45 | filet de sécurité : ce que l'outbox aurait manqué |
 | `offers.update_memory` | après chaque tour de conversation | la mémoire de Karria se met à jour hors du chemin de la réponse (ADR-0018) |
+| `offers.fetch_logos` | toutes les 5 min, et dès qu'un lot a montré une entreprise sans logo | deux minutes de travail au plus par passage, puis il se re-diffère : la file ne porte jamais un travail par entreprise |
 
 Les travaux périodiques portent un **verrou d'exécution** (`lock`) : deux
 synchronisations ne tournent jamais ensemble. La collecte elle-même n'est
@@ -24,23 +25,25 @@ lots par `POST /internal/offers/batches`.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from typing import Final
 from uuid import UUID
 
 from karria.modules.offers.api.dependencies import (
     build_expire_offers,
+    build_fetch_logos,
     build_ingest_batch,
     build_reconcile_index,
     build_refresh_targets,
     build_sync_index,
     build_update_memory,
 )
-from karria.modules.offers.application import UserNotifier
-from karria.modules.offers.infrastructure import ProcrastinateJobQueue
+from karria.modules.offers.application import LOGO_CONCURRENCY, UserNotifier
+from karria.modules.offers.infrastructure import HttpLogoFetcher, ProcrastinateJobQueue
 from karria.modules.offers.infrastructure.queue import (
     TASK_EXPIRE,
+    TASK_FETCH_LOGOS,
     TASK_INGEST_BATCH,
     TASK_RECONCILE,
     TASK_REFRESH_TARGETS,
@@ -57,6 +60,9 @@ logger = get_logger(__name__)
 #: Durée de travail maximale d'un passage de synchronisation : au-delà, il
 #: se re-diffère, pour laisser respirer la file et le serveur d'inférence.
 SYNC_BUDGET_SECONDS: Final = 240.0
+#: Durée de travail maximale d'un passage de logos, pour la même raison : un
+#: worker n'a que trois places, l'ingestion ne doit pas attendre.
+LOGO_BUDGET_SECONDS: Final = 120.0
 
 
 def register_tasks(app: App, *, notifier: Callable[[], UserNotifier] | None) -> None:
@@ -79,6 +85,11 @@ def register_tasks(app: App, *, notifier: Callable[[], UserNotifier] | None) -> 
     @app.task(name=TASK_SYNC_INDEX, lock=TASK_SYNC_INDEX, queueing_lock=TASK_SYNC_INDEX)
     async def sync_index(timestamp: int | None = None) -> None:  # noqa: ARG001 - périodique ou différé
         await run_sync(app, notifier)
+
+    @app.periodic(cron="*/5 * * * *", periodic_id=TASK_FETCH_LOGOS)
+    @app.task(name=TASK_FETCH_LOGOS, lock=TASK_FETCH_LOGOS, queueing_lock=TASK_FETCH_LOGOS, retry=2)
+    async def fetch_logos(timestamp: int | None = None) -> None:  # noqa: ARG001 - périodique ou différé
+        await run_logos(app)
 
     @app.periodic(cron="7 * * * *", periodic_id=TASK_REFRESH_TARGETS)
     @app.task(name=TASK_REFRESH_TARGETS, lock=TASK_REFRESH_TARGETS)
@@ -113,3 +124,40 @@ async def run_sync(app: App, notifier: Callable[[], UserNotifier] | None) -> int
             logger.info("offers.sync_budget_reached", claimed=total)
             await ProcrastinateJobQueue(app).defer_index_sync()
             return total
+
+
+async def run_logos(app: App, *, budget: float = LOGO_BUDGET_SECONDS) -> int:
+    """Le travail de file : des passages dans la limite du budget ; re-diffère s'il en reste."""
+    return await fetch_logos_within(
+        budget=budget, on_remaining=ProcrastinateJobQueue(app).defer_logo_fetch
+    )
+
+
+async def fetch_logos_within(
+    *,
+    budget: float,
+    concurrency: int = LOGO_CONCURRENCY,
+    on_remaining: Callable[[], Awaitable[None]] | None = None,
+) -> int:
+    """Des passages de logos jusqu'à épuisement ou au budget ; rend le nombre d'entreprises vues.
+
+    Partagé par le worker et par `scripts.companies fetch-logos` (le rattrapage
+    initial, plus large) : les deux prennent leurs entreprises sous bail, sans
+    jamais la même (`claim_logo_work`).
+    """
+    settings = get_settings()
+    started = time.monotonic()
+    total = 0
+    async with AsyncExitStack() as resources:
+        storage = await build_object_storage(settings, resources)
+        client = await resources.enter_async_context(HttpLogoFetcher.build_client())
+        fetch = build_fetch_logos(storage, HttpLogoFetcher(client))
+        while True:
+            report = await fetch.execute(concurrency=concurrency)
+            total += report.claimed
+            if report.claimed == 0:
+                return total
+            if time.monotonic() - started > budget:
+                if on_remaining is not None:
+                    await on_remaining()
+                return total

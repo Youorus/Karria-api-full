@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final
 from uuid import UUID, uuid4
 
 from karria.modules.offers.application.ports import (
+    CompanyRepository,
     ConversationRepository,
     CriteriaIndex,
     CriteriaRepository,
@@ -49,10 +50,14 @@ from karria.modules.offers.application.ports import (
     JobQueue,
     KarriaMemoryRepository,
     LandingStore,
+    LogoFetcher,
+    LogoProcessor,
+    LogoStore,
     MemoryUpdater,
     Message,
     OfferFilters,
     OfferIndex,
+    OfferLink,
     OfferRepository,
     OfferStateRepository,
     ScrapeTargetRepository,
@@ -150,7 +155,27 @@ from karria.modules.offers.domain import (
     title_relaxations,
     title_text,
     transitions,
+    uuid7,
     validate_terms,
+)
+from karria.modules.offers.domain.companies import (
+    CLAIM_LEASE,
+    PLACEHOLDER_HASHES,
+    CompanyRecord,
+    CompanySighting,
+    LogoAttempt,
+    LogoCandidate,
+    LogoOrigin,
+    LogoRejection,
+    LogoStatus,
+    choose_company,
+    judge_logo,
+    logo_candidates,
+    merge_sighting,
+    new_company,
+    settle_logo,
+    sighting_of,
+    site_icon_urls,
 )
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
@@ -572,6 +597,7 @@ class IngestBatch:
         runs: IngestionRunRepository,
         queue: JobQueue,
         clock: Clock,
+        companies: AttachCompanies | None = None,
     ) -> None:
         self._landing = landing
         self._ingest = ingest
@@ -579,6 +605,7 @@ class IngestBatch:
         self._runs = runs
         self._queue = queue
         self._clock = clock
+        self._companies = companies
 
     async def execute(self, key: str, *, target_key: str | None) -> IngestionReport:
         """Lit, traduit, ingère, et rend le bilan."""
@@ -589,6 +616,7 @@ class IngestBatch:
         stats = await self._ingest.execute(postings) if postings else IngestStats()
         if stats.inserted or stats.updated or stats.expired:
             await self._queue.defer_index_sync()
+        await self._attach_companies(postings)
         now = self._clock.now()
         target = await self._targets.find(target_key) if target_key is not None else None
         if target is not None:
@@ -620,6 +648,23 @@ class IngestBatch:
             new_share=round(report.new_share, 3),
         )
         return report
+
+    async def _attach_companies(self, postings: Sequence[RawPosting]) -> None:
+        """Les employeurs du lot, et leurs logos à chercher.
+
+        Une panne ici ne perd pas le lot : les offres sont déjà enregistrées,
+        le rattrapage (`scripts.companies backfill`) reprendra le lien.
+        """
+        if self._companies is None:
+            return
+        try:
+            report = await self._companies.execute(
+                [s for s in (sighting_of(p) for p in postings) if s is not None]
+            )
+            if report.logos_due:
+                await self._queue.defer_logo_fetch()
+        except Exception:
+            logger.exception("offers.companies_attach_failed")
 
     async def _settle_target(
         self,
@@ -1971,3 +2016,278 @@ class ForgetUser:
             await self._conversations.delete_all_of_user(user_id)
         await self._criteria_index.delete(user_id)
         logger.info("offers.user_forgotten", user_id=str(user_id))
+
+
+# ---------------------------------------------------------------------
+# Les employeurs et leurs logos
+# ---------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class AttachReport:
+    """Ce qu'un rattachement a fait."""
+
+    created: int = 0
+    updated: int = 0
+    linked: int = 0
+    #: Entreprises dont le logo est à chercher dès maintenant.
+    logos_due: int = 0
+
+
+class AttachCompanies:
+    """Reconnaît l'employeur de chaque annonce, le crée au besoin, y rattache l'offre.
+
+    Une requête pour toutes les clés du lot, une écriture pour ce qui a
+    changé, une mise à jour pour les liens : un lot de 2 000 annonces coûte
+    trois allers-retours, pas 2 000.
+    """
+
+    def __init__(
+        self,
+        *,
+        companies: CompanyRepository,
+        clock: Clock,
+        new_id: Callable[[], UUID] = uuid7,
+    ) -> None:
+        self._companies = companies
+        self._clock = clock
+        self._new_id = new_id
+
+    async def execute(self, sightings: Sequence[CompanySighting]) -> AttachReport:
+        """Rattache ; idempotent (revoir la même annonce ne change rien)."""
+        report = AttachReport()
+        if not sightings:
+            return report
+        now = self._clock.now()
+        known = await self._companies.find_by_keys(list({s.key for s in sightings}))
+        dirty: dict[UUID, CompanyRecord] = {}
+        created: set[UUID] = set()
+        links: list[OfferLink] = []
+        for sighting in sightings:
+            family = known.setdefault(sighting.key, [])
+            current = choose_company(family, sighting.domain)
+            if current is None:
+                record = new_company(self._new_id(), sighting, now=now)
+                family.append(record)
+                created.add(record.id)
+            else:
+                record = merge_sighting(current, sighting, now=now)
+                if record == current:
+                    record = current
+                else:
+                    family[family.index(current)] = record
+            if record is not current:
+                dirty[record.id] = record
+            if sighting.offer is not None:
+                links.append(OfferLink(sighting.offer[0], sighting.offer[1], record.id))
+        if dirty:
+            await self._companies.save_many(list(dirty.values()))
+        report.created = len(created)
+        report.updated = len(dirty) - len(created)
+        report.linked = await self._companies.link_offers(links) if links else 0
+        report.logos_due = sum(
+            1
+            for r in dirty.values()
+            if r.logo_status is LogoStatus.PENDING
+            and (r.logo_next_attempt_at is None or r.logo_next_attempt_at <= now)
+        )
+        return report
+
+
+@dataclass(slots=True)
+class LogoReport:
+    """Ce qu'un passage de recherche de logos a donné."""
+
+    claimed: int = 0
+    ready: int = 0
+    missing: int = 0
+    retry: int = 0
+    stored: int = 0
+    #: Refus par raison (`too_small`, `placeholder`, `http`…), pour mesurer.
+    rejections: dict[str, int] = field(default_factory=dict)
+
+
+#: Entreprises prises par passage : un passage tient en une à deux minutes.
+LOGO_BATCH_SIZE: Final = 200
+#: Entreprises traitées en même temps ; le débit par site est borné par
+#: l'adaptateur (`HttpLogoFetcher`), pas ici.
+LOGO_CONCURRENCY: Final = 16
+
+
+class FetchCompanyLogos:
+    """Cherche, juge, normalise et range le logo des entreprises qui n'en ont pas.
+
+    Candidats dans l'ordre de `logo_candidates` (source, V1), puis les
+    icônes du site. Le premier qui passe `judge_logo` gagne ; un échec
+    passager (délai, 5xx) se réessaie plus tard (`settle_logo`), un échec
+    définitif ne se retente pas avec la même adresse.
+    """
+
+    def __init__(
+        self,
+        *,
+        companies: CompanyRepository,
+        fetcher: LogoFetcher,
+        processor: LogoProcessor,
+        store: LogoStore,
+        clock: Clock,
+    ) -> None:
+        self._companies = companies
+        self._fetcher = fetcher
+        self._processor = processor
+        self._store = store
+        self._clock = clock
+
+    async def execute(
+        self, *, limit: int = LOGO_BATCH_SIZE, concurrency: int = LOGO_CONCURRENCY
+    ) -> LogoReport:
+        """Un passage ; rend son bilan (`claimed == 0` : plus rien à faire)."""
+        now = self._clock.now()
+        claimed = await self._companies.claim_logo_work(
+            now=now, until=now + CLAIM_LEASE, limit=limit
+        )
+        report = LogoReport(claimed=len(claimed))
+        gate = asyncio.Semaphore(concurrency)
+
+        async def one(record: CompanyRecord) -> None:
+            async with gate:
+                settled = await self._resolve(record, report)
+                await self._companies.save_logo(settled)
+            if settled.logo_status is LogoStatus.READY:
+                report.ready += 1
+            elif settled.logo_status is LogoStatus.MISSING:
+                report.missing += 1
+            else:
+                report.retry += 1
+
+        await asyncio.gather(*(one(record) for record in claimed))
+        if claimed:
+            logger.info(
+                "offers.logos_fetched",
+                claimed=report.claimed,
+                ready=report.ready,
+                missing=report.missing,
+                retry=report.retry,
+                stored=report.stored,
+                rejections=report.rejections,
+            )
+        return report
+
+    async def _resolve(self, record: CompanyRecord, report: LogoReport) -> CompanyRecord:
+        rejected: list[str] = []
+        transient = False
+        tried: set[str] = set()
+
+        async def attempt(candidate: LogoCandidate) -> str | None:
+            nonlocal transient
+            tried.add(candidate.url)
+            outcome = await self._try(candidate, report)
+            if outcome is _TRANSIENT:
+                transient = True
+                return None
+            if outcome is None:
+                rejected.append(candidate.url)
+                return None
+            return outcome
+
+        for candidate in logo_candidates(record):
+            if (digest := await attempt(candidate)) is not None:
+                return settle_logo(
+                    record, LogoAttempt(digest, candidate.origin), now=self._clock.now()
+                )
+        if record.domain:
+            icons = [*await self._fetcher.site_icons(record.domain), *site_icon_urls(record.domain)]
+            for url in dict.fromkeys(icons):
+                if url in tried or url in record.logo_rejected_urls:
+                    continue
+                if (digest := await attempt(LogoCandidate(url, LogoOrigin.FAVICON))) is not None:
+                    return settle_logo(
+                        record,
+                        LogoAttempt(digest, LogoOrigin.FAVICON, tuple(rejected)),
+                        now=self._clock.now(),
+                    )
+        return settle_logo(
+            record,
+            LogoAttempt(rejected_urls=tuple(rejected), transient_failure=transient),
+            now=self._clock.now(),
+        )
+
+    async def _try(self, candidate: LogoCandidate, report: LogoReport) -> str | None:
+        """Le condensat du logo rangé, `None` si refusé, `_TRANSIENT` si à réessayer."""
+        fetched = await self._fetcher.fetch_image(candidate.url)
+        if fetched.payload is None:
+            _count(report, "http")
+            return None if fetched.permanent else _TRANSIENT
+        processed = self._processor.process(fetched.payload)
+        if processed is None:
+            _count(report, LogoRejection.UNREADABLE.value)
+            return None
+        verdict = judge_logo(processed.traits, candidate.origin)
+        if verdict is None and processed.digest in PLACEHOLDER_HASHES:
+            verdict = LogoRejection.PLACEHOLDER
+        if verdict is not None:
+            _count(report, verdict.value)
+            return None
+        if not await self._store.has(processed.digest):
+            await self._store.put(processed)
+            report.stored += 1
+        return processed.digest
+
+
+#: Marque d'un échec passager, distincte d'un refus (`None`).
+_TRANSIENT: Final = "\x00transient"
+
+
+def _count(report: LogoReport, reason: str) -> None:
+    report.rejections[reason] = report.rejections.get(reason, 0) + 1
+
+
+@dataclass(slots=True)
+class BackfillReport:
+    """Ce que le rattrapage des offres existantes a fait."""
+
+    offers: int = 0
+    linked: int = 0
+    created: int = 0
+
+
+class BackfillCompanies:
+    """Rattache les offres déjà en base à leur entreprise, par paquets (commande ponctuelle)."""
+
+    def __init__(self, *, companies: CompanyRepository, attach: AttachCompanies) -> None:
+        self._companies = companies
+        self._attach = attach
+
+    async def execute(self, *, batch: int = 2_000, active_only: bool = True) -> BackfillReport:
+        """Jusqu'à épuisement, dans l'ordre des identifiants ; une offre sans clé exploitable reste."""
+        report = BackfillReport()
+        after: UUID | None = None
+        while offers := await self._companies.unlinked_offers(
+            after=after, limit=batch, active_only=active_only
+        ):
+            after = offers[-1].id
+            sightings = [s for s in (sighting_of_offer(o) for o in offers) if s is not None]
+            report.offers += len(offers)
+            attached = await self._attach.execute(sightings)
+            report.linked += attached.linked
+            report.created += attached.created
+            logger.info("offers.companies_backfilled", offers=report.offers, linked=report.linked)
+        return report
+
+
+def sighting_of_offer(offer: Offer) -> CompanySighting | None:
+    """L'employeur d'une offre déjà normalisée (rattrapage)."""
+    if offer.company is None:
+        return None
+    return sighting_of(
+        RawPosting(
+            source=offer.source,
+            source_id=offer.source_id,
+            title=offer.title,
+            description="",
+            company_name=offer.company.name,
+            company_logo_url=offer.company.logo_url,
+            company_url=offer.company.website,
+            job_url_direct=offer.apply_url,
+        )
+    )

@@ -45,6 +45,12 @@ class Bucket(StrEnum):
     #: bibliothèque de polices libres (`fonts/…`), téléchargée une fois.
     #: Privé ; la galerie sert ses aperçus par URL signée.
     TEMPLATES = "templates"
+    #: Logos d'entreprises normalisés (WebP carrés, `<condensat>/<taille>.webp`).
+    #: **Le seul bucket public** : un logo est une information publique, servi
+    #: à chaque carte du fil ; une URL signée changerait à chaque réponse et
+    #: casserait le cache du téléphone. La clé est un condensat du contenu :
+    #: rien à deviner, rien à lister, et un objet ne change jamais.
+    LOGOS = "logos"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +121,13 @@ REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
         max_bytes=20 * 1024 * 1024,
         # Une version de modèle est immuable : ses aperçus se gardent en cache.
         cache_seconds=86_400,
+    ),
+    Bucket.LOGOS: BucketPolicy(
+        public_read=True,
+        allowed_content_types=frozenset({"image/webp"}),
+        max_bytes=512 * 1024,
+        # Un an, immuable : la clé change avec le contenu.
+        cache_seconds=31_536_000,
     ),
     Bucket.LANDING: BucketPolicy(
         allowed_content_types=frozenset({"application/gzip", "application/x-ndjson"}),

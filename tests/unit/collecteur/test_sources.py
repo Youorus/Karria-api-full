@@ -11,7 +11,16 @@ from typing import Any
 import pytest
 from bs4 import BeautifulSoup
 
-from karria.collector.sources import Target, clean, patch_hellowork, row_to_record, scrape
+from karria.collector.sources import (
+    SiteBlockedError,
+    SiteError,
+    Target,
+    clean,
+    patch_hellowork,
+    raise_for_errors,
+    row_to_record,
+    scrape,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -66,6 +75,7 @@ class TestLigne:
             "company": "Le Bistrot",
             "company_logo": "https://logo",
             "company_url": "https://bistrot",
+            "company_url_direct": "https://www.bistrot.fr",
             "location": "Lyon, 69, France",
             "date_posted": date(2026, 10, 21),
             "job_type": "temporary, fulltime",
@@ -84,6 +94,8 @@ class TestLigne:
 
         assert record is not None
         assert record["source"] == "hellowork"
+        assert record["company_logo_url"] == "https://logo"
+        assert record["company_website"] == "https://www.bistrot.fr"
         assert record["title"] == "Serveur H/F"
         assert record["date_posted"] == "2026-10-21"
         assert record["job_types"] == ["temporary", "fulltime"]
@@ -116,10 +128,17 @@ class FakeHelloWork:
         return " | ".join(p.get_text() for p in card.select("a[data-cy=offerTitle] h3 p"))
 
 
-def fake_jobspy(monkeypatch: pytest.MonkeyPatch, frame_rows: list[dict[str, Any]]) -> list[Any]:
+def fake_jobspy(
+    monkeypatch: pytest.MonkeyPatch,
+    frame_rows: list[dict[str, Any]],
+    errors: dict[str, str] | None = None,
+) -> list[Any]:
     calls: list[dict[str, Any]] = []
 
     class Frame:
+        def __init__(self) -> None:
+            self.attrs = {"errors": errors or {}}
+
         def to_dict(self, orient: str) -> list[dict[str, Any]]:
             assert orient == "records"
             return frame_rows
@@ -202,3 +221,90 @@ class TestRequete:
         assert calls[0]["proxies"] is None
         assert calls[0]["location"] is None
         assert calls[1]["location"] == " France"
+
+
+class TestLinkedIn:
+    ROW: dict[str, Any] = {  # noqa: RUF012 - une ligne JobSpy LinkedIn réelle, anonymisée
+        "id": "li-4012345678",
+        "site": "linkedin",
+        "job_url": "https://www.linkedin.com/jobs/view/4012345678",
+        "job_url_direct": "https://careers.decathlon.com/jobs/123",
+        "title": "Développeur Python H/F",
+        "company": "Decathlon",
+        "company_url": "https://fr.linkedin.com/company/decathlon",
+        "company_logo": "https://media.licdn.com/dms/image/v2/abc/company-logo_100_100/0/1",
+        "location": "Lille, Hauts-de-France, France",
+        "date_posted": date(2026, 10, 24),
+        "job_type": "fulltime",
+        "is_remote": True,
+        "min_amount": 45000.0,
+        "max_amount": 55000.0,
+        "interval": "yearly",
+        "currency": "EUR",
+        "job_level": "mid-senior level",
+        "job_function": "Information Technology",
+        "company_industry": "Retail",
+        "description": "Vous développez nos services.",
+    }
+
+    def test_une_ligne_linkedin(self) -> None:
+        record = row_to_record(self.ROW, "linkedin")
+
+        assert record is not None
+        assert record["source"] == "linkedin"
+        assert record["company_name"] == "Decathlon"
+        assert record["company_logo_url"].startswith("https://media.licdn.com/")
+        assert record["company_url"] == "https://fr.linkedin.com/company/decathlon"
+        assert record["location_label"] == "Lille, Hauts-de-France, France"
+        assert record["job_types"] == ["fulltime"]
+        assert record["is_remote"] is True
+        assert (record["salary_min"], record["salary_interval"]) == (45000.0, "yearly")
+        assert record["job_url_direct"] == "https://careers.decathlon.com/jobs/123"
+        assert record["raw"]["company_industry"] == "Retail"
+
+    def test_la_requete_linkedin_demande_les_descriptions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = fake_jobspy(monkeypatch, [self.ROW])
+        found = scrape(
+            "linkedin",
+            Target(key="k", search_term="développeur", location="Paris", distance_km=None),
+            results_wanted=25,
+            hours_old=72,
+            proxies=[],
+            timeout_seconds=30,
+        )
+        assert len(found) == 1
+        assert calls[0]["site_name"] == ["linkedin"]
+        assert calls[0]["fetch_description"] is True
+        assert calls[0]["results_wanted"] == 25
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "response status code 429 (blocked: use a proxy)",
+            "status 999",
+            "unexpected page (blocked?)",
+        ],
+    )
+    def test_un_blocage_avale_par_jobspy_est_releve(
+        self, monkeypatch: pytest.MonkeyPatch, message: str
+    ) -> None:
+        fake_jobspy(monkeypatch, [self.ROW], errors={"linkedin": message})
+        with pytest.raises(SiteBlockedError) as caught:
+            scrape(
+                "linkedin",
+                Target(key="k", search_term="x", location="Paris", distance_km=None),
+                results_wanted=25,
+                hours_old=72,
+                proxies=[],
+                timeout_seconds=30,
+            )
+        assert len(caught.value.records) == 1
+
+    def test_une_autre_erreur_sans_resultat_est_un_echec(self) -> None:
+        with pytest.raises(SiteError):
+            raise_for_errors("linkedin", {"linkedin": "timeout"}, [])
+        raise_for_errors("linkedin", {"linkedin": "timeout"}, [{"x": 1}])
+        raise_for_errors("linkedin", {}, [])
+        raise_for_errors("linkedin", None, [])

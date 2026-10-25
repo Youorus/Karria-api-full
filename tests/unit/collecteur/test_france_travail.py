@@ -343,6 +343,46 @@ class TestFenetres:
             "sort": "1",
         }
 
+    def test_au_passage_a_l_heure_d_hiver_la_fenetre_n_est_jamais_inversee(self) -> None:
+        # 2026-10-25 : 00:57:59 UTC = 02:57:59 heure d'été, 01:02:59 UTC = 02:02:59 heure
+        # d'hiver. Sans correction, min > max et l'API rend 400 (constaté en production).
+        end = datetime(2026, 10, 25, 1, 2, 59, tzinfo=UTC)
+
+        params = window_params(end - timedelta(minutes=5), end)
+
+        assert params == {
+            "minCreationDate": "2026-10-25T01:57:59Z",
+            "maxCreationDate": "2026-10-25T03:02:59Z",
+            "sort": "1",
+        }
+
+    def test_au_passage_a_l_heure_d_ete_l_heure_sautee_reste_couverte(self) -> None:
+        # 2026-03-29 : 00:58 UTC = 01:58 heure d'hiver, 01:03 UTC = 03:03 heure d'été.
+        end = datetime(2026, 3, 29, 1, 3, tzinfo=UTC)
+
+        params = window_params(end - timedelta(minutes=5), end)
+
+        assert params is not None
+        assert params["minCreationDate"] == "2026-03-29T01:58:00Z"
+        assert params["maxCreationDate"] == "2026-03-29T03:03:00Z"
+
+    def test_chaque_fenetre_d_une_journee_de_changement_d_heure_est_valide(self) -> None:
+        start = datetime(2026, 10, 24, 22, 0, tzinfo=UTC)
+        for minute in range(0, 6 * 60, 3):
+            begin = start + timedelta(minutes=minute)
+            params = window_params(begin, begin + timedelta(minutes=8))
+            assert params is not None
+            assert params["maxCreationDate"] > params["minCreationDate"]
+
+    def test_une_fenetre_vide_ou_inversee_n_appelle_pas_l_api(self) -> None:
+        stub = StubClient(lambda dept, width: 60)
+
+        assert window_params(NOW, NOW) is None
+        assert window_params(NOW, NOW - timedelta(minutes=1)) is None
+        assert window_params(NOW, NOW + timedelta(milliseconds=200)) is None
+        assert list(collect_window(stub, NOW, NOW)) == []  # type: ignore[arg-type]
+        assert stub.counted == []
+
     def test_une_fenetre_sous_le_plafond_se_lit_d_un_trait(self) -> None:
         stub = StubClient(lambda dept, width: 60)
 

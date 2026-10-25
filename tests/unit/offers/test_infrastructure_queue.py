@@ -8,6 +8,7 @@ import pytest
 from procrastinate import App, testing
 
 from karria.modules.offers.infrastructure.queue import (
+    TASK_FETCH_LOGOS,
     TASK_INGEST_BATCH,
     TASK_SYNC_INDEX,
     TASK_UPDATE_MEMORY,
@@ -83,3 +84,14 @@ async def test_une_mise_a_jour_de_memoire_porte_le_tour_sans_verrou(
         "reply": "C'est noté.",
     }
     assert jobs[0]["queueing_lock"] is None
+
+
+async def test_un_seul_passage_de_logos_en_attente(
+    queue_app: App, connector: testing.InMemoryConnector
+) -> None:
+    queue = ProcrastinateJobQueue(queue_app)
+
+    await queue.defer_logo_fetch()
+    await queue.defer_logo_fetch()
+
+    assert [job["task_name"] for job in connector.jobs.values()] == [TASK_FETCH_LOGOS]

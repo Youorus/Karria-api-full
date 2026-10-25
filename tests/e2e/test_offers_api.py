@@ -193,7 +193,13 @@ class TestFil:
         assert job["summary"] is None
         assert job["description"] is None
         assert job["excerpt"].endswith("…")
-        assert job["company"] == {"name": "Le Bistrot", "logo": "https://logo", "website": None}
+        # L'adresse du logo chez la source n'est jamais servie : sans logo en stock, `null`.
+        assert job["company"] == {
+            "name": "Le Bistrot",
+            "logo": None,
+            "logo_large": None,
+            "website": None,
+        }
         assert job["city"] == {"name": "Paris", "postal_code": "75011"}
         assert job["contract_type"] == {"code": "alternance", "label": "Alternance"}
         assert job["is_alternance"] is True

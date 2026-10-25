@@ -15,9 +15,13 @@ from uuid import UUID
 
 from fastapi import Depends, Header
 
+from karria.modules.offers.api.schemas import LogoUrl
 from karria.modules.offers.application import (
     ApplyCriteria,
+    AttachCompanies,
+    BackfillCompanies,
     ClearCriteria,
+    CompanyRepository,
     ConversationRepository,
     ConverseSearch,
     CriteriaIndex,
@@ -25,6 +29,7 @@ from karria.modules.offers.application import (
     DispatchAlerts,
     ExpireOffers,
     FeedRepository,
+    FetchCompanyLogos,
     ForgetUser,
     Geocoder,
     GetCriteria,
@@ -41,6 +46,7 @@ from karria.modules.offers.application import (
     KarriaMemoryRepository,
     LandingStore,
     LeaseScrapeTargets,
+    LogoFetcher,
     MarkFeedSeen,
     OfferIndex,
     OfferRepository,
@@ -60,16 +66,20 @@ from karria.modules.offers.application import (
     UpdateOfferState,
     UserNotifier,
 )
+from karria.modules.offers.domain.companies import logo_object_key
 from karria.modules.offers.infrastructure import (
     BanGeocoder,
     CachedGeocoder,
     LlmDialogue,
     LlmMemoryUpdater,
     ObjectStorageLandingStore,
+    PillowLogoProcessor,
     ProcrastinateJobQueue,
     QdrantCriteriaIndex,
     QdrantOfferIndex,
+    StorageLogoStore,
     TeiEmbedder,
+    TortoiseCompanyRepository,
     TortoiseConversationRepository,
     TortoiseCriteriaRepository,
     TortoiseFeedRepository,
@@ -99,7 +109,7 @@ from karria.shared.http.dependencies import (
 from karria.shared.llm import build_language_model
 from karria.shared.logging import get_logger
 from karria.shared.queue import App as QueueApp
-from karria.shared.storage import ObjectStorage
+from karria.shared.storage import Bucket, ObjectStorage
 
 logger = get_logger(__name__)
 
@@ -224,7 +234,22 @@ def require_collector(
         )
 
 
+def get_company_repository() -> CompanyRepository:
+    """Les entreprises."""
+    return TortoiseCompanyRepository()
+
+
+def get_logo_url(storage: ObjectStorageDep) -> LogoUrl:
+    """(condensat, taille) → l'URL publique du logo, calculée sans réseau."""
+
+    def url(digest: str, size: int) -> str:
+        return storage.public_url(Bucket.LOGOS, logo_object_key(digest, size))
+
+    return url
+
+
 ClockDep = Annotated[Clock, Depends(get_clock)]
+LogoUrlDep = Annotated[LogoUrl, Depends(get_logo_url)]
 OfferRepositoryDep = Annotated[OfferRepository, Depends(get_offer_repository)]
 TargetRepositoryDep = Annotated[ScrapeTargetRepository, Depends(get_target_repository)]
 CriteriaRepositoryDep = Annotated[CriteriaRepository, Depends(get_criteria_repository)]
@@ -523,6 +548,28 @@ def build_ingest_batch(
         targets=get_target_repository(),
         runs=get_run_repository(),
         queue=ProcrastinateJobQueue(queue_app),
+        clock=get_clock(),
+        companies=build_attach_companies(),
+    )
+
+
+def build_attach_companies() -> AttachCompanies:
+    """Le rattachement des annonces à leur entreprise."""
+    return AttachCompanies(companies=get_company_repository(), clock=get_clock())
+
+
+def build_backfill_companies() -> BackfillCompanies:
+    """Le rattrapage des offres déjà en base (commande ponctuelle)."""
+    return BackfillCompanies(companies=get_company_repository(), attach=build_attach_companies())
+
+
+def build_fetch_logos(storage: ObjectStorage, fetcher: LogoFetcher) -> FetchCompanyLogos:
+    """La recherche des logos ; `fetcher` vit le temps d'un passage (son client HTTP)."""
+    return FetchCompanyLogos(
+        companies=get_company_repository(),
+        fetcher=fetcher,
+        processor=PillowLogoProcessor(),
+        store=StorageLogoStore(storage),
         clock=get_clock(),
     )
 

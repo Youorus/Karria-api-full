@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from karria.shared.config import StorageSettings
 from karria.shared.storage.buckets import REGISTRY, Bucket, check_payload, physical_name
-from karria.shared.storage.errors import ObjectNotFoundError
+from karria.shared.storage.errors import ObjectNotFoundError, StorageError
 from karria.shared.storage.ports import ObjectSummary, PresignedUpload, StoredObject
 
 
@@ -111,6 +111,17 @@ class InMemoryObjectStorage:
             ),
             key=lambda summary: summary.key,
         )
+
+    def public_url(self, bucket: Bucket, key: str) -> str:
+        """Une URL fictive et stable ; refuse un bucket privé comme le vrai."""
+        if not REGISTRY[bucket].public_read:
+            raise StorageError(
+                f"Le bucket « {bucket.value} » n'est pas public.",
+                operation="public_url",
+                bucket=bucket.value,
+                key=key,
+            )
+        return f"https://storage.local/{self.bucket_name(bucket)}/{quote(key)}"
 
     async def presigned_get_url(
         self,

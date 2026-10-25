@@ -145,7 +145,9 @@ async def test_sans_identifiants_france_travail_est_absent(
 def test_la_configuration_par_defaut_est_prudente() -> None:
     settings = CollectorSettings()
 
-    assert settings.sites == ["indeed", "hellowork"]
+    assert settings.sites == ["indeed", "hellowork", "linkedin"]
+    assert settings.site_hourly_budgets["linkedin"] <= 40
+    assert settings.site_pause_seconds["linkedin"] > settings.pause_seconds
     assert settings.token.get_secret_value() == ""
     assert settings.pause_seconds > 0
     assert settings.france_travail is None

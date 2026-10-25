@@ -23,6 +23,7 @@ from karria.modules.offers.domain import (
     TargetOrigin,
     TargetState,
 )
+from karria.modules.offers.domain.companies import LogoOrigin, LogoStatus
 from karria.shared.database import BaseDBModel
 
 URL_MAX_LENGTH = 2_048
@@ -44,6 +45,14 @@ class OfferModel(BaseDBModel):
     )
     company_logo_url = fields.CharField(max_length=URL_MAX_LENGTH, null=True)
     company_url = fields.CharField(max_length=URL_MAX_LENGTH, null=True)
+    company_id = fields.UUIDField(
+        null=True, db_index=True, description="L'entreprise rattachée (`offers_companies`)."
+    )
+    company_logo_hash = fields.CharField(
+        max_length=HASH_LENGTH,
+        null=True,
+        description="Copie du logo de l'entreprise : le fil se lit sans jointure.",
+    )
     description = fields.TextField()
     location_label = fields.CharField(max_length=LABEL_MAX_LENGTH, null=True)
     city = fields.CharField(max_length=LABEL_MAX_LENGTH, null=True, db_index=True)
@@ -98,6 +107,38 @@ class OfferModel(BaseDBModel):
             ("company_key", "simhash_band2"),
             ("company_key", "simhash_band3"),
         )
+
+
+class CompanyModel(BaseDBModel):
+    """Une entreprise, commune aux sources et à la V1 (`domain/companies.py`)."""
+
+    key = fields.CharField(
+        max_length=LABEL_MAX_LENGTH, description="Clé de nom (pliée, sans forme juridique)."
+    )
+    domain = fields.CharField(
+        max_length=LABEL_MAX_LENGTH, default="", description="Domaine du site ; vide si inconnu."
+    )
+    name = fields.CharField(max_length=LABEL_MAX_LENGTH)
+    website = fields.CharField(max_length=URL_MAX_LENGTH, null=True)
+    source_logo_url = fields.CharField(max_length=URL_MAX_LENGTH, null=True)
+    v1_id = fields.BigIntField(null=True, unique=True, description="`companies.id` de la V1.")
+    v1_logo_url = fields.CharField(max_length=URL_MAX_LENGTH, null=True)
+    logo_hash = fields.CharField(max_length=HASH_LENGTH, null=True, db_index=True)
+    logo_origin = fields.CharEnumField(LogoOrigin, max_length=16, null=True)
+    logo_status = fields.CharEnumField(LogoStatus, max_length=16, default=LogoStatus.PENDING)
+    logo_attempts = fields.SmallIntField(default=0)
+    logo_next_attempt_at = fields.DatetimeField(null=True, db_index=True)
+    logo_checked_at = fields.DatetimeField(null=True)
+    logo_rejected_urls: list[str] = fields.JSONField(default=list)
+
+    class Meta:
+        table = "offers_companies"
+        table_description = (
+            "Employeurs reconnus par clé de nom et domaine ; leur logo normalisé "
+            "vit dans le bucket public `logos`, adressé par `logo_hash`."
+        )
+        unique_together = (("key", "domain"),)
+        indexes = (("logo_status", "logo_next_attempt_at"),)
 
 
 class IndexOutboxModel(Model):

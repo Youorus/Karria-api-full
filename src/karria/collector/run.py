@@ -10,7 +10,12 @@ Les règles de prudence envers les sites vivent ici :
   cibles qui en rendaient la veille n'a pas « rien trouvé », il a changé
   (HelloWork, 2026-10-22 : `<span>` au lieu de `<p>`, zéro sans erreur) ;
   il est arrêté pour le passage et journalisé en erreur ;
-- un **budget horaire** par site, et une gigue sur la pause ;
+- un **budget horaire** par site, et une gigue sur la pause — propres à
+  chaque site quand il le faut (LinkedIn : 40 recherches par heure, 12 s
+  ± 50 %) ;
+- un **disjoncteur de blocage** : un site qui répond 429, 999 ou « bloqué »
+  est laissé de côté pendant `blocked_cooldown_seconds`, doublé à chaque
+  blocage consécutif — sur plusieurs passages, pas seulement le courant ;
 - un lot est remis **même vide** : il clôt la cible côté API (« rien de
   neuf ») au lieu d'attendre la fin du bail.
 
@@ -43,7 +48,7 @@ from karria.collector.france_travail import (
     offer_to_record,
 )
 from karria.collector.settings import CollectorSettings
-from karria.collector.sources import Target, scrape
+from karria.collector.sources import SiteBlockedError, Target, scrape
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +69,8 @@ class RunSummary:
     sites_silent: list[str] = field(default_factory=list)
     #: Requêtes non faites faute de budget horaire, par site.
     over_budget: dict[str, int] = field(default_factory=dict)
+    #: Sites qui nous ont bloqués pendant ce passage (disjoncteur ouvert).
+    sites_blocked: list[str] = field(default_factory=list)
 
 
 class Collector:
@@ -87,6 +94,10 @@ class Collector:
         self._jitter = jitter
         #: Instants des requêtes de la dernière heure, par site (le budget).
         self._requests: dict[str, deque[float]] = {s: deque() for s in settings.sites}
+        #: Disjoncteur de blocage : jusqu'à quand un site est laissé de côté,
+        #: et combien de blocages d'affilée il a rendus.
+        self.blocked_until: dict[str, float] = {}
+        self._blocks: dict[str, int] = {}
 
     def _within_budget(self, site: str) -> bool:
         """Le site a-t-il encore du budget sur l'heure glissante ?"""
@@ -94,7 +105,24 @@ class Collector:
         horizon = self._clock() - 3_600
         while window and window[0] < horizon:
             window.popleft()
-        return len(window) < self._settings.site_hourly_budget
+        budget = self._settings.site_hourly_budgets.get(site, self._settings.site_hourly_budget)
+        return len(window) < budget
+
+    def _open(self, site: str) -> bool:
+        """Le disjoncteur du site est-il ouvert (site laissé de côté) ?"""
+        return self.blocked_until.get(site, 0.0) > self._clock()
+
+    def _trip(self, site: str, summary: RunSummary) -> None:
+        self._blocks[site] = self._blocks.get(site, 0) + 1
+        cooldown = min(
+            self._settings.blocked_cooldown_seconds * 2 ** (self._blocks[site] - 1),
+            self._settings.blocked_cooldown_max_seconds,
+        )
+        self.blocked_until[site] = self._clock() + cooldown
+        summary.sites_blocked.append(site)
+        logger.error(
+            "collector.site_blocked", site=site, blocks=self._blocks[site], cooldown=cooldown
+        )
 
     async def run_once(self) -> RunSummary:
         """Un passage complet."""
@@ -108,6 +136,7 @@ class Collector:
                 if (
                     streak[site] >= self._settings.site_failure_limit
                     or silent[site] >= self._settings.silent_zero_limit
+                    or self._open(site)
                 ):
                     continue
                 if not self._within_budget(site):
@@ -135,6 +164,7 @@ class Collector:
             tripped=summary.sites_tripped,
             silent=summary.sites_silent,
             over_budget=summary.over_budget,
+            blocked=summary.sites_blocked,
         )
         return summary
 
@@ -168,11 +198,17 @@ class Collector:
                 self._scraper,
                 site,
                 target,
-                results_wanted=self._settings.results_wanted,
+                results_wanted=self._settings.site_results_wanted.get(
+                    site, self._settings.results_wanted
+                ),
                 hours_old=self._settings.hours_old,
                 proxies=self._settings.proxies,
                 timeout_seconds=self._settings.request_timeout_seconds,
             )
+        except SiteBlockedError as exc:
+            self._trip(site, summary)
+            summary.site_failures[site] = summary.site_failures.get(site, 0) + 1
+            found = exc.records
         except Exception as exc:
             streak[site] += 1
             summary.site_failures[site] = summary.site_failures.get(site, 0) + 1
@@ -182,6 +218,7 @@ class Collector:
             found = None
         else:
             streak[site] = 0
+            self._blocks[site] = 0
             logger.info(
                 "collector.fetched",
                 site=site,
@@ -189,8 +226,10 @@ class Collector:
                 rows=len(found or []),
                 seconds=round(time.monotonic() - started, 1),
             )
-        spread = self._settings.pause_jitter * (2 * self._jitter() - 1)
-        await self._sleep(round(self._settings.pause_seconds * (1 + spread), 3))
+        jitter = self._settings.site_pause_jitter.get(site, self._settings.pause_jitter)
+        pause = self._settings.site_pause_seconds.get(site, self._settings.pause_seconds)
+        spread = jitter * (2 * self._jitter() - 1)
+        await self._sleep(round(pause * (1 + spread), 3))
         return found
 
 

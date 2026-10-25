@@ -98,6 +98,7 @@ def posting_from_record(record: Mapping[str, Any]) -> RawPosting | None:
         company_name=_text(record, "company_name", 255),
         company_logo_url=_text(record, "company_logo_url"),
         company_url=_text(record, "company_url"),
+        company_website=_text(record, "company_website"),
         location_label=_text(record, "location_label", 255),
         date_posted=_day(record),
         job_types=tuple(t for t in job_types if isinstance(t, str))

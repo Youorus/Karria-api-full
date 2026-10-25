@@ -26,10 +26,14 @@ class CollectorSettings(BaseSettings):
     token: SecretStr = SecretStr("")
     #: Mandataires sortants (`http://user:pass@hôte:port`), essayés en rotation.
     proxies: list[str] = Field(default_factory=list)
-    #: Sites interrogés : HelloWork est français, Indeed couvre large.
-    #: LinkedIn est écarté : limite agressive, et pas de description sans
-    #: une requête de plus par annonce.
-    sites: list[str] = Field(default_factory=lambda: ["indeed", "hellowork"])
+    #: Sites interrogés : HelloWork est français, Indeed couvre large,
+    #: LinkedIn apporte cadres et tech, avec un logo pour presque chaque
+    #: annonce. LinkedIn coûte une requête de plus par annonce (sa
+    #: description) et limite vite : il a son propre budget, une pause plus
+    #: longue et un disjoncteur sur 429/999 (`site_*`, `blocked_cooldown_*`).
+    #: Mesuré le 2026-10-25 depuis le serveur, sans mandataire : 25 annonces
+    #: par recherche, 21 à 24 avec description et logo, ~28 s par recherche.
+    sites: list[str] = Field(default_factory=lambda: ["indeed", "hellowork", "linkedin"])
     #: Annonces demandées par requête et par site.
     results_wanted: int = Field(default=60, ge=1, le=500)
     #: On ne demande que les annonces des trois derniers jours : au-delà,
@@ -46,6 +50,20 @@ class CollectorSettings(BaseSettings):
     #: attend le passage suivant. 60 cibles x 2 sites toutes les 10 minutes
     #: font 360/h ; 200 laisse de la marge sans jamais marteler un site.
     site_hourly_budget: int = Field(default=200, ge=1)
+    #: Budgets propres à un site (recherches par heure glissante). LinkedIn :
+    #: 40 recherches de 25 annonces, soit ~1 000 annonces lues par heure.
+    site_hourly_budgets: dict[str, int] = Field(default_factory=lambda: {"linkedin": 40})
+    #: Pauses propres à un site, en secondes, et leur gigue (±).
+    site_pause_seconds: dict[str, float] = Field(default_factory=lambda: {"linkedin": 12.0})
+    site_pause_jitter: dict[str, float] = Field(default_factory=lambda: {"linkedin": 0.5})
+    #: Annonces demandées par recherche, propres à un site (LinkedIn : chaque
+    #: annonce coûte une requête de description).
+    site_results_wanted: dict[str, int] = Field(default_factory=lambda: {"linkedin": 25})
+    #: Disjoncteur : un site qui répond 429, 999 ou « bloqué » est laissé de
+    #: côté pendant ce délai, doublé à chaque blocage consécutif jusqu'au
+    #: plafond — d'un passage à l'autre, pas seulement pour le passage.
+    blocked_cooldown_seconds: float = Field(default=1_800, ge=0)
+    blocked_cooldown_max_seconds: float = Field(default=6 * 3_600, ge=0)
     #: Un site qui rend zéro annonce sur autant de cibles qui en rendaient
     #: hier est probablement cassé (page changée) : on l'arrête pour le
     #: passage et on le journalise en erreur (« zéro silencieux »).

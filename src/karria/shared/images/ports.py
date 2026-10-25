@@ -89,3 +89,21 @@ class ImageCannotFitError(ImageError):
             "Impossible de réduire cette image sous "
             f"{limit_bytes / (1024 * 1024):.1f} Mo sans la rendre illisible."
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SquareIcon:
+    """Une image rognée de ses bords unis, mise au carré, déclinée en tailles WebP.
+
+    Les mesures portent sur l'image **rognée**, avant la mise au carré : c'est
+    elle qu'on juge (assez grande ? autre chose qu'un aplat ?).
+    """
+
+    width: int
+    height: int
+    #: Écart-type de la luminance des pixels visibles (0-255).
+    contrast: float
+    #: Part des pixels visibles (non transparents) de l'image rognée.
+    coverage: float
+    #: Taille du côté → octets WebP. Vide si l'image n'a rien de visible.
+    renditions: dict[int, bytes]

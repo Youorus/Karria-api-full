@@ -158,3 +158,11 @@ def test_un_retrait_mal_forme_n_est_pas_un_retrait() -> None:
         posting_from_record({"source": "france_travail", "source_id": "X", "expired": "oui"})
         is None
     )
+
+
+def test_le_site_de_l_employeur_est_lu() -> None:
+    posting = posting_from_record(
+        {"source": "indeed", "source_id": "1", "title": "T", "company_website": "https://x.fr"}
+    )
+    assert posting is not None
+    assert posting.company_website == "https://x.fr"

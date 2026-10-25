@@ -17,6 +17,11 @@
   canoniques `terme × département × contrat` (`offers_scrape_targets`), les
   liens personne ↔ cible (`offers_target_demands`), la priorité et la
   cadence apprises du rendement, l'essai des cibles nouvelles.
+- **Les entreprises** (`offers_companies`, `domain/companies.py`, ADR-0021) : une
+  identité commune aux sources et à la V1 (clé de nom + domaine), le lien de chaque
+  offre (`company_id`, et la copie `company_logo_hash`), et leur **logo** —
+  téléchargé une fois, jugé, mis au carré, rangé dans le bucket public `logos`
+  (`<condensat>/<128|256>.webp`) par le travail `offers.fetch_logos`.
 - **Les routes internes** du collecteur (`/internal/offers/targets`,
   `/internal/offers/batches`) et l'atterrissage des lots (bucket `landing`).
 
@@ -54,5 +59,9 @@
   sur `GET /job-matches/me` lit le corpus actif sans toucher aux critères, qui
   continuent de nourrir le fil et les alertes. Seul `DELETE /search/criteria`
   arrête la recherche.
+- **L'adresse d'un logo chez la source n'est jamais servie** (elle expire et livre
+  l'IP de la personne) : `company.logo` est notre adresse stable, ou `null`
+  (initiales dans l'app). Le logo se cherche **par entreprise**, jamais par offre,
+  et un passage de file en traite des centaines (pas un travail par entreprise).
 - Les décisions et leurs mesures : ADR-0016 (moteur), ADR-0017 (France
   Travail, collecte continue, planificateur).

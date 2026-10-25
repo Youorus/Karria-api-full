@@ -11,10 +11,13 @@ from procrastinate import App, testing
 from karria.modules.offers.api import dependencies as deps
 from karria.modules.offers.application import (
     ApplyCriteria,
+    AttachCompanies,
+    BackfillCompanies,
     ClearCriteria,
     ConverseSearch,
     DispatchAlerts,
     ExpireOffers,
+    FetchCompanyLogos,
     ForgetUser,
     GetCriteria,
     GetFeed,
@@ -181,6 +184,15 @@ class TestFabriquesHorsRequete:
             deps.build_ingest_batch(settings, InMemoryObjectStorage(StorageSettings()), queue_app),
             IngestBatch,
         )
+
+    def test_les_entreprises_et_les_logos_s_assemblent(self) -> None:
+        storage = InMemoryObjectStorage(StorageSettings())
+        attach = deps.build_attach_companies()
+        assert isinstance(attach, AttachCompanies)
+        assert isinstance(deps.build_backfill_companies(), BackfillCompanies)
+        assert isinstance(deps.build_fetch_logos(storage, object()), FetchCompanyLogos)  # type: ignore[arg-type]
+        url = deps.get_logo_url(storage)
+        assert url("ab", 128) == "https://storage.local/karria-test-logos/ab/128.webp"
 
     def test_sans_notificateur_la_synchronisation_n_alerte_pas(self, settings: Settings) -> None:
         silent = deps.build_sync_index(settings, None)

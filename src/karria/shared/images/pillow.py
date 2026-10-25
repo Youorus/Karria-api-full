@@ -37,9 +37,9 @@ gain ne vaut pas la dépendance (ADR-0009).
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Final
+from typing import Final, cast
 
-from PIL import Image, ImageFile, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageFile, ImageOps, ImageStat, UnidentifiedImageError
 from pillow_heif.as_plugin import register_heif_opener
 
 from karria.shared.images.ports import (
@@ -49,6 +49,7 @@ from karria.shared.images.ports import (
     ImageTooLargeError,
     NormalizedImage,
     NotAnImageError,
+    SquareIcon,
 )
 from karria.shared.logging import get_logger
 
@@ -376,3 +377,78 @@ def blurhash(payload: bytes, *, components_x: int = 4, components_y: int = 5) ->
     for f in ac:
         out += _base83(quant(f[0]) * 19 * 19 + quant(f[1]) * 19 + quant(f[2]), 2)
     return out
+
+
+#: Écart de couleur (0-255) au-delà duquel un pixel n'est plus le fond.
+_BACKGROUND_TOLERANCE: Final = 24
+#: Alpha sous lequel un pixel est tenu pour transparent.
+_ALPHA_VISIBLE: Final = 16
+#: Marge autour du logo dans le carré, par côté (part du plus grand côté).
+_ICON_MARGIN: Final = 0.08
+
+
+def square_icon(payload: bytes, sizes: tuple[int, ...], *, quality: int = 86) -> SquareIcon:
+    """Rogne les bords unis (blancs, transparents ou d'une autre couleur), mesure, met au carré.
+
+    Le carré garde la transparence si l'image en a ; sinon il se remplit de
+    la couleur du fond d'origine — un logo blanc sur bleu reste sur bleu.
+    Une icône `.ico` est lue dans sa plus grande taille (comportement de Pillow).
+
+    Raises:
+        NotAnImageError: Les octets ne sont pas une image.
+        ImageTooLargeError: Trop de pixels pour être décodée sans risque.
+    """
+    try:
+        source = Image.open(BytesIO(payload))
+        pixels = source.width * source.height
+        if pixels > MAX_PIXELS:
+            raise ImageTooLargeError(pixels)
+        source.seek(0)
+        rgba = source.convert("RGBA")
+    except (UnidentifiedImageError, OSError, ValueError, EOFError) as exc:
+        raise NotAnImageError from exc
+
+    alpha = rgba.getchannel("A")
+    low, _ = cast("tuple[int, int]", alpha.getextrema())
+    transparent = low < 250  # noqa: PLR2004 - presque opaque partout
+    background = rgba.getpixel((0, 0))
+    if transparent:
+        mask = alpha.point(lambda a: 255 if a >= _ALPHA_VISIBLE else 0)
+    else:
+        plain = Image.new("RGB", rgba.size, background[:3] if isinstance(background, tuple) else 0)
+        diff = ImageChops.difference(rgba.convert("RGB"), plain).convert("L")
+        mask = diff.point(lambda d: 255 if d > _BACKGROUND_TOLERANCE else 0)
+    box = mask.getbbox()
+    if box is None:
+        return SquareIcon(
+            width=rgba.width, height=rgba.height, contrast=0.0, coverage=0.0, renditions={}
+        )
+    cropped = rgba.crop(box)
+    visible = alpha.crop(box).point(lambda a: 255 if a >= _ALPHA_VISIBLE else 0)
+    stat = ImageStat.Stat(cropped.convert("L"), mask=visible)
+    coverage = (ImageStat.Stat(visible).mean[0] / 255.0) if transparent else 1.0
+    contrast = float(stat.stddev[0]) if stat.count[0] else 0.0
+
+    side = round(max(cropped.size) * (1 + 2 * _ICON_MARGIN))
+    fill = (
+        (0, 0, 0, 0)
+        if transparent
+        else (*background[:3], 255)
+        if isinstance(background, tuple)
+        else (255, 255, 255, 255)
+    )
+    canvas = Image.new("RGBA", (side, side), fill)
+    canvas.paste(cropped, ((side - cropped.width) // 2, (side - cropped.height) // 2), cropped)
+    renditions: dict[int, bytes] = {}
+    for size in sizes:
+        resized = canvas.resize((size, size), Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        resized.save(buffer, "WEBP", quality=quality, method=6, exact=False)
+        renditions[size] = buffer.getvalue()
+    return SquareIcon(
+        width=cropped.width,
+        height=cropped.height,
+        contrast=contrast,
+        coverage=coverage,
+        renditions=renditions,
+    )
