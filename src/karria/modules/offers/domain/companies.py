@@ -282,6 +282,10 @@ class CompanyRecord:
     logo_checked_at: datetime | None = None
     #: Adresses déjà jugées inutilisables : on ne les retélécharge pas.
     logo_rejected_urls: tuple[str, ...] = ()
+    #: Dernière fois qu'une annonce l'a montrée (à l'heure près) : la priorité
+    #: de la recherche du logo — une offre qui arrive voit le sien en minutes,
+    #: devant le rattrapage de la V1.
+    last_offer_at: datetime | None = None
 
     @property
     def has_logo(self) -> bool:
@@ -366,6 +370,11 @@ def new_company(company_id: UUID, sighting: CompanySighting, *, now: datetime) -
     return record
 
 
+#: Pas plus d'une écriture par heure et par entreprise pour la tenir à jour :
+#: France Travail revoit des milliers d'annonces toutes les trois minutes.
+LAST_OFFER_RESOLUTION: Final = timedelta(hours=1)
+
+
 def merge_sighting(
     record: CompanyRecord, sighting: CompanySighting, *, now: datetime
 ) -> CompanyRecord:
@@ -376,6 +385,10 @@ def merge_sighting(
     logo, remet la recherche en route — c'est un candidat de plus.
     """
     merged = record
+    if sighting.offer is not None and (
+        merged.last_offer_at is None or now - merged.last_offer_at >= LAST_OFFER_RESOLUTION
+    ):
+        merged = replace(merged, last_offer_at=now)
     if not merged.domain and sighting.domain:
         merged = replace(merged, domain=sighting.domain)
         if merged.logo_status is LogoStatus.MISSING:
@@ -385,7 +398,8 @@ def merge_sighting(
         merged = replace(merged, website=sighting.website)
     if sighting.v1_id is not None and merged.v1_id is None:
         merged = replace(merged, v1_id=sighting.v1_id, v1_logo_url=sighting.logo_url)
-        merged = _new_candidate(merged, sighting.logo_url, now=now)
+        if sighting.logo_url and trusted_v1_logo(sighting.logo_url, merged.domain):
+            merged = _new_candidate(merged, sighting.logo_url, now=now)
     elif (
         sighting.v1_id is None and sighting.logo_url and sighting.logo_url != merged.source_logo_url
     ):
@@ -432,6 +446,24 @@ def is_placeholder_url(url: str) -> bool:
     return bool(_PLACEHOLDER_URL.search(url))
 
 
+#: Hôtes de la V1 dont l'adresse est **attachée à l'entreprise** par le site
+#: d'offres lui-même (logo de page entreprise LinkedIn, logo carré Indeed) :
+#: fiables. Le reste de la colonne `logo` de la V1 vient d'un appariement par
+#: nom sur le Web, faux trop souvent (mesuré le 2026-10-25 sur 24 logos tirés
+#: au hasard : une capture de Grammarly pour une maison de retraite, une photo
+#: de ville, un logo arabe pour « ACTYVA »).
+TRUSTED_V1_LOGO: Final = re.compile(
+    r"^https://(media\.licdn\.com/dms/image/[^?]*company-logo|d2q79iu7y748jz\.cloudfront\.net/s/_squarelogo/)"
+)
+
+
+def trusted_v1_logo(url: str, domain: str) -> bool:
+    """Le logo de la V1 est-il sûr ? Hôte attaché à l'entreprise, ou servi par son propre site."""
+    if TRUSTED_V1_LOGO.match(url):
+        return True
+    return bool(domain) and registrable_domain(url) == domain
+
+
 def site_icon_urls(domain: str) -> tuple[str, ...]:
     """Les icônes d'un site quand sa page d'accueil n'en déclare pas (ou nous refuse : 403).
 
@@ -450,17 +482,16 @@ def site_icon_urls(domain: str) -> tuple[str, ...]:
 def logo_candidates(record: CompanyRecord) -> list[LogoCandidate]:
     """Les adresses à essayer, de la plus sûre à la moins sûre, sans les rejetées.
 
-    D'abord le logo que donne la source, puis celui de la V1, et seulement
-    ensuite l'icône du site (que l'adaptateur découvre sur la page d'accueil
-    et complète par `site_icon_urls`). Une icône Google (`s2/favicons`) de
-    la V1 est une icône de site : elle est jugée comme telle.
+    D'abord le logo que donne la source, puis celui de la V1 **s'il est sûr**
+    (`trusted_v1_logo`), et seulement ensuite l'icône du site (que
+    l'adaptateur découvre sur la page d'accueil et complète par
+    `site_icon_urls`, sous condition d'un domaine qui n'est pas partagé).
     """
     found: list[LogoCandidate] = []
     if record.source_logo_url:
         found.append(LogoCandidate(record.source_logo_url, LogoOrigin.SOURCE))
-    if record.v1_logo_url:
-        origin = LogoOrigin.FAVICON if "favicon" in record.v1_logo_url.lower() else LogoOrigin.V1
-        found.append(LogoCandidate(record.v1_logo_url, origin))
+    if record.v1_logo_url and trusted_v1_logo(record.v1_logo_url, record.domain):
+        found.append(LogoCandidate(record.v1_logo_url, LogoOrigin.V1))
     seen: set[str] = set()
     kept: list[LogoCandidate] = []
     for candidate in found:

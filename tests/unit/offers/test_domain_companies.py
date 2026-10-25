@@ -34,6 +34,7 @@ from karria.modules.offers.domain.companies import (
     settle_logo,
     sighting_of,
     site_icon_urls,
+    trusted_v1_logo,
 )
 
 pytestmark = pytest.mark.unit
@@ -42,6 +43,9 @@ NOW = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
 INDEED = "https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/abc"
 HELLOWORK = "https://f.hellowork.com/img/entreprises/1.png?v=1"
 FT = "https://api.francetravail.fr/logo/2"
+LINKEDIN = (
+    "https://media.licdn.com/dms/image/v2/C4D0BAQ/company-logo_100_100/company-logo_100_100/0/1"
+)
 
 
 def record(**changes: object) -> CompanyRecord:
@@ -204,7 +208,7 @@ class TestFusion:
             INDEED,
             LogoStatus.PENDING,
         )
-        again = merge_sighting(merged, sighting(v1_id=8, logo_url=HELLOWORK), now=NOW)
+        again = merge_sighting(merged, sighting(v1_id=8, logo_url=LINKEDIN), now=NOW)
         assert again == merged
 
     def test_une_ligne_v1_sans_logo(self) -> None:
@@ -241,29 +245,49 @@ class TestFusion:
 
 class TestCandidats:
     def test_ordre_et_filtres(self) -> None:
-        candidates = logo_candidates(
-            record(
-                source_logo_url=INDEED,
-                v1_logo_url="https://www.google.com/s2/favicons?domain=x.fr&sz=256",
-            )
-        )
+        candidates = logo_candidates(record(source_logo_url=HELLOWORK, v1_logo_url=LINKEDIN))
         assert candidates == [
-            LogoCandidate(INDEED, LogoOrigin.SOURCE),
-            LogoCandidate(
-                "https://www.google.com/s2/favicons?domain=x.fr&sz=256", LogoOrigin.FAVICON
-            ),
+            LogoCandidate(HELLOWORK, LogoOrigin.SOURCE),
+            LogoCandidate(LINKEDIN, LogoOrigin.V1),
         ]
+
+    @pytest.mark.parametrize(
+        ("url", "domain", "trusted"),
+        [
+            (LINKEDIN, "", True),
+            (INDEED, "", True),
+            ("https://media.licdn.com/dms/image/v2/x/profile-displayphoto/0/1", "", False),
+            ("https://www.beumergroup.com/uploads/logo.png", "beumergroup.com", True),
+            ("https://static.wixstatic.com/media/a.png", "beumergroup.com", False),
+            ("https://www.google.com/s2/favicons?domain=x.fr&sz=256", "x.fr", False),
+            ("https://cdn.grammarly.com/shot.png", "", False),
+        ],
+    )
+    def test_un_logo_de_la_v1_n_est_sur_que_rattache_a_l_entreprise(
+        self, url: str, domain: str, trusted: bool
+    ) -> None:
+        assert trusted_v1_logo(url, domain) is trusted
+        assert bool(logo_candidates(record(v1_logo_url=url, domain=domain))) is trusted
+
+    def test_un_logo_douteux_de_la_v1_ne_relance_rien(self) -> None:
+        merged = merge_sighting(
+            record(logo_status=LogoStatus.MISSING),
+            sighting(v1_id=7, logo_url="https://cdn.grammarly.com/shot.png"),
+            now=NOW,
+        )
+        assert merged.v1_logo_url == "https://cdn.grammarly.com/shot.png"
+        assert merged.logo_status is LogoStatus.MISSING
 
     def test_v1_doublons_rejetees_et_generiques_ecartes(self) -> None:
         assert logo_candidates(record(source_logo_url=INDEED, v1_logo_url=INDEED)) == [
             LogoCandidate(INDEED, LogoOrigin.SOURCE)
         ]
-        assert logo_candidates(record(v1_logo_url=HELLOWORK)) == [
-            LogoCandidate(HELLOWORK, LogoOrigin.V1)
+        assert logo_candidates(record(v1_logo_url=LINKEDIN)) == [
+            LogoCandidate(LINKEDIN, LogoOrigin.V1)
         ]
         assert logo_candidates(record(v1_logo_url=INDEED, logo_rejected_urls=(INDEED,))) == []
         assert logo_candidates(record(v1_logo_url="https://static.licdn.com/aero/ghost")) == []
-        assert logo_candidates(record(v1_logo_url="data:image/png;base64,AAAA")) == []
+        assert logo_candidates(record(source_logo_url="data:image/png;base64,AAAA")) == []
 
     @pytest.mark.parametrize(
         ("url", "placeholder"),
@@ -365,3 +389,20 @@ class TestIssue:
 
     def test_cle_de_stockage(self) -> None:
         assert logo_object_key("abc", 128) == "abc/128.webp"
+
+
+class TestPriorite:
+    def test_une_annonce_date_l_entreprise_a_l_heure_pres(self) -> None:
+        seen = merge_sighting(record(), sighting(offer=("indeed", "1")), now=NOW)
+        assert seen.last_offer_at == NOW
+        soon = merge_sighting(
+            seen, sighting(offer=("indeed", "2")), now=NOW + timedelta(minutes=30)
+        )
+        assert soon == seen
+        later = NOW + timedelta(hours=1)
+        assert (
+            merge_sighting(seen, sighting(offer=("indeed", "3")), now=later).last_offer_at == later
+        )
+
+    def test_la_v1_ne_date_rien(self) -> None:
+        assert merge_sighting(record(), sighting(v1_id=1), now=NOW).last_offer_at is None

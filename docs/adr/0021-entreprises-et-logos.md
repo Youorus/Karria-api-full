@@ -71,6 +71,18 @@ tiers à chaque carte du fil.
   résolution DNS, 60 s par entreprise. Sans eux, le premier rattrapage avait réglé deux
   entreprises en onze minutes.
 
+- **Un logo de la V1 n'est retenu que s'il est sûr** (`trusted_v1_logo`) : logo de page
+  entreprise LinkedIn ou logo carré Indeed (attachés à l'entreprise par le site d'offres),
+  ou image servie par le propre domaine de l'entreprise. Le reste de la colonne `logo` de
+  la V1 venait d'un appariement par nom sur le Web : sur 24 logos tirés au hasard, 5 étaient
+  faux (capture de Grammarly pour une maison de retraite, photo de ville…). Un logo faux est
+  pire que des initiales. Ceux pris avant la règle : `scripts.companies reset-untrusted-v1`.
+
+- **Priorité** : la prise de travail trie par `last_offer_at` (dernière annonce vue, à l'heure
+  près ; migration 11) puis par la présence d'une adresse. Une offre qui arrive passe devant
+  les quelque 100 000 entreprises du rattrapage de la V1 : son logo est cherché au passage
+  suivant (le lot qui l'apporte diffère `offers.fetch_logos`).
+
 ## Limites connues
 
 - Une icône **SVG** n'est pas rastérisée (aucune dépendance pour cela) : Lidl, par exemple,

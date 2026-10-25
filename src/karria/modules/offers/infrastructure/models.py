@@ -130,6 +130,9 @@ class CompanyModel(BaseDBModel):
     logo_next_attempt_at = fields.DatetimeField(null=True, db_index=True)
     logo_checked_at = fields.DatetimeField(null=True)
     logo_rejected_urls: list[str] = fields.JSONField(default=list)
+    last_offer_at = fields.DatetimeField(
+        null=True, description="Dernière annonce vue (à l'heure près) : priorité du logo."
+    )
 
     class Meta:
         table = "offers_companies"
@@ -138,7 +141,11 @@ class CompanyModel(BaseDBModel):
             "vit dans le bucket public `logos`, adressé par `logo_hash`."
         )
         unique_together = (("key", "domain"),)
-        indexes = (("logo_status", "logo_next_attempt_at"), ("domain",))
+        indexes = (
+            ("logo_status", "logo_next_attempt_at"),
+            ("domain",),
+            ("logo_status", "last_offer_at"),
+        )
 
 
 class IndexOutboxModel(Model):

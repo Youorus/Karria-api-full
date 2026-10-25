@@ -51,7 +51,7 @@ from offers.fakes import (
 pytestmark = pytest.mark.unit
 
 INDEED = "https://d2q79iu7y748jz.cloudfront.net/s/_squarelogo/256x256/abc"
-V1_LOGO = "https://media.licdn.com/dms/image/x"
+V1_LOGO = "https://media.licdn.com/dms/image/v2/x/company-logo_100_100/0/1"
 GOOD = ImageTraits(256, 256, 40.0)
 TINY = ImageTraits(16, 16, 40.0)
 

@@ -113,3 +113,17 @@ async def test_domaines_et_logos_partages() -> None:
     assert cleared.company.logo_hash is None
     kept = await companies.find_by_keys(["mcdo 0"])
     assert kept["mcdo 0"][0].logo_hash == "ef" * 16
+
+
+async def test_les_entreprises_vues_recemment_passent_devant_le_rattrapage() -> None:
+    companies = TortoiseCompanyRepository()
+    backlog = [company(key=f"v1 {i}", v1_logo_url="https://x") for i in range(3)]
+    old = company(key="ancienne", last_offer_at=NOW - timedelta(days=1))
+    fresh = company(key="nouvelle", last_offer_at=NOW)
+    await companies.save_many([*backlog, old, fresh])
+
+    claimed = await companies.claim_logo_work(now=NOW, until=NOW + timedelta(minutes=15), limit=2)
+
+    assert [r.key for r in claimed] in (["nouvelle", "ancienne"], ["ancienne", "nouvelle"])
+    assert {r.key for r in claimed} == {"nouvelle", "ancienne"}
+    assert next(r for r in claimed if r.key == "nouvelle").last_offer_at == NOW

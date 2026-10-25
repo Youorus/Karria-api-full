@@ -5,6 +5,7 @@
     uv run python -m scripts.companies fetch-logos [--budget S] [--concurrency N]
     uv run python -m scripts.companies coverage                        # couverture des logos par source
     uv run python -m scripts.companies shared-logos [--limit N]        # logos partagés (images génériques ?)
+    uv run python -m scripts.companies reset-untrusted-v1              # retire les logos V1 douteux
 
 `import-v1` lit l'export de la table `companies` de la V1, une ligne JSON
 par entreprise (`id`, `name`, `website`, `logo`), produit **depuis une base
@@ -39,6 +40,7 @@ from karria.modules.offers import (
     company_domain,
     company_key,
     fetch_logos_within,
+    trusted_v1_logo,
 )
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
@@ -144,6 +146,32 @@ async def shared_logos(limit: int) -> None:
         print(json.dumps(dict(row), ensure_ascii=False))
 
 
+UNTRUSTED_SQL = """
+SELECT id, domain, v1_logo_url FROM offers_companies
+ WHERE logo_origin = 'v1' AND v1_logo_url IS NOT NULL
+"""
+RESET_SQL = """
+WITH reset AS (
+    UPDATE offers_companies
+       SET logo_hash = NULL, logo_origin = NULL, logo_status = 'pending',
+           logo_attempts = 0, logo_next_attempt_at = now()
+     WHERE id = ANY($1::uuid[])
+    RETURNING id
+)
+UPDATE offers_offers AS o SET company_logo_hash = NULL FROM reset WHERE o.company_id = reset.id
+"""
+
+
+async def reset_untrusted_v1() -> None:
+    """Les logos V1 pris avant la règle `trusted_v1_logo` : remis en recherche (ADR-0021)."""
+    connection = connections.get("default")
+    rows = await connection.execute_query_dict(UNTRUSTED_SQL)
+    doubtful = [r["id"] for r in rows if not trusted_v1_logo(r["v1_logo_url"], r["domain"])]
+    if doubtful:
+        await connection.execute_query(RESET_SQL, [doubtful])
+    print(json.dumps({"v1_logos": len(rows), "reset": len(doubtful)}))
+
+
 async def main(argv: list[str]) -> int:
     """Point d'entrée."""
     parser = argparse.ArgumentParser(prog="scripts.companies")
@@ -156,6 +184,7 @@ async def main(argv: list[str]) -> int:
     fetch.add_argument("--budget", type=float, default=3_600.0)
     fetch.add_argument("--concurrency", type=int, default=32)
     commands.add_parser("coverage")
+    commands.add_parser("reset-untrusted-v1")
     shared = commands.add_parser("shared-logos")
     shared.add_argument("--limit", type=int, default=30)
     args = parser.parse_args(argv)
@@ -177,6 +206,8 @@ async def main(argv: list[str]) -> int:
             print(json.dumps({"companies": seen}))
         elif args.command == "coverage":
             await coverage()
+        elif args.command == "reset-untrusted-v1":
+            await reset_untrusted_v1()
         else:
             await shared_logos(args.limit)
     finally:

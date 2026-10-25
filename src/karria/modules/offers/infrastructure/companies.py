@@ -36,6 +36,7 @@ _COLUMNS = (
     "logo_next_attempt_at",
     "logo_checked_at",
     "logo_rejected_urls",
+    "last_offer_at",
 )
 
 _LINK_SQL = """
@@ -48,17 +49,16 @@ UPDATE offers_offers AS o
         OR o.company_logo_hash IS DISTINCT FROM c.logo_hash)
 """
 
-# Les entreprises qui ont des offres actives passent d'abord : c'est ce que
-# l'app affiche aujourd'hui. Le bail (`logo_next_attempt_at = until`) rend
-# la prise sûre même si le worker meurt en route.
+# Les entreprises vues le plus récemment dans une annonce passent d'abord :
+# une offre qui arrive voit son logo en minutes, devant le rattrapage de la
+# V1 (entreprises sans annonce : `last_offer_at` nul, en dernier). Le bail
+# (`logo_next_attempt_at = until`) rend la prise sûre si le worker meurt.
 _CLAIM_SQL = """
 WITH picked AS (
     SELECT c.id
       FROM offers_companies AS c
      WHERE c.logo_status = 'pending' AND c.logo_next_attempt_at <= $1
-     ORDER BY EXISTS (
-                SELECT 1 FROM offers_offers AS o WHERE o.company_id = c.id AND o.is_active
-              ) DESC,
+     ORDER BY c.last_offer_at DESC NULLS LAST,
               (c.source_logo_url IS NOT NULL OR c.v1_logo_url IS NOT NULL) DESC,
               c.logo_next_attempt_at
      LIMIT $3
@@ -112,6 +112,7 @@ def _to_record(row: CompanyModel) -> CompanyRecord:
         logo_next_attempt_at=row.logo_next_attempt_at,
         logo_checked_at=row.logo_checked_at,
         logo_rejected_urls=tuple(row.logo_rejected_urls or ()),
+        last_offer_at=row.last_offer_at,
     )
 
 
@@ -131,6 +132,7 @@ def _values(record: CompanyRecord) -> dict[str, object]:
         "logo_next_attempt_at": record.logo_next_attempt_at,
         "logo_checked_at": record.logo_checked_at,
         "logo_rejected_urls": list(record.logo_rejected_urls),
+        "last_offer_at": record.last_offer_at,
     }
 
 

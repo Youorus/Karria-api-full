@@ -40,7 +40,12 @@ from karria.modules.offers.api.dependencies import (
 from karria.modules.offers.api.tasks import fetch_logos_within, register_tasks
 from karria.modules.offers.application import UserNotifier
 from karria.modules.offers.domain import RawPosting, SearchCriteria
-from karria.modules.offers.domain.companies import CompanySighting, company_domain, company_key
+from karria.modules.offers.domain.companies import (
+    CompanySighting,
+    company_domain,
+    company_key,
+    trusted_v1_logo,
+)
 from karria.shared.module import ModuleDescriptor
 
 MODULE = ModuleDescriptor(
@@ -73,4 +78,5 @@ __all__ = [
     "fetch_logos_within",
     "get_user_notifier",
     "register_tasks",
+    "trusted_v1_logo",
 ]
