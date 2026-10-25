@@ -23,7 +23,7 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
-| `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+| `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
 ### Session du 2026-10-25 (contrat des notifications push, ADR-0022)
 
@@ -38,6 +38,60 @@ font foi : `karria_app/docs/contrat-api-*.md`.
   et `SendPushToUser.execute(user_id=, message=)`.
 - **Aucun push CV/export** n'existe (exports synchrones) : noté dans `PLUS-TARD.md`.
 - `make check` vert (2 609 tests), nouveau code couvert à 100 %.
+
+### Session du 2026-10-25 (logos d'entreprise partout, LinkedIn, fenêtre France Travail) — en production
+
+**Livré** (commits `3bead7b` → `6e88c04` sur `main` ; le webhook Dokploy **déploie de
+nouveau** à chaque `push`) — ADR-0021 « Proposée » :
+
+- **Entreprises** (`offers_companies`, migrations 9 à 11) : clé de nom (pliée, sans forme
+  juridique) + domaine ; chaque offre porte `company_id` et une copie `company_logo_hash`.
+  Un domaine n'est retenu que si le nom (ou son sigle) s'y lit (`plausible_domain`) et s'il
+  n'est pas porté par plus de 3 entreprises ; un logo V1 seulement s'il vient d'une page
+  entreprise LinkedIn, d'un logo carré Indeed ou du propre domaine (`trusted_v1_logo`).
+- **Logos** : téléchargés une fois (httpx, 15 s/requête, 5 s DNS, 60 s/entreprise, jamais
+  d'adresse privée, 2 requêtes et 250 ms par site), jugés (taille, rapport, aplat), mis au
+  carré, WebP 128/256, bucket **public** `karria-production-logos`
+  (`https://storage.karria.fr/karria-production-logos/<condensat>/<taille>.webp`,
+  `immutable`, 138 Mo au 25/10). Travail `offers.fetch_logos` (toutes les 5 min + dès qu'un
+  lot montre une entreprise), sous bail, **priorité aux entreprises vues récemment**
+  (`last_offer_at`). Mesuré : entreprise née d'une offre → logo prêt en **60 s (p50), 72 s
+  (p95)** sur 17 entreprises. Worker à 3 places. Logos V1/icône partagés par plus de 5
+  entreprises retirés après chaque passage.
+- **Contrat** : `company.logo` (128) et `company.logo_large` (256) = notre adresse, jamais
+  celle de la source ; `null` → initiales. App : `861d974` (expo-image, cache mémoire+disque,
+  fondu 180 ms, repli sur les initiales).
+- **V1** : `public.companies` (dump `karria_essentiel_2026-09-12`) restauré dans une base
+  de travail locale (`docker` `karria-v1-scratch`, port 55432 — à supprimer quand inutile),
+  exporté en JSONL (`~/karria-archive/v1-companies/`, copie sur le serveur dans
+  `/root/karria-v1-companies/`) : **182 865 lignes → 170 983 entreprises** ; 81 168 offres
+  rattachées, 8 574 entreprises nouvelles.
+- **Couverture des logos** (offres actives canoniques) — avant : adresse de la source
+  servie telle quelle ; après (25/10, 17 h 20, rattrapage en cours) :
+  France Travail 3,3 % → **15,9 %** (27,7 % des offres qui nomment l'employeur ; 43 % des
+  offres FT sont anonymes), Indeed 56,7 % → **55,8 %**, HelloWork 92,2 % → **82,5 %**
+  (bandeaux trop allongés et vignettes refusés), LinkedIn **93,3 %**. 5 506 entreprises ont
+  un logo (5 162 images distinctes).
+- **LinkedIn** dans la collecte : 40 recherches/h de 25 annonces, 12 s ± 50 %, disjoncteur
+  429/999 sur plusieurs passages (30 min doublé jusqu'à 6 h), erreurs JobSpy relevées
+  (`SiteBlockedError`). 184 offres LinkedIn en quelques heures, 21 dédoublonnées avec France
+  Travail et Indeed, aucun blocage.
+- **France Travail** : fenêtre sûre au changement d'heure (enveloppe des heures murales),
+  fenêtre vide ignorée — les deux 400 du 25/10 à 1 h 02 et 1 h 05 UTC.
+- **Incidents du jour** : ~10 min de 502 (bucket `logos` absent au démarrage : provisionner
+  **avant** de déployer) et worker en boucle (httpx n'était qu'en dépendance de test). Les
+  deux sont dans `DEPLOIEMENT.md`.
+
+**En cours** : le conteneur `karria-logo-backfill` (`scripts.companies fetch-logos`, budget
+10 h, ~160 entreprises/min avec le worker) traite les ~87 700 entreprises restantes (surtout
+V1 sans offre) ; il s'arrête seul. `docker logs karria-logo-backfill | grep logos_fetched`.
+
+**Reste** :
+1. Revoir `scripts.companies shared-logos` après le rattrapage : remplir
+   `PLACEHOLDER_HASHES` si une image générique apparaît.
+2. `PLUS-TARD.md` § Entreprises et logos : SVG, rafraîchissement, DNS épinglé, LinkedIn et la
+   longue traîne des cibles.
+3. Valider l'ADR-0021 (Marc).
 
 ### Session du 2026-10-24, suite (module `documents` : modèles de CV, exports, ATS) — en production
 
