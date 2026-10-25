@@ -65,6 +65,9 @@ dependencies = [
     # silencieuse de travaux (la V1 a perdu des travaux ARQ sous
     # `allkeys-lru`), et un dédoublonnage par verrou de file natif.
     "procrastinate>=3.10.0",
+    # Le téléchargement des logos (ADR-0021) : client asynchrone en flux,
+    # délais et redirections maîtrisés. Déjà là pour les tests.
+    "httpx>=0.28",
     # Le pilote de procrastinate ; `binary` embarque libpq (rien à
     # installer dans l'image), `pool` sert le connecteur asynchrone.
     "psycopg[binary,pool]>=3.3.6",
