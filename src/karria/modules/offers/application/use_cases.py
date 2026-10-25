@@ -176,6 +176,7 @@ from karria.modules.offers.domain.companies import (
     logo_candidates,
     merge_sighting,
     new_company,
+    plausible_domain,
     settle_logo,
     sighting_of,
     site_icon_urls,
@@ -2210,8 +2211,9 @@ class FetchCompanyLogos:
                 return settle_logo(
                     record, LogoAttempt(digest, candidate.origin), now=self._clock.now()
                 )
-        if record.domain and await self._companies.domain_share(record.domain) <= (
-            MAX_COMPANIES_PER_DOMAIN
+        if (
+            plausible_domain(record.domain, record.key)
+            and await self._companies.domain_share(record.domain) <= MAX_COMPANIES_PER_DOMAIN
         ):
             icons = [*await self._fetcher.site_icons(record.domain), *site_icon_urls(record.domain)]
             for url in dict.fromkeys(icons):

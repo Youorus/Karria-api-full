@@ -356,9 +356,18 @@ class TestIngestion:
 class TestGardeFous:
     async def test_un_domaine_partage_n_est_le_site_de_personne(self) -> None:
         env = Logos()
-        company = await env.add(domain="microsoft.com")
+        company = await env.add(key="microsoft", domain="microsoft.com")
         for i in range(3):
             await env.add(key=f"autre {i}", domain="microsoft.com", logo_next_attempt_at=None)
+
+        await env.use_case.execute()
+
+        assert env.fetcher.fetched == []
+        assert env.get(company.id).logo_status is LogoStatus.MISSING
+
+    async def test_un_domaine_sans_rapport_avec_le_nom_n_est_pas_cherche(self) -> None:
+        env = Logos()
+        company = await env.add(domain="iziwork.com")
 
         await env.use_case.execute()
 

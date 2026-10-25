@@ -40,6 +40,7 @@ from karria.modules.offers import (
     company_domain,
     company_key,
     fetch_logos_within,
+    plausible_domain,
     trusted_v1_logo,
 )
 from karria.shared.config import get_settings
@@ -88,6 +89,8 @@ def v1_sighting(row: dict[str, Any]) -> CompanySighting | None:
     website = row.get("website") if isinstance(row.get("website"), str) else None
     logo = row.get("logo") if isinstance(row.get("logo"), str) else None
     domain = company_domain(website)
+    if not plausible_domain(domain, key):
+        domain, website = None, None
     return CompanySighting(
         key=key,
         name=name[:255],
@@ -147,8 +150,8 @@ async def shared_logos(limit: int) -> None:
 
 
 UNTRUSTED_SQL = """
-SELECT id, domain, v1_logo_url FROM offers_companies
- WHERE logo_origin = 'v1' AND v1_logo_url IS NOT NULL
+SELECT id, key, domain, v1_logo_url, logo_origin FROM offers_companies
+ WHERE logo_origin IN ('v1', 'favicon')
 """
 RESET_SQL = """
 WITH reset AS (
@@ -163,10 +166,18 @@ UPDATE offers_offers AS o SET company_logo_hash = NULL FROM reset WHERE o.compan
 
 
 async def reset_untrusted_v1() -> None:
-    """Les logos V1 pris avant la règle `trusted_v1_logo` : remis en recherche (ADR-0021)."""
+    """Les logos V1 ou d'icône pris avant `trusted_v1_logo` / `plausible_domain` : remis en recherche."""
     connection = connections.get("default")
     rows = await connection.execute_query_dict(UNTRUSTED_SQL)
-    doubtful = [r["id"] for r in rows if not trusted_v1_logo(r["v1_logo_url"], r["domain"])]
+    doubtful = [
+        r["id"]
+        for r in rows
+        if (r["logo_origin"] == "favicon" and not plausible_domain(r["domain"], r["key"]))
+        or (
+            r["logo_origin"] == "v1"
+            and not trusted_v1_logo(r["v1_logo_url"] or "", r["domain"], r["key"])
+        )
+    ]
     if doubtful:
         await connection.execute_query(RESET_SQL, [doubtful])
     print(json.dumps({"v1_logos": len(rows), "reset": len(doubtful)}))

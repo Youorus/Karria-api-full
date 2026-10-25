@@ -221,6 +221,42 @@ def company_domain(url: str | None) -> str | None:
     return domain
 
 
+#: Mots trop courants pour rattacher un nom à un domaine.
+_NAME_STOPWORDS: Final = frozenset(
+    {"de", "du", "des", "la", "le", "les", "et", "d", "l", "en", "a", "au", "aux", "the", "of"}
+)
+_GENERIC_NAME_WORDS: Final = frozenset(
+    {"groupe", "group", "france", "societe", "services", "service", "interim", "emploi"}
+)
+#: Longueur minimale d'un mot du nom pour qu'on le cherche dans le domaine.
+_MIN_MATCH_WORD: Final = 4
+
+
+def plausible_domain(domain: str | None, key: str) -> bool:
+    """Le domaine peut-il être celui de cette entreprise ? (nom ou sigle dans le domaine)
+
+    Un lien pour postuler passe souvent par un intermédiaire (`iziwork.com`
+    pour « PROMAN », constaté le 2026-10-25), et la colonne `website` de la V1
+    contient n'importe quoi. Un logo faux est pire que des initiales : on
+    n'accepte un domaine que si un mot significatif du nom (4 lettres ou
+    plus, hors « groupe », « france »…) ou son sigle (« aphp » pour
+    « Assistance publique hôpitaux de Paris ») se lit dans son libellé.
+    """
+    if not domain:
+        return False
+    label = re.sub(r"[^a-z0-9]", "", domain.split(".")[0])
+    words = [w for w in key.split() if w not in _NAME_STOPWORDS]
+    if not label or not words:
+        return False
+    if any(
+        len(w) >= _MIN_MATCH_WORD and w not in _GENERIC_NAME_WORDS and w in label for w in words
+    ):
+        return True
+    joined = "".join(words)
+    initials = "".join(w[0] for w in words)
+    return label in {joined, initials}
+
+
 # ---------------------------------------------------------------------
 # L'entreprise et ce qu'on en voit
 # ---------------------------------------------------------------------
@@ -307,10 +343,17 @@ def sighting_of(posting: RawPosting) -> CompanySighting | None:
     if key is None:
         return None
     website = next(
-        (url for url in (posting.company_website, posting.company_url) if company_domain(url)),
+        (
+            url
+            for url in (posting.company_website, posting.company_url)
+            if plausible_domain(company_domain(url), key)
+        ),
         None,
     )
-    domain = company_domain(website) or company_domain(posting.job_url_direct)
+    apply_domain = company_domain(posting.job_url_direct)
+    domain = company_domain(website) or (
+        apply_domain if plausible_domain(apply_domain, key) else None
+    )
     return CompanySighting(
         key=key,
         name=name[:255],
@@ -398,7 +441,7 @@ def merge_sighting(
         merged = replace(merged, website=sighting.website)
     if sighting.v1_id is not None and merged.v1_id is None:
         merged = replace(merged, v1_id=sighting.v1_id, v1_logo_url=sighting.logo_url)
-        if sighting.logo_url and trusted_v1_logo(sighting.logo_url, merged.domain):
+        if sighting.logo_url and trusted_v1_logo(sighting.logo_url, merged.domain, merged.key):
             merged = _new_candidate(merged, sighting.logo_url, now=now)
     elif (
         sighting.v1_id is None and sighting.logo_url and sighting.logo_url != merged.source_logo_url
@@ -457,11 +500,11 @@ TRUSTED_V1_LOGO: Final = re.compile(
 )
 
 
-def trusted_v1_logo(url: str, domain: str) -> bool:
+def trusted_v1_logo(url: str, domain: str, key: str) -> bool:
     """Le logo de la V1 est-il sûr ? Hôte attaché à l'entreprise, ou servi par son propre site."""
     if TRUSTED_V1_LOGO.match(url):
         return True
-    return bool(domain) and registrable_domain(url) == domain
+    return plausible_domain(domain, key) and registrable_domain(url) == domain
 
 
 def site_icon_urls(domain: str) -> tuple[str, ...]:
@@ -490,7 +533,7 @@ def logo_candidates(record: CompanyRecord) -> list[LogoCandidate]:
     found: list[LogoCandidate] = []
     if record.source_logo_url:
         found.append(LogoCandidate(record.source_logo_url, LogoOrigin.SOURCE))
-    if record.v1_logo_url and trusted_v1_logo(record.v1_logo_url, record.domain):
+    if record.v1_logo_url and trusted_v1_logo(record.v1_logo_url, record.domain, record.key):
         found.append(LogoCandidate(record.v1_logo_url, LogoOrigin.V1))
     seen: set[str] = set()
     kept: list[LogoCandidate] = []

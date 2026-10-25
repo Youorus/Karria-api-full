@@ -78,6 +78,13 @@ tiers à chaque carte du fil.
   faux (capture de Grammarly pour une maison de retraite, photo de ville…). Un logo faux est
   pire que des initiales. Ceux pris avant la règle : `scripts.companies reset-untrusted-v1`.
 
+- **Un domaine doit se lire dans le nom** (`plausible_domain`) : un mot significatif du nom
+  (4 lettres ou plus, hors « groupe », « france »…) dans le libellé du domaine, ou le nom
+  entier, ou son sigle. Vu sur le simulateur : « PROMAN » avait le logo d'`iziwork.com`, le
+  site par lequel on postule. Les domaines du lien pour postuler, du site déclaré et de la V1
+  passent tous par cette règle ; `reset-untrusted-v1` reprend les icônes prises avant.
+  Prix assumé : « BNP Paribas » sur `mabanque.bnpparibas` passe, une marque sans rapport
+  avec la raison sociale ne passe pas (initiales).
 - **Priorité** : la prise de travail trie par `last_offer_at` (dernière annonce vue, à l'heure
   près ; migration 11) puis par la présence d'une adresse. Une offre qui arrive passe devant
   les quelque 100 000 entreprises du rattrapage de la V1 : son logo est cherché au passage

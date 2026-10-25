@@ -30,6 +30,7 @@ from karria.modules.offers.domain.companies import (
     logo_object_key,
     merge_sighting,
     new_company,
+    plausible_domain,
     registrable_domain,
     settle_logo,
     sighting_of,
@@ -258,6 +259,7 @@ class TestCandidats:
             (INDEED, "", True),
             ("https://media.licdn.com/dms/image/v2/x/profile-displayphoto/0/1", "", False),
             ("https://www.beumergroup.com/uploads/logo.png", "beumergroup.com", True),
+            ("https://www.iziwork.com/logo.png", "iziwork.com", False),
             ("https://static.wixstatic.com/media/a.png", "beumergroup.com", False),
             ("https://www.google.com/s2/favicons?domain=x.fr&sz=256", "x.fr", False),
             ("https://cdn.grammarly.com/shot.png", "", False),
@@ -266,8 +268,9 @@ class TestCandidats:
     def test_un_logo_de_la_v1_n_est_sur_que_rattache_a_l_entreprise(
         self, url: str, domain: str, trusted: bool
     ) -> None:
-        assert trusted_v1_logo(url, domain) is trusted
-        assert bool(logo_candidates(record(v1_logo_url=url, domain=domain))) is trusted
+        key = "beumer group"
+        assert trusted_v1_logo(url, domain, key) is trusted
+        assert bool(logo_candidates(record(key=key, v1_logo_url=url, domain=domain))) is trusted
 
     def test_un_logo_douteux_de_la_v1_ne_relance_rien(self) -> None:
         merged = merge_sighting(
@@ -406,3 +409,41 @@ class TestPriorite:
 
     def test_la_v1_ne_date_rien(self) -> None:
         assert merge_sighting(record(), sighting(v1_id=1), now=NOW).last_offer_at is None
+
+
+class TestDomainePlausible:
+    @pytest.mark.parametrize(
+        ("domain", "key", "plausible"),
+        [
+            ("decathlon.fr", "decathlon", True),
+            ("societegenerale.com", "societe generale", True),
+            ("loreal.com", "l oreal", True),
+            ("aphp.fr", "assistance publique hopitaux de paris", True),
+            ("sncf.com", "sncf", True),
+            ("iziwork.com", "proman", False),
+            ("groupe-france.fr", "groupe france", True),
+            ("groupe.fr", "groupe abc", False),
+            ("microsoft.com", "maison de retraite saint pierre", False),
+            (None, "decathlon", False),
+            ("decathlon.fr", "", False),
+            ("--.fr", "decathlon", False),
+        ],
+    )
+    def test_le_nom_se_lit_dans_le_domaine(
+        self, domain: str | None, key: str, plausible: bool
+    ) -> None:
+        assert plausible_domain(domain, key) is plausible
+
+    def test_un_intermediaire_pour_postuler_n_est_pas_le_domaine(self) -> None:
+        posting = RawPosting(
+            source=Source.FRANCE_TRAVAIL,
+            source_id="1",
+            title="Magasinier",
+            description="",
+            company_name="PROMAN",
+            company_url="https://www.decathlon.fr",
+            job_url_direct="https://jobs.iziwork.com/fr/offre/1",
+        )
+        found = sighting_of(posting)
+        assert found is not None
+        assert (found.domain, found.website) == (None, None)

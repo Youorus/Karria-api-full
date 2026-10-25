@@ -44,6 +44,7 @@ from karria.modules.offers.domain.companies import (
     CompanySighting,
     company_domain,
     company_key,
+    plausible_domain,
     trusted_v1_logo,
 )
 from karria.shared.module import ModuleDescriptor
@@ -77,6 +78,7 @@ __all__ = [
     "ensure_indexes",
     "fetch_logos_within",
     "get_user_notifier",
+    "plausible_domain",
     "register_tasks",
     "trusted_v1_logo",
 ]
