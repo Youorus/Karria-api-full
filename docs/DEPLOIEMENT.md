@@ -149,7 +149,12 @@ sert `/opt/karria/models/e5-base-int8`, produit par
 
 - **Migration** 9 (`entreprises_et_logos`) : `aerich upgrade`.
 - **Bucket** `karria-production-logos`, **public en lecture** (seul de son
-  espèce) : `python -m scripts.storage_provision`. Servi par
+  espèce) : `python -m scripts.storage_provision`. **À faire AVANT de
+  déployer** le code qui déclare un bucket : le démarrage de l'API vérifie
+  chaque bucket du registre et refuse de démarrer sans lui (constaté le
+  2026-10-25 : 10 min de 502, le temps de provisionner avec la nouvelle
+  image). De même, une dépendance d'exécution ne doit pas vivre dans le
+  groupe `dev` (httpx, même jour : worker en boucle de redémarrage). Servi par
   `https://storage.karria.fr/karria-production-logos/<condensat>/<128|256>.webp`
   (`STORAGE__PUBLIC_ENDPOINT_URL` doit être posée, sinon les adresses visent
   l'hôte interne).

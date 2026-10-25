@@ -1022,6 +1022,17 @@ class InMemoryCompanyRepository:
         self.links: dict[tuple[str, str], UUID] = {}
         self.offers = offers
         self.saved_logos: list[CompanyRecord] = []
+        self.purges: list[int] = []
+        self.purged = 0
+
+    async def domain_share(self, domain: str) -> int:
+        """Compte."""
+        return sum(1 for r in self.companies.values() if r.domain == domain)
+
+    async def purge_shared_logos(self, limit: int) -> int:
+        """Retient la demande."""
+        self.purges.append(limit)
+        return self.purged
 
     async def find_by_keys(self, keys: Sequence[str]) -> dict[str, list[CompanyRecord]]:
         """Par clé, dans l'ordre d'insertion."""

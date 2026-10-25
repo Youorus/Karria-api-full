@@ -59,6 +59,7 @@ WITH picked AS (
      ORDER BY EXISTS (
                 SELECT 1 FROM offers_offers AS o WHERE o.company_id = c.id AND o.is_active
               ) DESC,
+              (c.source_logo_url IS NOT NULL OR c.v1_logo_url IS NOT NULL) DESC,
               c.logo_next_attempt_at
      LIMIT $3
        FOR UPDATE SKIP LOCKED
@@ -68,6 +69,29 @@ UPDATE offers_companies AS c
   FROM picked
  WHERE c.id = picked.id
 RETURNING c.id
+"""
+
+
+# Un logo de la V1 ou d'icône partagé par trop d'entreprises différentes est
+# générique : retiré à toutes, et à leurs offres.
+_PURGE_SQL = """
+WITH shared AS (
+    SELECT logo_hash
+      FROM offers_companies
+     WHERE logo_hash IS NOT NULL AND logo_origin IN ('v1', 'favicon')
+     GROUP BY logo_hash HAVING count(DISTINCT key) > $1
+), cleared AS (
+    UPDATE offers_companies AS c
+       SET logo_hash = NULL, logo_origin = NULL, logo_status = 'missing',
+           logo_next_attempt_at = NULL
+      FROM shared
+     WHERE c.logo_hash = shared.logo_hash AND c.logo_origin IN ('v1', 'favicon')
+    RETURNING c.id
+), offers AS (
+    UPDATE offers_offers AS o SET company_logo_hash = NULL
+      FROM cleared WHERE o.company_id = cleared.id
+)
+SELECT count(*) AS n FROM cleared
 """
 
 
@@ -170,6 +194,16 @@ class TortoiseCompanyRepository:
         return await OfferModel.filter(company_id=record.id).update(
             company_logo_hash=record.logo_hash
         )
+
+    async def domain_share(self, domain: str) -> int:
+        """Compté sur l'index du domaine."""
+        return await CompanyModel.filter(domain=domain).count()
+
+    async def purge_shared_logos(self, limit: int) -> int:
+        """Une requête : entreprises et offres ensemble."""
+        connection = connections.get("default")
+        rows = await connection.execute_query_dict(_PURGE_SQL, [limit])
+        return int(rows[0]["n"]) if rows else 0
 
     async def unlinked_offers(
         self, *, after: UUID | None, limit: int, active_only: bool

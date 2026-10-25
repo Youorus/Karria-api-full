@@ -160,6 +160,9 @@ from karria.modules.offers.domain import (
 )
 from karria.modules.offers.domain.companies import (
     CLAIM_LEASE,
+    COMPANY_DEADLINE_SECONDS,
+    MAX_COMPANIES_PER_DOMAIN,
+    MAX_SHARED_FALLBACK_LOGO,
     PLACEHOLDER_HASHES,
     CompanyRecord,
     CompanySighting,
@@ -2103,6 +2106,8 @@ class LogoReport:
     missing: int = 0
     retry: int = 0
     stored: int = 0
+    #: Entreprises dont le logo générique a été retiré après ce passage.
+    purged: int = 0
     #: Refus par raison (`too_small`, `placeholder`, `http`…), pour mesurer.
     rejections: dict[str, int] = field(default_factory=dict)
 
@@ -2151,7 +2156,14 @@ class FetchCompanyLogos:
 
         async def one(record: CompanyRecord) -> None:
             async with gate:
-                settled = await self._resolve(record, report)
+                try:
+                    async with asyncio.timeout(COMPANY_DEADLINE_SECONDS):
+                        settled = await self._resolve(record, report)
+                except TimeoutError:
+                    _count(report, "deadline")
+                    settled = settle_logo(
+                        record, LogoAttempt(transient_failure=True), now=self._clock.now()
+                    )
                 await self._companies.save_logo(settled)
             if settled.logo_status is LogoStatus.READY:
                 report.ready += 1
@@ -2161,6 +2173,8 @@ class FetchCompanyLogos:
                 report.retry += 1
 
         await asyncio.gather(*(one(record) for record in claimed))
+        if report.ready:
+            report.purged = await self._companies.purge_shared_logos(MAX_SHARED_FALLBACK_LOGO)
         if claimed:
             logger.info(
                 "offers.logos_fetched",
@@ -2169,6 +2183,7 @@ class FetchCompanyLogos:
                 missing=report.missing,
                 retry=report.retry,
                 stored=report.stored,
+                purged=report.purged,
                 rejections=report.rejections,
             )
         return report
@@ -2195,7 +2210,9 @@ class FetchCompanyLogos:
                 return settle_logo(
                     record, LogoAttempt(digest, candidate.origin), now=self._clock.now()
                 )
-        if record.domain:
+        if record.domain and await self._companies.domain_share(record.domain) <= (
+            MAX_COMPANIES_PER_DOMAIN
+        ):
             icons = [*await self._fetcher.site_icons(record.domain), *site_icon_urls(record.domain)]
             for url in dict.fromkeys(icons):
                 if url in tried or url in record.logo_rejected_urls:

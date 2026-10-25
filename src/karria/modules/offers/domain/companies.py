@@ -150,6 +150,18 @@ NON_COMPANY_DOMAINS: Final = frozenset(
         "gmail.com",
         "societe.com",
         "pagesjaunes.fr",
+        # Logiciels et plateformes de recrutement vus en production (2026-10-25).
+        "mytalentplug.com",
+        "lindustrie-recrute.fr",
+        "taleez.com",
+        "jobposting.pro",
+        "aplitrak.com",
+        "free-work.com",
+        "nous-recrutons.fr",
+        "crechemploi.fr",
+        "xtramile.io",
+        "staffsante.fr",
+        "aladom.fr",
     }
 )
 #: Suffixes publics à deux niveaux qu'on rencontre : `x.gouv.fr`,
@@ -565,6 +577,21 @@ def judge_logo(traits: ImageTraits, origin: LogoOrigin) -> LogoRejection | None:
         return LogoRejection.BLANK
     return None
 
+
+#: Un domaine porté par plus d'entreprises que cela n'est le site d'aucune :
+#: la colonne `website` de la V1 en est pleine (`microsoft.com` pour 632
+#: entreprises, `zhihu.com`, `dict.cc`…, mesuré le 2026-10-25). Son icône
+#: n'est alors jamais cherchée.
+MAX_COMPANIES_PER_DOMAIN: Final = 3
+#: Un logo de la V1 ou d'icône de site porté par plus d'entreprises (clés
+#: différentes) que cela est une image générique ou une erreur de la V1 :
+#: il est retiré à toutes (`purge_shared_logos`). Les logos des sources
+#: (franchises : « McDonald's Paris 15 ») ne sont pas concernés.
+MAX_SHARED_FALLBACK_LOGO: Final = 5
+#: Durée maximale de la recherche pour une entreprise : au-delà, l'essai
+#: compte comme un échec passager (un site qui égrène ses octets ne bloque
+#: plus tout un passage — constaté au premier rattrapage).
+COMPANY_DEADLINE_SECONDS: Final = 60.0
 
 #: Condensats d'images génériques constatées dans le stock (une même image
 #: servie pour des centaines d'entreprises sans rapport). Mesurés, jamais

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from datetime import timedelta
 from typing import Any
@@ -350,3 +351,47 @@ class TestIngestion:
 
         assert report.inserted == 1
         assert queue.logo_fetches == 0
+
+
+class TestGardeFous:
+    async def test_un_domaine_partage_n_est_le_site_de_personne(self) -> None:
+        env = Logos()
+        company = await env.add(domain="microsoft.com")
+        for i in range(3):
+            await env.add(key=f"autre {i}", domain="microsoft.com", logo_next_attempt_at=None)
+
+        await env.use_case.execute()
+
+        assert env.fetcher.fetched == []
+        assert env.get(company.id).logo_status is LogoStatus.MISSING
+
+    async def test_un_logo_trouve_declenche_la_purge_des_logos_partages(self) -> None:
+        env = Logos(images={INDEED: ok(b"indeed")}, traits={b"indeed": GOOD})
+        env.companies.purged = 7
+        await env.add(source_logo_url=INDEED)
+
+        report = await env.use_case.execute()
+
+        assert env.companies.purges == [5]
+        assert report.purged == 7
+
+    async def test_une_entreprise_trop_lente_est_reessayee_plus_tard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class Slow(ScriptedLogoFetcher):
+            async def fetch_image(self, url: str) -> FetchedImage:
+                await asyncio.sleep(1)
+                return await super().fetch_image(url)  # pragma: no cover - coupé avant
+
+        monkeypatch.setattr(
+            "karria.modules.offers.application.use_cases.COMPANY_DEADLINE_SECONDS", 0.01
+        )
+        env = Logos()
+        env.use_case._fetcher = Slow()  # type: ignore[attr-defined]
+        company = await env.add(source_logo_url=INDEED)
+
+        report = await env.use_case.execute()
+
+        assert report.rejections == {"deadline": 1}
+        assert env.get(company.id).logo_status is LogoStatus.PENDING
+        assert env.get(company.id).logo_attempts == 1

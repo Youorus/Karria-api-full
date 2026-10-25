@@ -742,6 +742,17 @@ class CompanyRepository(Protocol):
         """Enregistre l'issue d'une recherche et recopie le logo sur ses offres. Rend leur nombre."""
         ...
 
+    async def domain_share(self, domain: str) -> int:
+        """Combien d'entreprises portent ce domaine."""
+        ...
+
+    async def purge_shared_logos(self, limit: int) -> int:
+        """Retire les logos de la V1 ou d'icône portés par plus de `limit` entreprises.
+
+        Rend le nombre d'entreprises remises « sans logo » (et leurs offres avec).
+        """
+        ...
+
     async def unlinked_offers(
         self, *, after: UUID | None, limit: int, active_only: bool
     ) -> list[Offer]:

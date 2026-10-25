@@ -74,3 +74,42 @@ async def test_cycle_complet() -> None:
     assert again.company is not None
     assert again.company.logo_hash == "ab" * 16
     await companies.save_many([])
+
+
+async def test_domaines_et_logos_partages() -> None:
+    offers, companies = TortoiseOfferRepository(), TortoiseCompanyRepository()
+    shared = "cd" * 16
+    records = [
+        company(
+            key=f"v1 {i}",
+            domain="microsoft.com" if i < 2 else f"d{i}.fr",
+            logo_hash=shared,
+            logo_origin=LogoOrigin.V1,
+            logo_status=LogoStatus.READY,
+        )
+        for i in range(4)
+    ]
+    franchise = [
+        company(
+            key=f"mcdo {i}",
+            logo_hash="ef" * 16,
+            logo_origin=LogoOrigin.SOURCE,
+            logo_status=LogoStatus.READY,
+        )
+        for i in range(4)
+    ]
+    await companies.save_many([*records, *franchise])
+    offer = make_offer()
+    await offers.insert_many([offer])
+    await companies.link_offers([OfferLink(offer.source.value, offer.source_id, records[0].id)])
+
+    assert await companies.domain_share("microsoft.com") == 2
+    assert await companies.purge_shared_logos(5) == 0
+    assert await companies.purge_shared_logos(3) == 4
+
+    cleared = await offers.find(offer.id)
+    assert cleared is not None
+    assert cleared.company is not None
+    assert cleared.company.logo_hash is None
+    kept = await companies.find_by_keys(["mcdo 0"])
+    assert kept["mcdo 0"][0].logo_hash == "ef" * 16

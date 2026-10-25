@@ -110,6 +110,10 @@ def configure_logging(settings: ObservabilitySettings) -> None:
         third_party = logging.getLogger(name)
         third_party.handlers = []
         third_party.propagate = True
+    # httpx journalise chaque requête en INFO : des milliers par passage de
+    # logos, qui noieraient le journal. Ses avertissements restent.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

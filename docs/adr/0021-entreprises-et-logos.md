@@ -58,6 +58,19 @@ tiers à chaque carte du fil.
 8. **Contrat** : `company.logo` (128) et `company.logo_large` (256), ou `null`. Le nom `logo`
    de la V1 est gardé ; il change de sens (notre adresse, plus celle de la source).
 
+## Garde-fous ajoutés au premier rattrapage (2026-10-25)
+
+- La colonne `website` de la V1 est peu fiable : `microsoft.com` pour 632 entreprises,
+  `mytalentplug.com` (un logiciel de recrutement) pour 1 448. Un domaine porté par plus de
+  **3** entreprises n'est le site d'aucune : son icône n'est pas cherchée
+  (`MAX_COMPANIES_PER_DOMAIN`).
+- Un logo de la V1 ou d'icône porté par plus de **5** entreprises de clés différentes est
+  retiré à toutes après chaque passage (`purge_shared_logos`) ; les logos des sources ne le
+  sont jamais (une franchise partage légitimement le sien).
+- Délais **durs** : 15 s par requête entière (httpx ne borne que chaque lecture), 5 s par
+  résolution DNS, 60 s par entreprise. Sans eux, le premier rattrapage avait réglé deux
+  entreprises en onze minutes.
+
 ## Limites connues
 
 - Une icône **SVG** n'est pas rastérisée (aucune dépendance pour cela) : Lidl, par exemple,

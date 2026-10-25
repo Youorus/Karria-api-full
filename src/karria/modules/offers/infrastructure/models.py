@@ -138,7 +138,7 @@ class CompanyModel(BaseDBModel):
             "vit dans le bucket public `logos`, adressé par `logo_hash`."
         )
         unique_together = (("key", "domain"),)
-        indexes = (("logo_status", "logo_next_attempt_at"),)
+        indexes = (("logo_status", "logo_next_attempt_at"), ("domain",))
 
 
 class IndexOutboxModel(Model):

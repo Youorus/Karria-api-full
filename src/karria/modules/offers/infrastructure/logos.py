@@ -44,6 +44,11 @@ MAX_HTML_BYTES: Final = 512 * 1024
 CONNECT_TIMEOUT: Final = 5.0
 READ_TIMEOUT: Final = 10.0
 MAX_REDIRECTS: Final = 4
+#: Durée maximale d'une requête entière (les délais de httpx portent sur
+#: chaque lecture : un serveur qui égrène ses octets les déjouerait).
+REQUEST_DEADLINE: Final = 15.0
+#: Durée maximale d'une résolution DNS (un domaine mort peut la faire traîner).
+DNS_DEADLINE: Final = 5.0
 #: Politesse : au plus deux requêtes en même temps vers un même site, et un
 #: quart de seconde entre deux départs — un CDN ne le remarque pas, un petit
 #: site non plus.
@@ -142,7 +147,10 @@ class HttpLogoFetcher:
                 return 0, None, current
             gate = await self._hosts.enter(host)
             try:
-                status, payload, location = await self._once(current, limit, image=image)
+                async with asyncio.timeout(REQUEST_DEADLINE):
+                    status, payload, location = await self._once(current, limit, image=image)
+            except TimeoutError:
+                return 408, None, current
             finally:
                 gate.release()
             if location is None:
@@ -180,8 +188,10 @@ class HttpLogoFetcher:
 
     async def _safe(self, host: str) -> bool:
         try:
-            addresses = await asyncio.to_thread(self._resolver, host)
-        except OSError:
+            addresses = await asyncio.wait_for(
+                asyncio.to_thread(self._resolver, host), DNS_DEADLINE
+            )
+        except (OSError, TimeoutError):
             return False
         return bool(addresses) and all(is_public_address(a) for a in addresses)
 

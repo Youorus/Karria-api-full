@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from io import BytesIO
 
 import httpx
@@ -14,6 +16,7 @@ from karria.modules.offers.infrastructure import (
     HttpLogoFetcher,
     PillowLogoProcessor,
     StorageLogoStore,
+    logos,
 )
 from karria.modules.offers.infrastructure.logos import MAX_IMAGE_BYTES, is_public_address
 from karria.shared.config import StorageSettings
@@ -131,6 +134,27 @@ class TestTelechargement:
 
         table = {"https://x.fr/a": httpx.Response(302, headers={"location": "http://interne/"})}
         got = await fetcher(routes(table), resolver=resolve).fetch_image("https://x.fr/a")  # type: ignore[arg-type]
+        assert got.payload is None
+
+    async def test_une_requete_qui_traine_est_coupee(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def handle(request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(1)
+            return image()  # pragma: no cover - coupé avant
+
+        monkeypatch.setattr(logos, "REQUEST_DEADLINE", 0.01)
+        got = await fetcher(httpx.MockTransport(handle)).fetch_image("https://x.fr/l")
+        assert got.payload is None
+        assert not got.permanent
+
+    async def test_une_resolution_qui_traine_est_abandonnee(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def slow(_host: str) -> list[str]:
+            time.sleep(0.2)
+            return ["93.184.216.34"]
+
+        monkeypatch.setattr(logos, "DNS_DEADLINE", 0.01)
+        got = await fetcher(routes({}), resolver=slow).fetch_image("https://x.fr/l")
         assert got.payload is None
 
     async def test_un_nom_introuvable(self) -> None:
