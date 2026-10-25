@@ -34,6 +34,7 @@ from karria.modules.offers.domain import (
     Widening,
 )
 from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits
+from karria.shared.push import PushMessage
 
 # ---------------------------------------------------------------------
 # Le corpus
@@ -697,7 +698,7 @@ class JobQueue(Protocol):
 class UserNotifier(Protocol):
     """Port : prévenir une personne. Branché sur `devices` par `bootstrap/wiring.py`."""
 
-    async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
         """Envoie à tous les appareils joignables. Rend le nombre accepté."""
         ...
 

@@ -174,7 +174,8 @@ class TestNotification:
         )
         (sent,) = env.notifier.sent
         assert sent["user_id"] == USER
-        assert sent["data"]["offer_id"] == str(offer.id)
+        assert sent["data"]["type"] == "offer"
+        assert sent["data"]["id"] == str(offer.id)
         assert env.criteria.alerts == [(USER, NOW)]
         assert env.feed.notified == [(USER, [offer.id])]
 
@@ -219,4 +220,5 @@ class TestNotification:
         await env.run(*offers)
 
         (sent,) = env.notifier.sent
+        assert sent["data"]["type"] == "offers_feed"
         assert sent["data"]["count"] == "2"

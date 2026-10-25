@@ -30,6 +30,7 @@ from karria.modules.offers import get_user_notifier
 from karria.shared.auth import resolve_principal
 from karria.shared.config import AppSettings, Environment, Settings, StorageSettings
 from karria.shared.database import NullUnitOfWork
+from karria.shared.push import PushKind, PushMessage
 from karria.shared.storage import InMemoryObjectStorage
 
 pytestmark = pytest.mark.unit
@@ -84,7 +85,9 @@ class TestUserNotifier:
         )
         notifier = user_notifier_from_devices(send)
 
-        accepted = await notifier.notify(user, title="3 offres", body="…", data={"k": "v"})
+        accepted = await notifier.notify(
+            user, PushMessage(kind=PushKind.OFFERS_FEED, title="3 offres", body="…", count=3)
+        )
 
         assert isinstance(notifier, DevicesUserNotifier)
         assert accepted == 1

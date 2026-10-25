@@ -63,6 +63,7 @@ from karria.modules.offers.domain import (
     simhash64,
 )
 from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits, LogoStatus
+from karria.shared.push import PushMessage
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 PARIS = GeocodedPlace(
@@ -1008,9 +1009,11 @@ class RecordingNotifier:
         self.accepted = accepted
         self.sent: list[dict[str, Any]] = []
 
-    async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
         """Retient et rend `accepted`."""
-        self.sent.append({"user_id": user_id, "title": title, "body": body, "data": dict(data)})
+        self.sent.append(
+            {"user_id": user_id, "title": message.title, "body": message.body, "data": message.data}
+        )
         return self.accepted
 
 

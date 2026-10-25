@@ -71,6 +71,21 @@ class TestSend:
         assert tickets[2].error is PushError.UNKNOWN
         assert tickets[1].token == "ExponentPushToken[1]"  # noqa: S105
 
+    async def test_canal_categorie_et_pastille_partent_quand_ils_sont_dits(self) -> None:
+        ScriptedClient.script = {"data": [{"status": "ok", "id": "T1"}]}
+        notification = PushNotification(
+            title="Titre", body="Corps", data={}, channel="offres", category="offres", badge=1
+        )
+
+        await _gateway().send(
+            [PushEnvelope(token="ExponentPushToken[0]", notification=notification)]
+        )
+
+        _, payload = ScriptedClient.posted[0]
+        assert payload[0]["channelId"] == "offres"
+        assert payload[0]["categoryId"] == "offres"
+        assert payload[0]["badge"] == 1
+
     async def test_un_ticket_ok_sans_identifiant_est_un_echec(self) -> None:
         ScriptedClient.script = {"data": [{"status": "ok"}]}
         tickets = await _gateway().send(

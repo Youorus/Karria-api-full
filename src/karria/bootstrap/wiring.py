@@ -56,7 +56,6 @@ modèles possédés et choix (ADR-0015).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID
 
@@ -89,6 +88,7 @@ from karria.modules.offers import (
 )
 from karria.shared.auth import Principal, resolve_principal
 from karria.shared.logging import get_logger
+from karria.shared.push import PushMessage
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -165,9 +165,9 @@ class DevicesUserNotifier:
     def __init__(self, send: SendPushToUser) -> None:
         self._send = send
 
-    async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
         """Achemine, et rend le nombre d'appareils qui ont accepté."""
-        summary = await self._send.execute(user_id=user_id, title=title, body=body, data=data)
+        summary = await self._send.execute(user_id=user_id, message=message)
         return summary.accepted
 
 

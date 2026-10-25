@@ -23,6 +23,7 @@ from karria.modules.devices.api.schemas import (
 from karria.shared.auth import CurrentPrincipalDep
 from karria.shared.errors import EntityNotFoundError, ErrorCode, error_responses
 from karria.shared.http.dependencies import SettingsDep
+from karria.shared.push import PushKind, PushMessage
 
 router = APIRouter(prefix="/devices", tags=["Appareils"])
 
@@ -100,9 +101,12 @@ async def send_test_notification(
         raise EntityNotFoundError("Route", "test-notification")
     summary = await send.execute(
         user_id=principal.subject_id,
-        title="Karria vous entend",
-        body="Les notifications fonctionnent sur cet appareil.",
-        data={"type": "TEST"},
+        message=PushMessage(
+            kind=PushKind.OFFERS_FEED,
+            title="Karria vous entend",
+            body="Les notifications fonctionnent sur cet appareil.",
+            campaign="test",
+        ),
     )
     return TestNotificationResponse(
         targeted=summary.targeted, accepted=summary.accepted, rejected=summary.rejected

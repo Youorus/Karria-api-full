@@ -12,7 +12,9 @@
 - **Le fil** : `offers_feed_entries`, `offers_offer_states` (vue, ouverte,
   sauvegardée, candidatée, écartée).
 - **Les alertes** : matching inversé à l'indexation (collection Qdrant
-  `criteria`), notification groupée par `UserNotifier`.
+  `criteria`), notification groupée par `UserNotifier`, au contrat
+  `shared/push` (ADR-0022) : une seule offre → `offer` avec son `id` (elle
+  s'ouvre), plusieurs → `offers_feed` avec `count` (le fil s'ouvre).
 - **Le pilotage de la collecte** (`domain/steering.py`) : les cibles
   canoniques `terme × département × contrat` (`offers_scrape_targets`), les
   liens personne ↔ cible (`offers_target_demands`), la priorité et la

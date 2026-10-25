@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-24**
+**Dernière mise à jour : 2026-10-25**
 
 ## Où on en est
 
@@ -24,6 +24,20 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 « Proposée ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-25 (contrat des notifications push, ADR-0022)
+
+- **`shared/push`** : `PushKind` (9 types), `PushMessage` validé à la construction ;
+  `data` = `v` "1", `type`, `id`?, `count`?, `campaign`?, `url` ; hors `data` :
+  `channelId` = `categoryId` (`offres` / `documents` / `compte`), `badge` 1 pour les offres.
+  Miroir côté app : `karria_app/docs/contrat-notifications.md`.
+- **Émetteurs migrés** : alertes d'`offers` (1 offre → `offer`+`id`, plusieurs →
+  `offers_feed`+`count` ; avant : `NEW_OFFERS` sans `url`, l'app n'ouvrait rien),
+  route d'essai (`offers_feed`, `campaign: test`), `scripts/push_campaign.py`
+  (`offers_feed`, `campaign: v1-retour-2026`). Ports `UserNotifier.notify(user_id, message)`
+  et `SendPushToUser.execute(user_id=, message=)`.
+- **Aucun push CV/export** n'existe (exports synchrones) : noté dans `PLUS-TARD.md`.
+- `make check` vert (2 609 tests), nouveau code couvert à 100 %.
 
 ### Session du 2026-10-24, suite (module `documents` : modèles de CV, exports, ATS) — en production
 

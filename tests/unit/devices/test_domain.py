@@ -18,6 +18,7 @@ from karria.modules.devices.domain import (
     batched,
     is_expo_push_token,
 )
+from karria.shared.push import PushKind, PushMessage
 
 pytestmark = pytest.mark.unit
 
@@ -84,6 +85,21 @@ class TestPushNotification:
             PushNotification(title="t", body="", data={})
         with pytest.raises(ValueError, match="corps"):
             PushNotification(title="t", body="b" * 501, data={})
+
+    def test_traduit_un_message_du_contrat(self) -> None:
+        offer = uuid4()
+        message = PushMessage(kind=PushKind.OFFER, title="t", body="b", target_id=offer)
+
+        notification = PushNotification.from_message(message)
+
+        assert notification.data == message.data
+        assert notification.title == "t"
+        assert notification.body == "b"
+        assert (notification.channel, notification.category, notification.badge) == (
+            "offres",
+            "offres",
+            1,
+        )
 
     def test_le_decoupage_en_lots_de_cent(self) -> None:
         notification = PushNotification(title="t", body="b", data={})

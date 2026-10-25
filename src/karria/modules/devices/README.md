@@ -14,7 +14,11 @@ Le contexte **« par où joindre cette personne »**. Il sert le contrat
 - **La règle `push_enabled`** : jeton présent **et** permission accordée.
 - **Le service d'envoi** `SendPushToUser` : à tous les appareils
   joignables d'un compte, par lots de cent, tickets mémorisés, jetons morts
-  détachés (ADR-0012).
+  détachés (ADR-0012). Il ne prend qu'un `PushMessage` du contrat
+  `shared/push` (ADR-0022) et le traduit en message Expo : `data` du
+  contrat, `channelId` et `categoryId` (`offres` / `documents` / `compte`),
+  `badge` pour les offres. La route d'essai envoie un `offers_feed`
+  marqué `campaign: "test"`.
 - **La lecture des reçus** `CheckPushReceipts`, appelée par
   `scripts/push_receipts.py`.
 - **Des lectures de support** sur le dépôt : `main_device_of(user_id)`,

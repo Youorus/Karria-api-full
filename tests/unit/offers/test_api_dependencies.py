@@ -61,6 +61,7 @@ from karria.shared.config import (
 )
 from karria.shared.errors import AuthenticationError
 from karria.shared.llm import DisabledLanguageModel
+from karria.shared.push import PushKind, PushMessage
 from karria.shared.storage.memory import InMemoryObjectStorage
 
 pytestmark = pytest.mark.unit
@@ -111,7 +112,8 @@ class TestPorts:
     async def test_le_notificateur_par_defaut_n_envoie_rien(self) -> None:
         notifier = deps.get_user_notifier()
 
-        assert await notifier.notify(uuid4(), title="t", body="b", data={}) == 0
+        message = PushMessage(kind=PushKind.OFFERS_FEED, title="t", body="b")
+        assert await notifier.notify(uuid4(), message) == 0
 
 
 class TestCasDUsage:

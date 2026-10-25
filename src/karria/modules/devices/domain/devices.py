@@ -27,17 +27,14 @@ from enum import StrEnum
 from typing import Final
 from uuid import UUID
 
+from karria.shared.push import MAX_BODY_LENGTH, MAX_TITLE_LENGTH, PushMessage
+
 #: Format d'un jeton Expo. `ExponentPushToken[...]` est la forme actuelle ;
 #: `ExpoPushToken[...]` l'ancienne, encore émise par certains SDK.
 EXPO_PUSH_TOKEN_PATTERN: Final = re.compile(r"^Expo(?:nent)?PushToken\[[A-Za-z0-9_\-]{1,200}\]$")
 
 #: Plafond d'un envoi groupé chez Expo. Au-delà, l'API refuse le lot entier.
 MAX_PUSH_BATCH_SIZE: Final = 100
-
-#: Longueur au-delà de laquelle Expo tronque, et au-delà de laquelle un
-#: titre n'en est plus un.
-MAX_TITLE_LENGTH: Final = 120
-MAX_BODY_LENGTH: Final = 500
 
 
 def is_expo_push_token(value: str) -> bool:
@@ -151,12 +148,31 @@ class PushNotification:
 
     `data` est ce que l'app lit à l'ouverture de la notification — un
     écran, un identifiant. Des chaînes uniquement : c'est ce que les deux
-    plateformes garantissent de transmettre intact.
+    plateformes garantissent de transmettre intact. `channel` (canal
+    Android), `category` (catégorie iOS) et `badge` voyagent hors de `data`.
+
+    Les émetteurs ne la composent pas à la main : ils écrivent un
+    `PushMessage` (contrat de `shared/push`) et `from_message` le traduit.
     """
 
     title: str
     body: str
     data: Mapping[str, str]
+    channel: str | None = None
+    category: str | None = None
+    badge: int | None = None
+
+    @classmethod
+    def from_message(cls, message: PushMessage) -> PushNotification:
+        """La notification que décrit un message du contrat."""
+        return cls(
+            title=message.title,
+            body=message.body,
+            data=message.data,
+            channel=message.channel.value,
+            category=message.category,
+            badge=message.badge,
+        )
 
     def __post_init__(self) -> None:
         if not self.title.strip() or len(self.title) > MAX_TITLE_LENGTH:

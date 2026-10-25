@@ -21,6 +21,7 @@ from karria.modules.offers.domain import (
     uuid7,
 )
 from karria.modules.offers.domain.alerts import ALERT_BODY_OFFERS
+from karria.shared.push import PushKind
 
 pytestmark = pytest.mark.unit
 
@@ -81,7 +82,14 @@ class TestMessage:
         note = build_notification("Serveur · Paris", [offer])
         assert note.title == "Une nouvelle offre pour vous"
         assert note.body == "Serveur · Paris — Serveur H/F chez Le Bistrot"
-        assert note.data == {"type": "NEW_OFFERS", "offer_id": str(offer.id), "count": "1"}
+        assert note.kind is PushKind.OFFER
+        assert note.data == {
+            "v": "1",
+            "type": "offer",
+            "url": f"karria://offre/{offer.id}",
+            "id": str(offer.id),
+            "count": "1",
+        }
 
     def test_plusieurs_offres_sont_groupees_et_le_reste_compte(self) -> None:
         offers = [make_offer(f"Poste {i}", company=None) for i in range(ALERT_BODY_OFFERS + 2)]
@@ -89,6 +97,10 @@ class TestMessage:
         assert note.title == f"{len(offers)} nouvelles offres pour vous"
         assert note.body.endswith("… et 2 autres")
         assert not note.body.startswith(" —")
+        assert note.kind is PushKind.OFFERS_FEED
+        assert note.target_id is None
+        assert note.data["count"] == str(len(offers))
+        assert note.data["url"] == "karria://offres"
 
     def test_une_seule_offre_en_plus_est_au_singulier(self) -> None:
         offers = [make_offer() for _ in range(ALERT_BODY_OFFERS + 1)]

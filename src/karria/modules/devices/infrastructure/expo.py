@@ -61,17 +61,7 @@ class ExpoPushGateway:
 
     async def send(self, envelopes: Sequence[PushEnvelope]) -> Sequence[PushTicket]:
         """Soumet un lot et rend un ticket par enveloppe, dans l'ordre."""
-        payload = [
-            {
-                "to": envelope.token,
-                "title": envelope.notification.title,
-                "body": envelope.notification.body,
-                "data": dict(envelope.notification.data),
-                "sound": "default",
-                "priority": _PRIORITY,
-            }
-            for envelope in envelopes
-        ]
+        payload = [_message(envelope) for envelope in envelopes]
         try:
             response = await self._client.post_json("/push/send", payload)
         except OutboundError as exc:
@@ -126,3 +116,28 @@ def _ticket(token: str, entry: object) -> PushTicket:
 def _receipt(ticket_id: str, entry: object) -> PushReceipt:
     ok, error = _status_and_error(entry)
     return PushReceipt(ticket_id=ticket_id, ok=ok, error=error)
+
+
+def _message(envelope: PushEnvelope) -> dict[str, Any]:
+    """Un message Expo : `channelId`, `categoryId` et `badge` seulement s'ils sont dits.
+
+    Un `channelId` absent fait retomber Android sur le canal par défaut de
+    l'app (`defaut`) ; un canal inconnu de l'appareil, lui, ferait taire la
+    notification — c'est pourquoi l'app crée les trois canaux du contrat.
+    """
+    notification = envelope.notification
+    message: dict[str, Any] = {
+        "to": envelope.token,
+        "title": notification.title,
+        "body": notification.body,
+        "data": dict(notification.data),
+        "sound": "default",
+        "priority": _PRIORITY,
+    }
+    if notification.channel is not None:
+        message["channelId"] = notification.channel
+    if notification.category is not None:
+        message["categoryId"] = notification.category
+    if notification.badge is not None:
+        message["badge"] = notification.badge
+    return message

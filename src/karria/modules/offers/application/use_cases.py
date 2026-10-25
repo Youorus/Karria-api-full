@@ -1562,12 +1562,8 @@ class DispatchAlerts:
                 if _same_day(criteria.alerts_sent_on, now)
                 else 0,
             ):
-                notification = build_notification(criteria.criteria.summary(), high)
                 accepted = await self._notifier.notify(
-                    user_id,
-                    title=notification.title,
-                    body=notification.body,
-                    data=notification.data,
+                    user_id, build_notification(criteria.criteria.summary(), high)
                 )
                 if accepted:
                     sent += 1

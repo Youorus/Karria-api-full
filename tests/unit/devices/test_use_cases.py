@@ -23,8 +23,11 @@ from karria.modules.devices.application import (
 )
 from karria.modules.devices.domain import Platform, PushError, PushPermission, PushReceipt
 from karria.shared.database import NullUnitOfWork
+from karria.shared.push import PushKind, PushMessage
 
 pytestmark = pytest.mark.unit
+
+MESSAGE = PushMessage(kind=PushKind.OFFERS_FEED, title="t", body="b")
 
 
 @pytest.fixture
@@ -172,7 +175,8 @@ class TestSendPushToUser:
         )
 
         summary = await send.execute(
-            user_id=user, title="Bonjour", body="Une offre", data={"type": "X"}
+            user_id=user,
+            message=PushMessage(kind=PushKind.CV_READY, title="Bonjour", body="Ton CV est prêt"),
         )
 
         assert summary.accepted == 2
@@ -183,13 +187,15 @@ class TestSendPushToUser:
             "ExponentPushToken[a]",
             "ExponentPushToken[b]",
         ]
-        assert gateway.batches[0][0].notification.data == {"type": "X"}
+        sent = gateway.batches[0][0].notification
+        assert sent.data == {"v": "1", "type": "cv_ready", "url": "karria://cv"}
+        assert (sent.channel, sent.category, sent.badge) == ("documents", "documents", None)
         assert len(tickets.rows) == 2
 
     async def test_sans_appareil_rien_ne_part(
         self, send: SendPushToUser, gateway: FakePushGateway
     ) -> None:
-        summary = await send.execute(user_id=uuid4(), title="t", body="b")
+        summary = await send.execute(user_id=uuid4(), message=MESSAGE)
         assert summary.targeted == 0
         assert gateway.batches == []
 
@@ -217,7 +223,7 @@ class TestSendPushToUser:
         gateway.errors["ExponentPushToken[a]"] = PushError.DEVICE_NOT_REGISTERED
         gateway.errors["ExponentPushToken[b]"] = PushError.MESSAGE_RATE_EXCEEDED
 
-        summary = await send.execute(user_id=user, title="t", body="b")
+        summary = await send.execute(user_id=user, message=MESSAGE)
 
         assert summary.accepted == 0
         assert summary.rejected == 2
@@ -241,14 +247,10 @@ class TestSendPushToUser:
                 country=None,
             )
 
-        summary = await send.execute(user_id=user, title="t", body="b")
+        summary = await send.execute(user_id=user, message=MESSAGE)
 
         assert summary.accepted == 101
         assert [len(b) for b in gateway.batches] == [100, 1]
-
-    async def test_refuse_une_notification_vide(self, send: SendPushToUser) -> None:
-        with pytest.raises(ValueError, match="titre"):
-            await send.execute(user_id=uuid4(), title="", body="b")
 
 
 class TestCheckPushReceipts:
@@ -276,7 +278,7 @@ class TestCheckPushReceipts:
             info=sample_device_info(push_token="ExponentPushToken[b]"),
             country=None,
         )
-        await send.execute(user_id=user, title="t", body="b")
+        await send.execute(user_id=user, message=MESSAGE)
         gateway.receipts_by_ticket = {
             "ticket-1": PushReceipt(
                 ticket_id="ticket-1", ok=False, error=PushError.DEVICE_NOT_REGISTERED
@@ -315,7 +317,7 @@ class TestCheckPushReceipts:
             info=sample_device_info(push_token="ExponentPushToken[a]"),
             country=None,
         )
-        await send.execute(user_id=user, title="t", body="b")
+        await send.execute(user_id=user, message=MESSAGE)
         gateway.receipts_by_ticket = {
             "ticket-1": PushReceipt(
                 ticket_id="ticket-1", ok=False, error=PushError.MESSAGE_TOO_BIG
@@ -361,7 +363,7 @@ class TestCheckPushReceiptsSansRecu:
             info=sample_device_info(push_token="ExponentPushToken[a]"),
             country=None,
         )
-        await send.execute(user_id=user, title="t", body="b")
+        await send.execute(user_id=user, message=MESSAGE)
         clock.advance(RECEIPT_DELAY + timedelta(seconds=1))
 
         assert await check.execute() == 0

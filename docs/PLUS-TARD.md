@@ -427,3 +427,12 @@ Son budget (40 recherches/h) est consommé par les premières cibles de chaque
 passage ; les cibles moins prioritaires ne passent jamais par LinkedIn. Un
 tourniquet par site dans le planificateur le corrigerait si la couverture
 LinkedIn de la longue traîne s'avère utile.
+
+### Les types `cv_ready`, `cv_export`, `template(s)`, `assistant`, `account` n'ont pas d'émetteur
+
+Le contrat push v1 (ADR-0022) les définit, l'app les route, mais **aucun
+module ne les envoie** au 2026-10-25 : l'export d'un CV est synchrone
+(201 en 1,5 à 3,9 s), la finalisation du CV aussi. **Déclencheur :** le
+premier travail long (export en file, `ats_explain` long, adaptation à une
+offre) — il appelle un port « prévenir » branché sur `devices`, avec
+`PushMessage(kind=PushKind.CV_EXPORT, target_id=export_id, …)`.

@@ -125,7 +125,15 @@ class TestTestNotification:
 
         assert response.status_code == 200
         assert response.json() == {"targeted": 2, "accepted": 1, "rejected": 1}
-        assert devices_env.gateway.batches[0][0].notification.title == "Karria vous entend"
+        sent = devices_env.gateway.batches[0][0].notification
+        assert sent.title == "Karria vous entend"
+        assert sent.data == {
+            "v": "1",
+            "type": "offers_feed",
+            "url": "karria://offres",
+            "campaign": "test",
+        }
+        assert (sent.channel, sent.category, sent.badge) == ("offres", "offres", 1)
 
     async def test_exige_la_session(self, client: AsyncClient) -> None:
         response = await client.post("/api/v1/devices/me/test-notification")

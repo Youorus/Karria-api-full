@@ -17,7 +17,7 @@ prise.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final
@@ -40,6 +40,7 @@ from karria.modules.devices.domain import (
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
 from karria.shared.logging import get_logger
+from karria.shared.push import PushMessage
 
 logger = get_logger(__name__)
 
@@ -162,11 +163,9 @@ class SendPushToUser:
         self._clock = clock
         self._uow = uow
 
-    async def execute(
-        self, *, user_id: UUID, title: str, body: str, data: Mapping[str, str] | None = None
-    ) -> PushDispatchSummary:
-        """Compose, envoie par lots de 100, mémorise les tickets, détache les morts."""
-        notification = PushNotification(title=title, body=body, data=dict(data or {}))
+    async def execute(self, *, user_id: UUID, message: PushMessage) -> PushDispatchSummary:
+        """Traduit le message, envoie par lots de 100, mémorise les tickets, détache les morts."""
+        notification = PushNotification.from_message(message)
         targets = await self._devices.push_targets_of_user(user_id)
         if not targets:
             logger.debug("devices.push_skipped_no_target", user_id=str(user_id))

@@ -16,7 +16,7 @@ from scripts.push_campaign import (
     notification,
 )
 
-from karria.modules.devices.domain import MAX_BODY_LENGTH, MAX_TITLE_LENGTH
+from karria.shared.push import MAX_BODY_LENGTH, MAX_TITLE_LENGTH, PushKind
 
 pytestmark = pytest.mark.unit
 
@@ -30,7 +30,13 @@ def test_le_message_tient_dans_les_bornes_du_domaine_et_tutoie():
     assert len(message.title) <= MAX_TITLE_LENGTH
     assert len(message.body) <= MAX_BODY_LENGTH
     assert "Ton " in message.body
-    assert message.data == {"screen": "feed", "campaign": CAMPAIGN_ID}
+    assert message.kind is PushKind.OFFERS_FEED
+    assert message.data == {
+        "v": "1",
+        "type": "offers_feed",
+        "url": "karria://offres",
+        "campaign": CAMPAIGN_ID,
+    }
 
 
 @pytest.mark.parametrize(

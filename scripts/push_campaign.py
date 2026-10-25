@@ -41,12 +41,12 @@ from typing import Any, Final
 from karria.bootstrap.orm import TORTOISE_ORM
 from karria.bootstrap.wiring import build_user_notifier
 from karria.modules.devices.api.dependencies import get_device_repository
-from karria.modules.devices.domain import PushNotification
 from karria.modules.identity.api.dependencies import get_user_repository
 from karria.modules.identity.domain import EmailAddress, InvalidEmailError
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.logging import configure_logging, get_logger
+from karria.shared.push import PushKind, PushMessage
 
 logger = get_logger(__name__)
 
@@ -58,12 +58,13 @@ CAMPAIGN_BODY: Final = (
 )
 
 
-def notification() -> PushNotification:
-    """Le message de la campagne, validé par les bornes du domaine (titre et corps bornés)."""
-    return PushNotification(
+def notification() -> PushMessage:
+    """Le message de la campagne, au contrat push : il ouvre le fil, et se mesure par `campaign`."""
+    return PushMessage(
+        kind=PushKind.OFFERS_FEED,
         title=CAMPAIGN_TITLE,
         body=CAMPAIGN_BODY,
-        data={"screen": "feed", "campaign": CAMPAIGN_ID},
+        campaign=CAMPAIGN_ID,
     )
 
 
@@ -142,9 +143,7 @@ async def _run(
             counts["to_send"] += 1
             if not send:
                 continue
-            accepted = await notifier.notify(
-                user.id, title=message.title, body=message.body, data=message.data
-            )
+            accepted = await notifier.notify(user.id, message)
             counts["sent"] += 1
             counts["devices_accepted"] += accepted
             if accepted:

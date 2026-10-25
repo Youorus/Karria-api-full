@@ -14,12 +14,12 @@ quelques fois par jour. Ce qu'on change : un seul envoi groupé par passage
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final
 
 from karria.modules.offers.domain.offers import Offer
 from karria.modules.offers.domain.ranking import QUALITY_HIGH_SCORE
+from karria.shared.push import PushKind, PushMessage
 
 #: Similarité cosinus minimale entre l'offre et les critères : un pré-filtre
 #: large et bon marché (e5 place deux textes du même domaine au-dessus de
@@ -37,15 +37,6 @@ ALERT_BODY_OFFERS: Final = 3
 ALERT_MAX_OFFER_AGE: Final = timedelta(days=3)
 
 
-@dataclass(frozen=True, slots=True)
-class AlertNotification:
-    """Ce qu'on envoie : un titre, un corps, et de quoi ouvrir le fil."""
-
-    title: str
-    body: str
-    data: dict[str, str]
-
-
 def may_notify(*, now: datetime, last_alert_at: datetime | None, sent_today: int) -> bool:
     """Le rythme : intervalle minimal et plafond journalier."""
     if sent_today >= ALERT_DAILY_MAX:
@@ -58,8 +49,14 @@ def is_fresh(offer: Offer, *, now: datetime) -> bool:
     return now - offer.published_at <= ALERT_MAX_OFFER_AGE
 
 
-def build_notification(criteria_summary: str, offers: Sequence[Offer]) -> AlertNotification:
-    """Un message groupé, en français, qui nomme les premières offres."""
+def build_notification(criteria_summary: str, offers: Sequence[Offer]) -> PushMessage:
+    """Un message groupé, en français, qui nomme les premières offres.
+
+    Une seule offre : la notification ouvre **cette** offre (`offer`, au
+    contrat de `shared/push`). Plusieurs : elle ouvre le fil (`offers_feed`),
+    où elles sont toutes en tête — ouvrir la première ferait croire qu'il
+    n'y en a qu'une.
+    """
     count = len(offers)
     title = "Une nouvelle offre pour vous" if count == 1 else f"{count} nouvelles offres pour vous"
     lines = [_line(offer) for offer in offers[:ALERT_BODY_OFFERS]]
@@ -68,11 +65,11 @@ def build_notification(criteria_summary: str, offers: Sequence[Offer]) -> AlertN
             f"… et {count - ALERT_BODY_OFFERS} autre{'s' if count - ALERT_BODY_OFFERS > 1 else ''}"
         )
     body = f"{criteria_summary} — " + " · ".join(lines) if criteria_summary else " · ".join(lines)
-    return AlertNotification(
-        title=title,
-        body=body[:240],
-        data={"type": "NEW_OFFERS", "offer_id": str(offers[0].id), "count": str(count)},
-    )
+    if count == 1:
+        return PushMessage(
+            kind=PushKind.OFFER, title=title, body=body[:240], target_id=offers[0].id, count=1
+        )
+    return PushMessage(kind=PushKind.OFFERS_FEED, title=title, body=body[:240], count=count)
 
 
 def _line(offer: Offer) -> str:

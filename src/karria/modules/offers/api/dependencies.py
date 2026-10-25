@@ -9,7 +9,6 @@ commandes (`api/tasks.py`, `scripts/offers.py`), hors requête, via `build_*`.
 from __future__ import annotations
 
 import hmac
-from collections.abc import Mapping
 from typing import Annotated
 from uuid import UUID
 
@@ -108,6 +107,7 @@ from karria.shared.http.dependencies import (
 )
 from karria.shared.llm import build_language_model
 from karria.shared.logging import get_logger
+from karria.shared.push import PushMessage
 from karria.shared.queue import App as QueueApp
 from karria.shared.storage import Bucket, ObjectStorage
 
@@ -207,10 +207,9 @@ def get_search_dialogue(llm: LanguageModelDep) -> SearchDialogue:
 class SilentNotifier:
     """Le port `UserNotifier` tant que `bootstrap` ne l'a pas branché : n'envoie rien, le dit."""
 
-    async def notify(self, user_id: UUID, *, title: str, body: str, data: Mapping[str, str]) -> int:
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
         """Journalise et rend 0."""
-        _ = title, body, data
-        logger.warning("offers.notifier_unwired", user_id=str(user_id))
+        logger.warning("offers.notifier_unwired", user_id=str(user_id), kind=message.kind.value)
         return 0
 
 
