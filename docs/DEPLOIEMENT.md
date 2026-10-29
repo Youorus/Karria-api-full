@@ -108,8 +108,14 @@ affiché), qui alimente aussi les conteneurs ponctuels :
 
 ```sh
 docker run --rm --network dokploy-network --env-file /root/karria-api.env \
-  karria-api-ujqvaj:latest aerich upgrade            # ou : python -m scripts.offers reconcile
+  karria-worker-y9xkmo:latest aerich upgrade         # ou : python -m scripts.offers reconcile
 ```
+
+L'image est la même pour les trois applications ; depuis le 2026-10-26 seul le
+tag `karria-worker-y9xkmo:latest` subsiste (`docker image ls | grep karria`
+donne l'identifiant courant — l'API tourne sur le même identifiant). Les
+conteneurs ponctuels s'appuient dessus, pas sur `karria-api-ujqvaj:latest`,
+qui n'existe plus.
 
 Les appels à l'API Dokploy passent par le cookie `/root/.dokploy-cookie`
 (domaine `localhost`, donc `http://localhost:3000/api/...`) et l'aide
@@ -172,3 +178,20 @@ sert `/opt/karria/models/e5-base-int8`, produit par
 - **Collecteur** : LinkedIn est dans les sites par défaut (`COLLECTOR__SITES` le
   retire au besoin) ; ses réglages propres (`COLLECTOR__SITE_HOURLY_BUDGETS`,
   `…_SITE_PAUSE_SECONDS`, `…_BLOCKED_COOLDOWN_SECONDS`) ont des défauts prudents.
+
+## Encaissements Stripe (ADR-0023, 2026-10-29)
+
+- Variables de l'API : `PAYMENTS__SECRET_KEY`, `PAYMENTS__WEBHOOK_SECRET`,
+  `PAYMENTS__RETURN_URL`. **Aucune n'est posée** : les routes `/payments`
+  répondent `503` tant que Marc n'a pas tranché la question de l'achat intégré
+  (ADR-0023). Pas de mode démonstration.
+- Le webhook Stripe vise `https://api.karria.fr/api/v1/payments/webhook`
+  (événement `checkout.session.completed`) ; le secret du webhook va dans
+  `PAYMENTS__WEBHOOK_SECRET`.
+
+## Mesure de la recherche en production (relecture du 2026-10-29)
+
+`python -m scripts.offers_eval --runs 2 --judge --only <indices>` dans un
+conteneur ponctuel (image ci-dessus, `--env-file /root/karria-api.env`,
+`-v /root/karria-eval/out:/out --out /out/<nom>.jsonl`). Rien n'est écrit en
+base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.

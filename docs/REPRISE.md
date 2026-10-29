@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-25**
+**Dernière mise à jour : 2026-10-29**
 
 ## Où on en est
 
@@ -23,7 +23,65 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
+| `payments` | **en production, désactivé** (ADR-0023 « Proposée » ; sans `PAYMENTS__SECRET_KEY` → 503) | `POST /payments/checkout-session`, `GET /payments/status/{id}` (session requise), `POST /payments/webhook` (signature Stripe) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-29 (relecture Fable avant lancement — défauts corrigés, mesures)
+
+**Contexte** : relecture critique du travail d'Opus (offres, documents, logos, push,
+AdMob, performance de l'app). Tout est commité sur `main` des deux dépôts.
+
+**Défauts corrigés (par gravité)** :
+
+1. **Bloquant — `payments` (commit `5b9b71c`, en production depuis le 26/10)** : routes
+   sans authentification, `return_url` libre (relais d'hameçonnage), mode démonstration
+   qui rendait « payé » pour tout `demo_…`, `os.getenv`, `HTTPException`, `make check`
+   rouge. Réécrit en quatre couches (ADR-0023), session exigée, retour borné à karria.fr /
+   `karria://`, pas de démonstration, tests. Sans clé en prod → 503 (voulu).
+2. **Haut — dialogue** : Gemini omettait `criteria` sur **9 demandes sur 20** en répondant
+   « c'est noté, je recherche… » — rien ne cherchait (mesuré en prod, `review_before`).
+   `criteria` est maintenant exigé par le schéma, redemandé une fois s'il manque, et le
+   domaine pose la question du métier au lieu d'une fausse confirmation.
+3. **Haut — ingestion concurrente** : `UniqueViolation (source, source_id)` quand le
+   balayage nocturne et le passage de 3 min se recouvrent (lot entier rejoué), et
+   `UniqueViolation (key, domain)` dans `save_many` (entreprises du lot non rattachées).
+   Insertion idempotente ; `save_many` rend l'identifiant qui a gagné et les offres s'y
+   rattachent.
+4. **Haut — `fetch_logos`** : `retry=2` sur un travail qui se re-diffère sous le même
+   `queueing_lock` → `UniqueViolation (queueing_lock)`, travail bloqué « en cours »
+   jusqu'à `retry_stalled`. Le retry est retiré (le périodique est la reprise).
+5. **Moyen — documents** : la variante « optimisée ATS » proposée sans être mesurée (elle
+   pouvait perdre des points) → rendue et notée, proposée seulement si elle gagne ; polices
+   relues dans le bucket à chaque export et téléchargeables depuis Internet pendant un
+   rendu → cache par processus, `download=False` au rendu, `https` seul ; PDF > 20 Mio
+   tronqué au lieu d'être refusé ; aucune borne à l'ingestion (pages, surface, images) ;
+   lecture pdfminer sur la boucle ; panne Gotenberg = version `FAILED` définitive (→ se
+   retente) ; débordement sur deux pages rendu comprimé ; identifiants de formes épuisables,
+   famille de police non échappée, rôle multiple non-chaîne, schéma LLM non borné.
+6. **Sécurité — logos** : la résolution DNS est épinglée (la requête joint l'IP vérifiée,
+   nom dans `Host` et SNI) : plus de fenêtre de rebinding.
+7. **Perf — recherche** : `find_many(light=True)` sans description pour le rappel (1 500
+   candidats = 3 Mo → 60 Ko) et les comptages d'élargissement (jusqu'à 9 par tour) ;
+   `DispatchAlerts` sans N+1 sur le fil.
+
+**Mesures en production (20 demandes réelles, juge informé, 2 passages)** — voir
+`docs/DEPLOIEMENT.md` § Mesure :
+
+| | avant (`review_before`) | après (`review_after`) |
+|---|---|---|
+| demandes cherchables au 1er tour | **11 / 20** | AFTER_SEARCHABLE |
+| précision@10 jugée | 97,0 % (98/101 ; FT 94 %, HW/Indeed/LinkedIn 100 %) | AFTER_PRECISION |
+| recherche totale p50 / p95 | 217 / 688 ms | AFTER_SEARCH |
+| dont base (lecture des candidats) p50 / p95 | 84 / 129 ms | AFTER_DB |
+| dont index Qdrant p50 / p95 | 46 / 397 ms | AFTER_INDEX |
+
+Corpus au 29/10 : **196 196 offres actives canoniques** (FT 158 k, Indeed 21 k, HelloWork
+13,5 k, LinkedIn 3 k), index Qdrant à l'identique, outbox vide, collecte FT toutes les 3 min
+et JobSpy en continu (collecteur, worker, API en service).
+
+**Pour Marc** : valider l'ADR-0023 et trancher l'achat intégré (règle 3.1.1) ; côté app, les
+modifications non commitées (café Stripe, écran d'accueil, annonce dans le détail d'une
+offre) sont les siennes et n'ont pas été touchées — voir `karria_app/docs/REPRISE.md`.
 
 ### Session du 2026-10-25 (contrat des notifications push, ADR-0022)
 

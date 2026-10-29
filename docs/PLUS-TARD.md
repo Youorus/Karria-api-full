@@ -436,3 +436,43 @@ module ne les envoie** au 2026-10-25 : l'export d'un CV est synchrone
 premier travail long (export en file, `ats_explain` long, adaptation à une
 offre) — il appelle un port « prévenir » branché sur `devices`, avec
 `PushMessage(kind=PushKind.CV_EXPORT, target_id=export_id, …)`.
+
+## Relecture du 2026-10-29 (Fable) — ce qui reste après les correctifs
+
+### Le DOCX est pénalisé pour ses propres tableaux de mise en page
+
+`docx_renderer.py` pose chaque bande dans un tableau sans bordure, même à une
+colonne ; `ats_reader.read_docx` compte les `<w:tbl>` et `_layout` retire un
+point à chaque DOCX. **Ce qu'il faudrait :** rendre une bande à une colonne sans
+tableau, ou ne pas compter ceux qu'on produit. **Déclencheur :** la revue du
+score ATS par Marc.
+
+### La galerie des modèles lit une version par modèle
+
+`GET /templates/` appelle `get_version` par modèle (plus trois signatures d'URL) :
+un N+1 sans conséquence à trois modèles, visible à trente. **Ce qu'il
+faudrait :** `versions_by_ids`, ou les clés d'aperçu sur `TemplateModel`.
+
+### Le plancher de 250 mots du contrôle « contenu » pénalise les CV juniors
+
+Un CV d'une page en français en a souvent 150 à 250. **Ce qu'il faudrait :**
+150, ou un barème selon l'expérience. **Déclencheur :** le premier retour d'une
+personne sur son score.
+
+### LinkedIn ne voit que les cibles prioritaires (inchangé)
+
+Voir « Entreprises et logos » ci-dessus ; 3 001 offres LinkedIn actives au
+29/10, aucun blocage.
+
+### Le comptage exact du fil « toutes les offres »
+
+`page_active` compte les offres actives à chaque page (80 ms sur 243 000 lignes,
+balayage parallèle) ; il croît avec le corpus. **Ce qu'il faudrait :** une
+estimation (`reltuples`) ou un compte mis en cache une minute.
+**Déclencheur :** 500 000 offres, ou un p95 du fil au-dessus de 300 ms.
+
+### L'aiguillage du bus pour les paiements
+
+`HandleWebhook` journalise et ne livre rien (ADR-0023). **Déclencheur :** la
+décision de Marc sur l'achat intégré ; alors un événement `PaymentCompleted`
+sur le bus, consommé par `documents`.
