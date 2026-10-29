@@ -83,6 +83,46 @@ def to_unsigned(value: int) -> int:
 # ---------------------------------------------------------------------
 
 
+#: Les colonnes d'une offre « légère » : tout sauf la description (voir
+#: `OfferRepository.find_many`). `company_id` et `company_logo_hash` sont
+#: écrites par le rattachement, pas par `_columns`, mais se lisent ici.
+LIGHT_FIELDS: tuple[str, ...] = (
+    "id",
+    "source",
+    "source_id",
+    "title",
+    "company_name",
+    "company_logo_url",
+    "company_url",
+    "company_logo_hash",
+    "location_label",
+    "city",
+    "postal_code",
+    "department_code",
+    "latitude",
+    "longitude",
+    "contract_type",
+    "remote",
+    "schedule",
+    "experience",
+    "salary_min_monthly",
+    "salary_max_monthly",
+    "salary_raw",
+    "published_at",
+    "first_seen_at",
+    "last_seen_at",
+    "apply_url",
+    "origin_url",
+    "is_active",
+    "content_hash",
+    "simhash",
+    "duplicate_of",
+    "indexed_version",
+    "indexed_hash",
+    "indexed_at",
+)
+
+
 def _to_offer(row: OfferModel) -> Offer:
     location = (
         Location(
@@ -184,9 +224,11 @@ class TortoiseOfferRepository:
     """Implémente `OfferRepository`."""
 
     async def insert_many(self, offers: Sequence[Offer]) -> None:
-        """Insère en une requête."""
+        """Insère en une requête ; une (source, identifiant) déjà écrite par un lot concurrent est ignorée."""
         if offers:
-            await OfferModel.bulk_create([OfferModel(id=o.id, **_columns(o)) for o in offers])
+            await OfferModel.bulk_create(
+                [OfferModel(id=o.id, **_columns(o)) for o in offers], ignore_conflicts=True
+            )
 
     async def save(self, offer: Offer) -> None:
         """Réécrit tout."""
@@ -197,12 +239,18 @@ class TortoiseOfferRepository:
         row = await OfferModel.get_or_none(id=offer_id)
         return None if row is None else _to_offer(row)
 
-    async def find_many(self, offer_ids: Sequence[UUID]) -> dict[UUID, Offer]:
-        """Par identifiants."""
+    async def find_many(
+        self, offer_ids: Sequence[UUID], *, light: bool = False
+    ) -> dict[UUID, Offer]:
+        """Par identifiants ; `light` ne lit pas la colonne `description`."""
         if not offer_ids:
             return {}
-        rows = await OfferModel.filter(id__in=list(offer_ids))
-        return {row.id: _to_offer(row) for row in rows}
+        query = OfferModel.filter(id__in=list(offer_ids))
+        if not light:
+            rows = await query
+            return {row.id: _to_offer(row) for row in rows}
+        values = await query.values(*LIGHT_FIELDS)
+        return {row["id"]: _to_offer(OfferModel(description="", **row)) for row in values}
 
     async def find_by_sources(
         self, keys: Sequence[tuple[str, str]]

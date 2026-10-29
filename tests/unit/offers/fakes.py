@@ -240,9 +240,14 @@ class InMemoryOfferRepository:
         """Par identifiant."""
         return self.offers.get(offer_id)
 
-    async def find_many(self, offer_ids: Sequence[UUID]) -> dict[UUID, Offer]:
-        """Par identifiants."""
-        return {i: self.offers[i] for i in offer_ids if i in self.offers}
+    async def find_many(
+        self, offer_ids: Sequence[UUID], *, light: bool = False
+    ) -> dict[UUID, Offer]:
+        """Par identifiants ; `light` rend la description vide, comme la base."""
+        found = {i: self.offers[i] for i in offer_ids if i in self.offers}
+        if light:
+            return {i: dataclasses.replace(o, description="") for i, o in found.items()}
+        return found
 
     async def find_by_sources(
         self, keys: Sequence[tuple[str, str]]
@@ -1045,10 +1050,19 @@ class InMemoryCompanyRepository:
                 found.setdefault(record.key, []).append(record)
         return found
 
-    async def save_many(self, records: Sequence[CompanyRecord]) -> None:
-        """Remplace."""
+    async def save_many(self, records: Sequence[CompanyRecord]) -> dict[UUID, UUID]:
+        """Remplace ; une entreprise de même (clé, domaine) déjà là gagne, comme en base."""
+        persisted: dict[UUID, UUID] = {}
+        by_identity = {(r.key, r.domain): r.id for r in self.companies.values()}
         for record in records:
+            winner = by_identity.get((record.key, record.domain))
+            if winner is not None and winner != record.id and record.id not in self.companies:
+                persisted[record.id] = winner
+                continue
             self.companies[record.id] = record
+            by_identity[(record.key, record.domain)] = record.id
+            persisted[record.id] = record.id
+        return persisted
 
     async def link_offers(self, links: Sequence[OfferLink]) -> int:
         """Ne compte que ce qui change."""

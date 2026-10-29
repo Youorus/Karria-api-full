@@ -149,18 +149,39 @@ class TortoiseCompanyRepository:
             found.setdefault(row.key, []).append(_to_record(row))
         return found
 
-    async def save_many(self, records: Sequence[CompanyRecord]) -> None:
-        """Insère les nouvelles en un lot, met à jour les autres."""
+    async def save_many(self, records: Sequence[CompanyRecord]) -> dict[UUID, UUID]:
+        """Insère les nouvelles en un lot (sans écraser une concurrente), met à jour les autres.
+
+        Une entreprise que deux lots créent en même temps n'est écrite qu'une
+        fois : l'insertion ignore le conflit sur (clé, domaine), puis relit
+        l'identifiant qui a gagné pour que l'appelant rattache ses offres au
+        bon. Rend `identifiant demandé → identifiant en base`.
+        """
+        persisted: dict[UUID, UUID] = {r.id: r.id for r in records}
         if not records:
-            return
+            return persisted
         ids = [r.id for r in records]
         existing = set(await CompanyModel.filter(id__in=ids).values_list("id", flat=True))
-        fresh = [CompanyModel(id=r.id, **_values(r)) for r in records if r.id not in existing]
+        fresh = [r for r in records if r.id not in existing]
         if fresh:
-            await CompanyModel.bulk_create(fresh, batch_size=1_000)
+            await CompanyModel.bulk_create(
+                [CompanyModel(id=r.id, **_values(r)) for r in fresh],
+                batch_size=1_000,
+                ignore_conflicts=True,
+            )
+            winners = await CompanyModel.filter(
+                key__in=list({r.key for r in fresh}),
+                domain__in=list({r.domain or "" for r in fresh}),
+            ).values("id", "key", "domain")
+            by_identity = {(w["key"], w["domain"]): w["id"] for w in winners}
+            for record in fresh:
+                winner = by_identity.get((record.key, record.domain or ""))
+                if winner is not None and winner != record.id:
+                    persisted[record.id] = winner
         for record in records:
             if record.id in existing:
                 await CompanyModel.filter(id=record.id).update(**_values(record))
+        return persisted
 
     async def link_offers(self, links: Sequence[OfferLink]) -> int:
         """Une mise à jour pour tout le lot ; ne touche que les lignes qui changent."""

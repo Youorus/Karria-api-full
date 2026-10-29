@@ -172,3 +172,26 @@ class TestIntention:
     def test_la_question_de_repli_tutoie(self) -> None:
         outcome = decide(DialogueProposal(reply="", criteria=make_criteria(job_titles=[])), None)
         assert "cherches-tu" in outcome.reply
+
+
+class TestRechercheSansCriteres:
+    """Le modèle classe `search` mais n'a rien transcrit : on demande, on ne fait pas semblant."""
+
+    def test_sans_recherche_precedente_on_pose_la_question_du_metier(self) -> None:
+        outcome = decide(
+            DialogueProposal(
+                reply="C'est noté, je recherche.", criteria=None, intent=Intent.SEARCH
+            ),
+            None,
+        )
+        assert outcome.status is DialogueStatus.CLARIFY
+        assert "métier" in outcome.reply
+        assert outcome.criteria is None
+
+    def test_avec_une_recherche_precedente_complete_on_la_relance(self) -> None:
+        previous = criteria()
+        outcome = decide(
+            DialogueProposal(reply="Je relance.", criteria=None, intent=Intent.REFINE), previous
+        )
+        assert outcome.status is DialogueStatus.SEARCH
+        assert outcome.criteria == previous

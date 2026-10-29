@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -404,3 +405,31 @@ class TestGardeFous:
         assert report.rejections == {"deadline": 1}
         assert env.get(company.id).logo_status is LogoStatus.PENDING
         assert env.get(company.id).logo_attempts == 1
+
+
+class TestEcritureConcurrente:
+    """Deux lots créent la même entreprise en même temps : celle qui est en base gagne."""
+
+    async def test_les_offres_se_rattachent_a_l_entreprise_qui_a_gagne(self) -> None:
+        class Blind(InMemoryCompanyRepository):
+            """Ne voit pas l'entreprise à la lecture (l'autre lot l'écrit juste après)."""
+
+            async def find_by_keys(self, keys: Sequence[str]) -> dict[str, list[CompanyRecord]]:
+                return {}
+
+        companies = Blind()
+        winner = CompanyRecord(id=uuid4(), key="decathlon", name="Decathlon", domain="decathlon.fr")
+        companies.companies[winner.id] = winner
+        attach = AttachCompanies(companies=companies, clock=FixedClock())
+
+        report = await attach.execute(
+            [
+                CompanySighting(
+                    key="decathlon", name="Decathlon", domain="decathlon.fr", offer=("indeed", "1")
+                )
+            ]
+        )
+
+        assert report.linked == 1
+        assert companies.links[("indeed", "1")] == winner.id
+        assert len(companies.companies) == 1

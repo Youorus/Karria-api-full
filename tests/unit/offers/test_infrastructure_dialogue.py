@@ -94,3 +94,28 @@ class TestLecture:
         for error in (LlmUnavailableError("HTTP 503", status=503), LlmCapabilityError("non")):
             with pytest.raises(ModelUnavailableError):
                 await propose(FakeLanguageModel(error))
+
+
+class TestCriteresManquants:
+    def test_le_schema_exige_criteria_meme_nul(self) -> None:
+        assert "criteria" in dialogue_schema()["required"]
+
+    async def test_une_intention_de_recherche_sans_criteres_est_redemandee_une_fois(self) -> None:
+        first = {"intent": "search", "reply": "C'est noté.", "criteria": None}
+        second = {"intent": "search", "reply": "C'est noté.", "criteria": CRITERIA}
+        llm = FakeLanguageModel(text_result(json.dumps(first)), text_result(json.dumps(second)))
+
+        proposal = await propose(llm)
+
+        assert proposal.criteria is not None
+        assert len(llm.requests) == 2
+        assert "obligatoire" in llm.requests[1].parts[0]
+
+    async def test_sans_criteres_au_second_appel_la_proposition_reste_nue(self) -> None:
+        out = {"intent": "search", "reply": "C'est noté.", "criteria": None}
+        llm = FakeLanguageModel(text_result(json.dumps(out)), text_result(json.dumps(out)))
+
+        proposal = await propose(llm)
+
+        assert proposal.criteria is None
+        assert proposal.intent is Intent.SEARCH

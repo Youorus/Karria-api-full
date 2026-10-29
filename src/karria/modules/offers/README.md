@@ -67,3 +67,15 @@
   et un passage de file en traite des centaines (pas un travail par entreprise).
 - Les décisions et leurs mesures : ADR-0016 (moteur), ADR-0017 (France
   Travail, collecte continue, planificateur).
+
+## Relecture du 2026-10-29
+
+- `OfferRepository.find_many(..., light=True)` : sans la description, pour le rappel (1 500
+  candidats : 3 Mo → 60 Ko), les comptages d'élargissement et les impressions.
+- `insert_many` ignore une (source, identifiant) écrite par un lot concurrent ;
+  `CompanyRepository.save_many` rend l'identifiant qui a gagné (conflit (clé, domaine)) et
+  `AttachCompanies` rattache les offres à celui-là.
+- `offers.fetch_logos` n'a plus de `retry` : il se re-diffère lui-même sous son verrou de file.
+- Dialogue : `criteria` exigé par le schéma, redemandé une fois s'il manque ; sans critères avec
+  une intention de recherche, le domaine pose la question du métier (`decide`).
+- Logos : résolution DNS épinglée (requête sur l'IP vérifiée, `Host` + SNI).

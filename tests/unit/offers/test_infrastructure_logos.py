@@ -18,7 +18,7 @@ from karria.modules.offers.infrastructure import (
     StorageLogoStore,
     logos,
 )
-from karria.modules.offers.infrastructure.logos import MAX_IMAGE_BYTES, is_public_address
+from karria.modules.offers.infrastructure.logos import MAX_IMAGE_BYTES, is_public_address, pinned
 from karria.shared.config import StorageSettings
 from karria.shared.storage import Bucket, InMemoryObjectStorage
 
@@ -36,9 +36,14 @@ def fetcher(handler: httpx.MockTransport, **kwargs: object) -> HttpLogoFetcher:
     return HttpLogoFetcher(client, resolver=kwargs.pop("resolver", public), interval=0.0, **kwargs)  # type: ignore[arg-type]
 
 
+def requested(request: httpx.Request) -> str:
+    """L'adresse telle que le site la voit : le nom dans `Host`, le chemin de l'URL (épinglée sur l'IP)."""
+    return f"{request.url.scheme}://{request.headers['host']}{request.url.raw_path.decode()}"
+
+
 def routes(table: dict[str, httpx.Response | Exception]) -> httpx.MockTransport:
     def handle(request: httpx.Request) -> httpx.Response:
-        found = table.get(str(request.url), httpx.Response(404))
+        found = table.get(requested(request), httpx.Response(404))
         if isinstance(found, Exception):
             raise found
         return found
@@ -48,6 +53,32 @@ def routes(table: dict[str, httpx.Response | Exception]) -> httpx.MockTransport:
 
 def image(status: int = 200, content: bytes = PNG, kind: str = "image/png") -> httpx.Response:
     return httpx.Response(status, content=content, headers={"content-type": kind})
+
+
+class TestEpinglage:
+    def test_l_hote_devient_l_adresse_resolue_port_garde(self) -> None:
+        assert (
+            pinned("https://x.fr/l.png?v=2", "93.184.216.34") == "https://93.184.216.34/l.png?v=2"
+        )
+        assert pinned("http://x.fr:8080/a", "93.184.216.34") == "http://93.184.216.34:8080/a"
+        assert pinned("https://x.fr/a", "2606:2800:220:1:248:1893:25c8:1946") == (
+            "https://[2606:2800:220:1:248:1893:25c8:1946]/a"
+        )
+
+    async def test_la_requete_joint_l_ip_verifiee_avec_le_nom_en_hote_et_en_sni(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return image()
+
+        got = await fetcher(httpx.MockTransport(handle)).fetch_image("https://x.fr/l.png")
+
+        assert got.payload == PNG
+        (request,) = seen
+        assert request.url.host == "93.184.216.34"
+        assert request.headers["host"] == "x.fr"
+        assert request.extensions["sni_hostname"] == "x.fr"
 
 
 class TestTelechargement:

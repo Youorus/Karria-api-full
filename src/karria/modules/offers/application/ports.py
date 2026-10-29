@@ -60,7 +60,14 @@ class OfferRepository(Protocol):
     """
 
     async def insert_many(self, offers: Sequence[Offer]) -> None:
-        """Enregistre des offres nouvelles."""
+        """Enregistre des offres nouvelles.
+
+        Une annonce qu'un lot **concurrent** vient d'écrire (même source,
+        même identifiant — le balayage nocturne et le passage de trois
+        minutes se recouvrent) est laissée telle quelle : le passage suivant
+        la revoit et la met à jour si son contenu diffère. Avant, le lot
+        entier échouait et se rejouait (`UniqueViolation`, 2026-10-28).
+        """
         ...
 
     async def save(self, offer: Offer) -> None:
@@ -71,8 +78,17 @@ class OfferRepository(Protocol):
         """Une offre par identifiant, active ou non."""
         ...
 
-    async def find_many(self, offer_ids: Sequence[UUID]) -> dict[UUID, Offer]:
-        """Plusieurs offres par identifiant, en un aller-retour."""
+    async def find_many(
+        self, offer_ids: Sequence[UUID], *, light: bool = False
+    ) -> dict[UUID, Offer]:
+        """Plusieurs offres par identifiant, en un aller-retour.
+
+        `light` : sans la description (vide), pour ce qui ne la lit pas — le
+        filtre dur, la porte d'intitulé, le comptage des élargissements. Un
+        rappel de 1 500 candidats pèse 3 Mo de descriptions contre 60 Ko sans
+        elles (mesuré en production le 2026-10-29) ; un tour de conversation
+        en fait jusqu'à neuf.
+        """
         ...
 
     async def find_by_sources(
@@ -724,8 +740,15 @@ class CompanyRepository(Protocol):
         """Les entreprises connues sous chaque clé de nom, la plus ancienne d'abord."""
         ...
 
-    async def save_many(self, records: Sequence[CompanyRecord]) -> None:
-        """Crée ou met à jour (par identifiant)."""
+    async def save_many(self, records: Sequence[CompanyRecord]) -> Mapping[UUID, UUID]:
+        """Crée ou met à jour (par identifiant).
+
+        Rend, pour chaque enregistrement, l'identifiant **réellement** porté
+        en base : si un autre lot a créé la même entreprise (même clé, même
+        domaine) entre la lecture et l'écriture, c'est le sien qui gagne, et
+        l'appelant rattache ses offres à celui-là. Deux lots du balayage
+        nocturne l'ont fait le 2026-10-27 (`UniqueViolation (key, domain)`).
+        """
         ...
 
     async def link_offers(self, links: Sequence[OfferLink]) -> int:

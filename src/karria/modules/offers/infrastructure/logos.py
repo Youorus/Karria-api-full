@@ -142,13 +142,16 @@ class HttpLogoFetcher:
             host = (parts.hostname or "").lower()
             if parts.scheme not in {"http", "https"} or not host:
                 return 0, None, current
-            if not await self._safe(host):
+            address = await self._safe(host)
+            if address is None:
                 logger.info("offers.logo_unsafe_host", host=host)
                 return 0, None, current
             gate = await self._hosts.enter(host)
             try:
                 async with asyncio.timeout(REQUEST_DEADLINE):
-                    status, payload, location = await self._once(current, limit, image=image)
+                    status, payload, location = await self._once(
+                        pinned(current, address), host, limit, image=image
+                    )
             except TimeoutError:
                 return 408, None, current
             finally:
@@ -159,10 +162,15 @@ class HttpLogoFetcher:
         return 0, None, current
 
     async def _once(  # noqa: PLR0911 - une sortie par issue HTTP, lisible ainsi
-        self, url: str, limit: int, *, image: bool
+        self, url: str, host: str, limit: int, *, image: bool
     ) -> tuple[int, bytes | None, str | None]:
+        # L'adresse IP vérifiée est celle qu'on joint : le nom ne se résout pas
+        # une seconde fois (un DNS qui changerait entre les deux passerait). Le
+        # nom voyage dans `Host` et dans le SNI, et c'est lui que le certificat
+        # doit couvrir.
+        request = {"headers": {"Host": host}, "extensions": {"sni_hostname": host}}
         try:
-            async with self._client.stream("GET", url) as response:
+            async with self._client.stream("GET", url, **request) as response:  # type: ignore[arg-type]  # httpx type `extensions` en `Mapping[str, Any]`
                 if response.is_redirect and "location" in response.headers:
                     return response.status_code, None, response.headers["location"]
                 if response.status_code != 200:  # noqa: PLR2004
@@ -186,14 +194,25 @@ class HttpLogoFetcher:
         except httpx.HTTPError:
             return 503, None, None
 
-    async def _safe(self, host: str) -> bool:
+    async def _safe(self, host: str) -> str | None:
+        """La première adresse publique du nom, si **toutes** le sont ; `None` sinon."""
         try:
             addresses = await asyncio.wait_for(
                 asyncio.to_thread(self._resolver, host), DNS_DEADLINE
             )
         except (OSError, TimeoutError):
-            return False
-        return bool(addresses) and all(is_public_address(a) for a in addresses)
+            return None
+        if not addresses or not all(is_public_address(a) for a in addresses):
+            return None
+        return addresses[0]
+
+
+def pinned(url: str, address: str) -> str:
+    """La même adresse, l'hôte remplacé par l'IP résolue (port gardé, IPv6 entre crochets)."""
+    parts = urllib.parse.urlsplit(url)
+    literal = f"[{address}]" if ":" in address else address
+    netloc = f"{literal}:{parts.port}" if parts.port else literal
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 class PillowLogoProcessor:

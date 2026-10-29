@@ -94,7 +94,7 @@ tiers à chaque carte du fil.
 
 - Une icône **SVG** n'est pas rastérisée (aucune dépendance pour cela) : Lidl, par exemple,
   n'a que des SVG et retombe sur Google.
-- La résolution DNS est vérifiée avant la requête, pas épinglée : un DNS qui change entre les
-  deux (rebinding) passerait. Le serveur n'expose rien de sensible en HTTP sur son réseau ; à
-  revoir si cela change.
+- ~~La résolution DNS est vérifiée avant la requête, pas épinglée~~ — **corrigé le 2026-10-29** :
+  la requête joint l'adresse IP vérifiée (nom dans `Host` et dans le SNI, certificat contrôlé
+  sur le nom) ; le nom n'est plus résolu une seconde fois par httpx.
 - Un logo prêt n'est pas rafraîchi quand l'entreprise change de logo (`PLUS-TARD.md`).

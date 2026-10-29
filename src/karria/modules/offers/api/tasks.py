@@ -86,8 +86,13 @@ def register_tasks(app: App, *, notifier: Callable[[], UserNotifier] | None) -> 
     async def sync_index(timestamp: int | None = None) -> None:  # noqa: ARG001 - périodique ou différé
         await run_sync(app, notifier)
 
+    # Pas de `retry` : le passage se re-diffère lui-même sous le même verrou de
+    # file, et une reprise automatique du travail en échec remettrait un second
+    # `todo` sous ce verrou — `UniqueViolation (queueing_lock)`, le travail
+    # restait « en cours » jusqu'à `retry_stalled` (vu le 2026-10-27). Le
+    # périodique de cinq minutes est la reprise.
     @app.periodic(cron="*/5 * * * *", periodic_id=TASK_FETCH_LOGOS)
-    @app.task(name=TASK_FETCH_LOGOS, lock=TASK_FETCH_LOGOS, queueing_lock=TASK_FETCH_LOGOS, retry=2)
+    @app.task(name=TASK_FETCH_LOGOS, lock=TASK_FETCH_LOGOS, queueing_lock=TASK_FETCH_LOGOS)
     async def fetch_logos(timestamp: int | None = None) -> None:  # noqa: ARG001 - périodique ou différé
         await run_logos(app)
 

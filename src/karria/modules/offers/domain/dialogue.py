@@ -102,14 +102,29 @@ def decide(proposal: DialogueProposal, previous: SearchCriteria | None) -> Dialo
             suggestions=suggestions,
             intent=intent,
         )
-    if proposal.criteria is None or intent in (
-        Intent.CAREER_TALK,
-        Intent.APP_HELP,
-        Intent.SMALL_TALK,
-    ):
+    if intent in (Intent.CAREER_TALK, Intent.APP_HELP, Intent.SMALL_TALK):
         return DialogueOutcome(
             status=DialogueStatus.CHAT,
             reply=reply,
+            criteria=previous,
+            suggestions=suggestions,
+            intent=intent,
+        )
+    if proposal.criteria is None:
+        # Le modèle veut chercher mais n'a rien transcrit : sa phrase (« c'est
+        # noté, je recherche… ») mentirait. On pose la question qui manque.
+        if previous is not None and previous.is_searchable:
+            return DialogueOutcome(
+                status=DialogueStatus.SEARCH,
+                reply=reply,
+                criteria=previous,
+                suggestions=suggestions,
+                intent=intent,
+            )
+        asked = previous if previous is not None else SearchCriteria(query="")
+        return DialogueOutcome(
+            status=DialogueStatus.CLARIFY,
+            reply=fallback_question(asked),
             criteria=previous,
             suggestions=suggestions,
             intent=intent,

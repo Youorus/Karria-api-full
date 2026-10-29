@@ -965,7 +965,10 @@ class SearchOffers:
             )
         )
         window = [c for c in candidates if c.offer_id not in exclude]
-        found = await self._offers.find_many([c.offer_id for c in window]) if window else {}
+        # Sans la description : ni le filtre dur ni la porte d'intitulé ne la lisent.
+        found = (
+            await self._offers.find_many([c.offer_id for c in window], light=True) if window else {}
+        )
         ordered = [found[c.offer_id] for c in window if c.offer_id in found]
         ranked = rank(ordered, criteria)
         rejected = tuple(gate_rejects(ordered, criteria))
@@ -1105,7 +1108,7 @@ class ApplyCriteria:
             if not ids:
                 unknown.append(term)
                 continue
-            found = await self._offers.find_many(ids)
+            found = await self._offers.find_many(ids, light=True)
             samples[term] = [offer.title for offer in found.values()]
         kept = validate_terms([t for t in terms if t in samples], samples)
         for term in terms:
@@ -1589,11 +1592,11 @@ class DispatchAlerts:
         if not accepted:
             return [], []
         states = await self._states.find_many(stored.user_id, [o.id for o in accepted])
+        already = set(await self._feed.offer_ids_of(stored.user_id))
         fresh = [
             o
             for o in accepted
-            if not (o.id in states and states[o.id].dismissed)
-            and await self._feed.find(stored.user_id, o.id) is None
+            if not (o.id in states and states[o.id].dismissed) and o.id not in already
         ]
         if not fresh:
             return [], []
@@ -1922,7 +1925,7 @@ class MarkFeedSeen:
     ) -> None:
         if self._log is None or self._offers is None or self._feed is None:
             return
-        offers = await self._offers.find_many([i.offer_id for i in impressions])
+        offers = await self._offers.find_many([i.offer_id for i in impressions], light=True)
         if not offers:
             return
         entries = {e.offer_id: e for e in await self._feed.entries_of(user_id)}
@@ -2081,7 +2084,15 @@ class AttachCompanies:
             if sighting.offer is not None:
                 links.append(OfferLink(sighting.offer[0], sighting.offer[1], record.id))
         if dirty:
-            await self._companies.save_many(list(dirty.values()))
+            # Un lot concurrent a pu créer la même entreprise entre la lecture
+            # et l'écriture : les offres se rattachent à celle qui est en base.
+            persisted = await self._companies.save_many(list(dirty.values()))
+            links = [
+                OfferLink(
+                    link.source, link.source_id, persisted.get(link.company_id, link.company_id)
+                )
+                for link in links
+            ]
         report.created = len(created)
         report.updated = len(dirty) - len(created)
         report.linked = await self._companies.link_offers(links) if links else 0
