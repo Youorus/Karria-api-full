@@ -547,6 +547,21 @@ class DocumentsSettings(BaseModel):
     admin_token: SecretStr = SecretStr("")
 
 
+class PaymentsSettings(BaseModel):
+    """Encaissements Stripe (module `payments`).
+
+    Sans `secret_key`, les routes de paiement répondent 503 : il n'y a pas de
+    mode démonstration. `webhook_secret` authentifie les événements que Stripe
+    envoie ; vide, ils sont tous refusés. `return_url` est la page de retour
+    par défaut après paiement ; l'app peut en proposer une autre, dans les
+    bornes du domaine (site de Karria ou schéma de l'app).
+    """
+
+    secret_key: SecretStr = SecretStr("")
+    webhook_secret: SecretStr = SecretStr("")
+    return_url: str = "https://karria.fr/paiement"
+
+
 class CollectorAccessSettings(BaseModel):
     """L'accès du collecteur d'offres aux routes internes (`/internal/offers/*`).
 
@@ -597,6 +612,7 @@ class Settings(BaseSettings):
     geocoding: GeocodingSettings = Field(default_factory=GeocodingSettings)
     collector: CollectorAccessSettings = Field(default_factory=CollectorAccessSettings)
     documents: DocumentsSettings = Field(default_factory=DocumentsSettings)
+    payments: PaymentsSettings = Field(default_factory=PaymentsSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:

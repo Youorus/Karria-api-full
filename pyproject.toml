@@ -370,6 +370,7 @@ source_modules = [
     "karria.modules.cv.domain",
     "karria.modules.offers.domain",
     "karria.modules.documents.domain",
+    "karria.modules.payments.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -399,6 +400,7 @@ modules = [
     "karria.modules.cv",
     "karria.modules.offers",
     "karria.modules.documents",
+    "karria.modules.payments",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.
