@@ -19,9 +19,11 @@ est servi et pourquoi : il part dans la revue du modèle.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
+from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.domain.fonts import (
     FontResolution,
     family_from_name,
@@ -40,6 +42,10 @@ from karria.modules.documents.infrastructure.spec_builder import SpecBuilder
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: Au-delà de cette surface (≈ A2), une page n'est pas un CV et sa rastérisation
+#: à 150 dpi pèserait des centaines de Mio.
+MAX_PAGE_AREA_MM2: Final = 250_000.0
 
 Json = dict[str, Any]
 
@@ -95,7 +101,7 @@ class TemplateAnalyzer:
             resolution = await self._library.resolve(source)
             resolutions[name] = resolution
             served = await self._library.file(
-                resolution.family, resolution.weight, resolution.italic
+                resolution.family, resolution.weight, resolution.italic, download=True
             )
             if served is not None:
                 files[name] = served
@@ -104,6 +110,15 @@ class TemplateAnalyzer:
     async def analyze(self, pdf: bytes, *, labels: Json | None = None) -> AnalyzedTemplate:
         """Analyse un PDF de modèle d'une page."""
         with PdfDocument(pdf) as doc:
+            if doc.page_count != 1:
+                raise TemplateIngestionError(
+                    f"{doc.page_count} pages : un modèle de CV tient sur une seule page"
+                )
+            width_mm, height_mm = doc.page_size_mm(0)
+            if width_mm * height_mm > MAX_PAGE_AREA_MM2:
+                raise TemplateIngestionError(
+                    f"page de {width_mm:.0f} × {height_mm:.0f} mm : trop grande pour un CV"
+                )
             resolutions, files = await self.resolve_fonts(doc)
 
             def metrics(name: str) -> VerticalMetrics | None:
@@ -113,8 +128,9 @@ class TemplateAnalyzer:
                 facts = facts_of(served.data)
                 return VerticalMetrics(facts.ascent, facts.descent)
 
-            page = doc.read(metrics=metrics)
-            page_png = doc.render_png(dpi=100)
+            # Lecture et rastérisation : plusieurs secondes de CPU, hors de la boucle.
+            page = await asyncio.to_thread(doc.read, metrics=metrics)
+            page_png = await asyncio.to_thread(doc.render_png, dpi=100)
             if labels is None:
                 compact = [
                     {k: ln[k] for k in ("id", "text", "font", "size", "bold", "x", "y", "w")}

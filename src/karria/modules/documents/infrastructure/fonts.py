@@ -312,6 +312,9 @@ def subset_for_documents(data: bytes) -> bytes:
 
 
 def _http_get(url: str, *, timeout: float = 30.0) -> bytes:
+    if not url.startswith("https://"):
+        msg = f"adresse de police refusée (https attendu) : {url[:80]}"
+        raise ValueError(msg)
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})  # noqa: S310 - URL de catalogue fixe
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         payload: bytes = response.read()
@@ -484,16 +487,31 @@ class FontCatalogue:
         return (styles, licence, "fontsource") if styles else None
 
 
+#: Les caches de la bibliothèque sont **par processus**, pas par instance : une
+#: bibliothèque est construite à chaque requête, et sans cela chaque export
+#: relisait `family.json` et chaque `.ttf` dans le bucket (deux fois : PDF puis
+#: DOCX). Une police est immuable sous sa clé ; un enregistrement absent (`None`)
+#: n'est pas gardé, pour qu'une ingestion ultérieure soit vue.
+_SHARED_RECORDS: dict[str, FamilyRecord | None] = {}
+_SHARED_FILES: dict[str, bytes] = {}
+
+
 class FontLibrary:
     """La bibliothèque de polices libres, gardée dans le bucket `templates`."""
 
     PREFIX: Final = "fonts"
 
-    def __init__(self, storage: ObjectStorage, catalogue: FontCatalogue | None = None) -> None:
+    def __init__(
+        self,
+        storage: ObjectStorage,
+        catalogue: FontCatalogue | None = None,
+        *,
+        shared_cache: bool = True,
+    ) -> None:
         self._storage = storage
         self._catalogue = catalogue or FontCatalogue()
-        self._records: dict[str, FamilyRecord | None] = {}
-        self._files: dict[str, bytes] = {}
+        self._records: dict[str, FamilyRecord | None] = _SHARED_RECORDS if shared_cache else {}
+        self._files: dict[str, bytes] = _SHARED_FILES if shared_cache else {}
 
     def _record_key(self, key: str) -> str:
         return f"{self.PREFIX}/{key}/family.json"
@@ -511,7 +529,11 @@ class FontLibrary:
                 json.loads(await self._storage.get(Bucket.TEMPLATES, self._record_key(key)))
             )
         except ObjectNotFoundError:
-            record = await self._fetch(family, key) if download else None
+            if not download:
+                # Un rendu qui ne trouve pas la fiche ne fige rien : une
+                # ingestion ultérieure (qui télécharge) doit encore la voir.
+                return None
+            record = await self._fetch(family, key)
         self._records[key] = record
         return record
 
@@ -555,9 +577,15 @@ class FontLibrary:
         )
         return record
 
-    async def file(self, family: str, weight: int, italic: bool) -> FontFile | None:
-        """L'instance statique la plus proche demandée (graisse, style)."""
-        record = await self.family(family)
+    async def file(
+        self, family: str, weight: int, italic: bool, *, download: bool = False
+    ) -> FontFile | None:
+        """L'instance statique la plus proche demandée (graisse, style).
+
+        Sans téléchargement par défaut : un **rendu** ne va jamais sur Internet.
+        Seule l'ingestion (`download=True`) range une famille qui manque.
+        """
+        record = await self.family(family, download=download)
         if record is None or not record.styles:
             return None
         wanted_italic = italic and bool(record.available(True))

@@ -57,8 +57,9 @@ def med(values: list[float] | list[float | None], default: float = 0.0) -> float
 
 def collapse_spaced(text: str) -> str:
     """« B E N J A M I N » (lettres séparées par des espaces tapées) → « BENJAMIN »."""
-    if re.fullmatch(r"(\S )+\S", text):
-        return text.replace(" ", "")
+    joined = text.replace(" ", "")
+    if re.fullmatch(r"(\S )+\S", text) and len(joined) >= 3 and joined.isalpha():  # noqa: PLR2004
+        return joined
     return text
 
 

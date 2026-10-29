@@ -324,7 +324,7 @@ class HtmlRenderer:
                             (sl, [(roles[0], v)], sl["margin_top_mm"] if j == 0 else repeat)
                         )
                 else:
-                    pairs = [(r, item.get(r)) for r in roles if item.get(r)]
+                    pairs = [(r, v) for r in roles if isinstance(v := item.get(r), str) and v]
                     if pairs:
                         rows.append((sl, pairs, sl["margin_top_mm"]))
             if not rows:
@@ -603,7 +603,10 @@ class HtmlRenderer:
             f"var K=[{k_steps}],F=[{f_steps}],k=1,f=1,ok=false;"
             "for(var i=0;i<K.length&&!ok;i++){k=K[i];r.style.setProperty('--k',k);ok=b()<=lim}"
             "for(var j=1;j<F.length&&!ok;j++){f=F[j];r.style.setProperty('--f',f);ok=b()<=lim}"
-            "if(!ok){p.style.overflow='visible';p.style.height='auto'}"
+            # Rien ne tient sur une page : la seconde page est assumée, à l'espacement
+            # et au corps naturels, plutôt qu'un CV comprimé **et** débordant.
+            "if(!ok){k=1;f=1;r.style.setProperty('--k',1);r.style.setProperty('--f',1);"
+            "p.style.overflow='visible';p.style.height='auto'}"
             "document.title='fit k='+k+' f='+f+' pages='+(ok?1:2);window.fitDone=true});</script>"
         )
         return (

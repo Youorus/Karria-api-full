@@ -451,7 +451,7 @@ def test_le_nom_de_fichier_servi() -> None:
 class TestBibliotheque:
     async def test_telecharge_une_fois_range_et_relit(self, storage: InMemoryObjectStorage) -> None:
         catalogue = _testa_catalogue()
-        library = FontLibrary(storage, catalogue)
+        library = FontLibrary(storage, catalogue, shared_cache=False)
         record = await library.family("Testa")
         assert record is not None
         assert record.family == "Testa"
@@ -461,7 +461,7 @@ class TestBibliotheque:
         assert await storage.get(Bucket.TEMPLATES, "fonts/testa/700.ttf") == BOLD
         assert await library.family("Testa-Bold") is record  # même clé, gardée en mémoire
         # Une autre instance relit la fiche du stockage, sans retélécharger.
-        again = FontLibrary(storage, catalogue)
+        again = FontLibrary(storage, catalogue, shared_cache=False)
         assert (await again.family("Testa")) == record
         assert catalogue.calls == ["Testa"]
         served = await again.file("Testa", 700, False)
@@ -472,36 +472,45 @@ class TestBibliotheque:
         self, storage: InMemoryObjectStorage
     ) -> None:
         catalogue = FakeCatalogue({"Testa": ({"700": BOLD}, "OFL", "fontsource")})
-        record = await FontLibrary(storage, catalogue).family("Testa")
+        record = await FontLibrary(storage, catalogue, shared_cache=False).family("Testa")
         assert record is not None
         assert record.styles == {"700": "fonts/testa/700.ttf"}
 
     async def test_famille_inconnue_ou_vide(self, storage: InMemoryObjectStorage) -> None:
-        library = FontLibrary(storage, FakeCatalogue({}))
+        library = FontLibrary(storage, FakeCatalogue({}), shared_cache=False)
         assert await library.family("") is None
         assert await library.family("Inconnue") is None
         assert await library.file("Inconnue", 400, False) is None
 
     async def test_sans_telechargement(self, storage: InMemoryObjectStorage) -> None:
         catalogue = _testa_catalogue()
-        assert await FontLibrary(storage, catalogue).family("Testa", download=False) is None
+        assert (
+            await FontLibrary(storage, catalogue, shared_cache=False).family(
+                "Testa", download=False
+            )
+            is None
+        )
         assert catalogue.calls == []
 
     async def test_le_catalogue_par_defaut(self, storage: InMemoryObjectStorage) -> None:
-        assert isinstance(FontLibrary(storage)._catalogue, FontCatalogue)
+        assert isinstance(FontLibrary(storage, shared_cache=False)._catalogue, FontCatalogue)
 
     async def test_graisse_la_plus_proche_et_italique_de_repli(
         self, storage: InMemoryObjectStorage
     ) -> None:
-        library = FontLibrary(storage, _testa_catalogue())
-        bold = await library.file("Testa", 600, False)
+        library = FontLibrary(storage, _testa_catalogue(), shared_cache=False)
+        # Un rendu ne télécharge jamais ; l'ingestion, si.
+        assert await library.file("Testa", 600, False) is None
+        bold = await library.file("Testa", 600, False, download=True)
         assert bold is not None
         assert (bold.weight, bold.italic) == (700, False)
         italic = await library.file("Testa", 700, True)
         assert italic is not None
         assert (italic.weight, italic.italic) == (400, True)
         catalogue = FakeCatalogue({"Rom": ({"400": REGULAR}, "OFL", "s")})
-        roman = await FontLibrary(storage, catalogue).file("Rom", 400, True)
+        roman = await FontLibrary(storage, catalogue, shared_cache=False).file(
+            "Rom", 400, True, download=True
+        )
         assert roman is not None
         assert roman.italic is False
 
@@ -509,7 +518,7 @@ class TestBibliotheque:
         self, storage: InMemoryObjectStorage
     ) -> None:
         catalogue = FakeCatalogue({"Arimo": ({"400": REGULAR}, "Apache-2.0", "google-fonts")})
-        out = await FontLibrary(storage, catalogue).candidates()
+        out = await FontLibrary(storage, catalogue, shared_cache=False).candidates()
         assert [f.family for f in out] == ["Testa"]  # la famille lue dans la police
         assert catalogue.calls == list(CURATED_FAMILIES)
 
@@ -531,7 +540,9 @@ class TestResolution:
         self, storage: InMemoryObjectStorage
     ) -> None:
         catalogue = FakeCatalogue({})
-        out = await FontLibrary(storage, catalogue).resolve(_source(reuse_allowed=True))
+        out = await FontLibrary(storage, catalogue, shared_cache=False).resolve(
+            _source(reuse_allowed=True)
+        )
         assert out.origin is FontOrigin.EMBEDDED
         assert out.weight == 700
         assert catalogue.calls == []
@@ -549,7 +560,9 @@ class TestResolution:
         self, storage: InMemoryObjectStorage
     ) -> None:
         catalogue = FakeCatalogue({"Testa": ({"400": REGULAR, "700": BOLD}, "OFL", "s")})
-        out = await FontLibrary(storage, catalogue).resolve(_source(italic=True))
+        out = await FontLibrary(storage, catalogue, shared_cache=False).resolve(
+            _source(italic=True)
+        )
         assert (out.weight, out.italic) == (700, False)
 
     @pytest.mark.parametrize(
@@ -562,7 +575,7 @@ class TestResolution:
         catalogue = FakeCatalogue(
             {"Arimo": ({"400": build_font(family="Arimo"), "700": BOLD}, "Apache-2.0", "g")}
         )
-        out = await FontLibrary(storage, catalogue).resolve(
+        out = await FontLibrary(storage, catalogue, shared_cache=False).resolve(
             _source(
                 family="Rare", name="Rare-Bold", missing_chars=missing, reuse_allowed=bool(missing)
             )

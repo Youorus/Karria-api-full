@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 from karria.modules.documents.application import Analysis, CvSnapshot, Previews, RenderedPdf
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
+from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.templates import (
     ExplanationStatus,
     Fit,
@@ -30,6 +31,7 @@ from karria.modules.documents.domain.templates import (
 
 NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
 PDF_BYTES = b"%PDF-1.7 rendu"
+PDF_SAFE_BYTES = b"%PDF-safe"
 DOCX_BYTES = b"PK docx"
 PNG_BYTES = b"\x89PNG page"
 
@@ -444,6 +446,8 @@ class FakeEngine:
     fidelity_pdf: Fidelity = field(default_factory=good_fidelity)
     fidelity_docx: Fidelity = field(default_factory=good_fidelity)
     texts: dict[str, str] = field(default_factory=lambda: {"pdf": CLEAN_TEXT, "docx": CLEAN_TEXT})
+    #: Ce que lit l'ATS sur un rendu de la variante « optimisée » ; `None` : comme `texts`.
+    texts_safe: dict[str, str] | None = None
     pages: int = 1
     calls: list[tuple[str, Any]] = field(default_factory=list)
 
@@ -462,12 +466,18 @@ class FakeEngine:
         assets: dict[str, bytes],
         photo: bytes | None,
     ) -> RenderedPdf:
+        # La variante « optimisée ATS » : la version plafonnée d'une spécification
+        # déjà rendue dans cet export, et différente d'elle.
+        previous = [call for name, call in self.calls if name == "render_pdf"]
+        variant = any(
+            call["spec"] != spec and ats_safe_spec(call["spec"]) == spec for call in previous
+        )
         self.calls.append(
             ("render_pdf", {"spec": spec, "view": view, "assets": assets, "photo": photo})
         )
         if self.render_error is not None:
             raise self.render_error
-        return RenderedPdf(data=PDF_BYTES, fit=self.fit)
+        return RenderedPdf(data=PDF_SAFE_BYTES if variant else PDF_BYTES, fit=self.fit)
 
     async def render_docx(
         self,
@@ -505,7 +515,9 @@ class FakeEngine:
     def read(self, data: bytes, fmt: str) -> ExtractedDocument:
         self.calls.append(("read", fmt))
         return ExtractedDocument(
-            text=self.texts[fmt],
+            text=(self.texts_safe or self.texts)[fmt]
+            if data == PDF_SAFE_BYTES
+            else self.texts[fmt],
             format=fmt,
             pages=1,
             font_types={"TrueType": 2},

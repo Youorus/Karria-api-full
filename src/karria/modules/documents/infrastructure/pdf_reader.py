@@ -31,6 +31,8 @@ import pdfplumber
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 
+#: Plus grande image qu'on rastérise (≈ 30 Mpx) ; au-delà, c'est une bombe de décompression.
+MAX_IMAGE_PIXELS: Final = 30_000_000
 MM: Final = 72 / 25.4
 _SUBSET_PREFIX: Final = re.compile(r"^[A-Z]{6}\+")
 
@@ -379,7 +381,11 @@ class PdfDocument:
             bitmap = pdfium_c.FPDFImageObj_GetBitmap(obj.raw)
             if not bitmap:
                 continue
-            pdfium.PdfBitmap.from_raw(bitmap).to_pil().convert("RGB").save(png, "PNG")
+            raster = pdfium.PdfBitmap.from_raw(bitmap).to_pil()
+            if raster.width * raster.height > MAX_IMAGE_PIXELS:
+                # Une image géante n'est pas un pictogramme : on ne la décode pas.
+                continue
+            raster.convert("RGB").save(png, "PNG")
             clip = _clip_box(obj.raw, obj.parent)
             entry: Json = {
                 "x": round((left - crop_left) / MM, 2),

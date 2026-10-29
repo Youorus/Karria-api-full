@@ -62,7 +62,7 @@ from karria.modules.documents.application import (
 )
 from karria.modules.documents.domain.errors import TemplateNotFoundError
 from karria.shared.auth import CurrentPrincipalDep, require_authentication
-from karria.shared.errors import ErrorCode, error_responses
+from karria.shared.errors import ErrorCode, InvalidInputError, error_responses
 from karria.shared.http.dependencies import ObjectStorageDep
 from karria.shared.storage import Bucket
 
@@ -336,9 +336,17 @@ async def submit_template(
 ) -> VersionAdminRead:
     """Nouvelle version d'un modèle (créé s'il n'existe pas) ; publiée seulement si la porte de qualité passe."""
     pdf = await file.read(MAX_TEMPLATE_PDF + 1)
-    version = await use_case.execute(
-        pdf[:MAX_TEMPLATE_PDF], name=name, label=label, is_premium=is_premium
-    )
+    if len(pdf) > MAX_TEMPLATE_PDF:
+        # Avant : un préfixe tronqué (donc corrompu) partait en ingestion.
+        raise InvalidInputError(
+            "Le PDF dépasse la taille admise.",
+            details={
+                "reason": "template_too_large",
+                "field": "file",
+                "max_bytes": MAX_TEMPLATE_PDF,
+            },
+        )
+    version = await use_case.execute(pdf, name=name, label=label, is_premium=is_premium)
     template = await templates.get(version.template_id)
     if template is None:  # pragma: no cover - créé dans la même transaction
         raise TemplateNotFoundError()

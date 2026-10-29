@@ -24,10 +24,12 @@ Contrat
 from __future__ import annotations
 
 import io
+import itertools
 import re
 import uuid
 import zipfile
 from typing import Any, Final
+from xml.sax.saxutils import quoteattr
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
@@ -239,7 +241,7 @@ def embed_fonts(docx: bytes, names: FontNames) -> bytes:
     return out.getvalue()
 
 
-_shape_ids = iter(range(1, 1_000_000))
+_shape_ids = itertools.count(1)
 
 
 def anchored_shape(
@@ -826,7 +828,7 @@ class DocxRenderer:
                         )
                         rows.append(([(roles[0], v)], sl["margin_top_mm"] if j == 0 else repeat))
                 else:
-                    pairs = [(r, item.get(r)) for r in roles if item.get(r)]
+                    pairs = [(r, v) for r in roles if isinstance(v := item.get(r), str) and v]
                     if pairs:
                         rows.append((pairs, sl["margin_top_mm"]))
                 for vals, m in rows:
@@ -921,7 +923,7 @@ class DocxRenderer:
             f'<w:lvlText w:val="{glyph}"/><w:lvlJc w:val="left"/>'
             f'<w:pPr><w:tabs><w:tab w:val="num" w:pos="{twips(left_mm)}"/></w:tabs>'
             f'<w:ind w:left="{twips(left_mm)}" w:hanging="{twips(hanging_mm)}"/></w:pPr>'
-            f'<w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}" w:cs="{family}"/>'
+            f"<w:rPr><w:rFonts w:ascii={quoteattr(family)} w:hAnsi={quoteattr(family)} w:cs={quoteattr(family)}/>"
             f'<w:color w:val="{color.lstrip("#")}"/><w:sz w:val="{round(size_pt * 2)}"/></w:rPr>'
             "</w:lvl></w:abstractNum>"
         )

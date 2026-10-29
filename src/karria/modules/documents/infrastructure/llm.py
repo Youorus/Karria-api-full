@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from enum import StrEnum
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field
 
@@ -91,13 +91,17 @@ class Labels(BaseModel):
     """Les rôles de toutes les lignes, et la fiche de galerie."""
 
     title: str = Field(description="Un nom court et élégant pour ce modèle, en français")
-    category: str = Field(description="classic, modern, elegant, creative, minimal ou professional")
+    category: Literal["classic", "modern", "elegant", "creative", "minimal", "professional"] = (
+        Field(description="La famille du modèle")
+    )
     description_fr: str = Field(
         description="Deux phrases de présentation du modèle, en français, pour la galerie"
     )
     tags: list[str] = Field(description="4 à 7 mots-clés en français")
-    photo_shape: str = Field(description="circle, rect, rounded ou none")
-    columns: int = Field(description="Nombre de colonnes de contenu sous l'en-tête (1 ou 2)")
+    photo_shape: Literal["circle", "rect", "rounded", "none"] = Field(
+        description="La forme de la photo, ou none sans photo"
+    )
+    columns: int = Field(ge=1, le=2, description="Nombre de colonnes de contenu sous l'en-tête")
     lines: list[LineLabel]
 
 

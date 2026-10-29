@@ -8,7 +8,15 @@ from uuid import uuid4
 import pytest
 
 from documents.application.conftest import Env
-from documents.fakes import DOCX_BYTES, NOW, PDF_BYTES, PNG_BYTES, SPACED_TEXT, make_spec
+from documents.fakes import (
+    CLEAN_TEXT,
+    DOCX_BYTES,
+    NOW,
+    PDF_BYTES,
+    PNG_BYTES,
+    SPACED_TEXT,
+    make_spec,
+)
 from karria.modules.documents.domain.errors import (
     CvMissingError,
     InvalidFormatError,
@@ -264,6 +272,7 @@ class TestExport:
         template, _ = env.templates.publish(spec=make_spec(spaced=True))
         env.cvs.put(env.user)
         env.engine.texts = {"pdf": SPACED_TEXT, "docx": SPACED_TEXT}
+        env.engine.texts_safe = {"pdf": CLEAN_TEXT, "docx": CLEAN_TEXT}
 
         generated = await env.export().execute(
             env.user, template_id=template.id, formats=None, ats_safe=False, offer_id=None
@@ -272,6 +281,20 @@ class TestExport:
         assert generated.ats["suggest_ats_safe"] is True
         assert generated.ats_docx is not None
         assert generated.ats_docx["suggest_ats_safe"] is True
+        # La variante a été rendue et notée, pas seulement supposée.
+        assert sum(1 for name, _ in env.engine.calls if name == "render_pdf") == 2
+
+    async def test_la_variante_ats_n_est_pas_proposee_si_elle_ne_gagne_rien(self, env: Env) -> None:
+        template, _ = env.templates.publish(spec=make_spec(spaced=True))
+        env.cvs.put(env.user)
+        env.engine.texts = {"pdf": SPACED_TEXT, "docx": SPACED_TEXT}
+        env.engine.texts_safe = {"pdf": SPACED_TEXT, "docx": SPACED_TEXT}
+
+        generated = await env.export().execute(
+            env.user, template_id=template.id, formats=None, ats_safe=False, offer_id=None
+        )
+
+        assert generated.ats["suggest_ats_safe"] is False
 
     async def test_la_variante_ats_deja_active_n_est_plus_suggeree(self, env: Env) -> None:
         template, _ = env.templates.publish(spec=make_spec(spaced=True))

@@ -319,3 +319,11 @@ Mesures (contenu d'exemple, Gotenberg 8.38.1 officiel, mesure pypdfium2) :
 
 La composante « décor » du DOCX ne compte pas les puces (glyphes de liste) ni les
 pictogrammes (images) : Meridian 0,45, Minimalist 0,32 — voir `PLUS-TARD.md`.
+
+**Relecture du 2026-10-29.** La variante « optimisée ATS » n'est plus proposée sur un
+indice textuel : elle est **rendue et notée** quand l'indice existe, et proposée seulement
+si son score dépasse celui du rendu fidèle (un rendu Gotenberg de plus, ~0,5 à 1 s, dans
+ce cas seulement). Les polices se lisent une fois par processus et **jamais depuis
+Internet pendant un rendu** (`FontLibrary.file(download=False)` ; l'ingestion télécharge).
+Bornes à l'ingestion : une page, surface ≤ 0,25 m², images ≤ 30 Mpx, PDF ≤ 20 Mio refusé
+(plus tronqué). Une panne de rendu laisse la version « en cours » et se retente.

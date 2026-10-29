@@ -53,3 +53,12 @@ PDF / DOCX ──► ats_reader (comme un ATS) ──► domain/ats (score déte
 - Configuration : `DOCUMENTS__GOTENBERG_URL`, `DOCUMENTS__ADMIN_TOKEN`,
   `LLM__TASKS__TEMPLATE_EXTRACT`, `LLM__TASKS__ATS_EXPLAIN`,
   `STORAGE__PUBLIC_ENDPOINT_URL` (signature des URL pour l'hôte public).
+
+## Relecture du 2026-10-29
+
+- La variante « optimisée ATS » est mesurée avant d'être proposée (ADR-0020 § Mise en œuvre).
+- `FontLibrary` : caches **par processus** (`_SHARED_RECORDS`, `_SHARED_FILES`) ; `file()` ne
+  télécharge jamais sauf `download=True` (ingestion). Un rendu ne touche pas Internet.
+- Ingestion bornée (une page, ≤ 0,25 m², images ≤ 30 Mpx) ; PDF > 20 Mio refusé en 422 ;
+  `RenderingUnavailableError` n'enterre pas une version (le travail se rejoue).
+- La clé des aperçus en cache porte `PREVIEW_CACHE_VERSION` : à incrémenter quand le rendu change.

@@ -16,6 +16,7 @@ Contrat
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -36,6 +37,7 @@ from karria.modules.documents.domain.ats import analyse
 from karria.modules.documents.domain.errors import (
     CvMissingError,
     GeneratedCvNotFoundError,
+    RenderingUnavailableError,
     TailoringNotAvailableError,
     TemplateIngestionError,
     TemplateNotFoundError,
@@ -65,6 +67,10 @@ from karria.shared.logging import get_logger
 from karria.shared.storage import Bucket, ObjectNotFoundError, ObjectStorage
 
 logger = get_logger(__name__)
+
+#: Entre dans la clé des aperçus en cache : à incrémenter quand le rendu change
+#: (sinon un déploiement sert d'anciens aperçux tant que le CV ne bouge pas).
+PREVIEW_CACHE_VERSION = 2
 
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -268,7 +274,13 @@ class PreviewTemplate:
         )
         digest = hashlib.sha256(
             json.dumps(
-                [str(version.id), snapshot.updated_at.isoformat(), snapshot.image_key, ats_safe],
+                [
+                    PREVIEW_CACHE_VERSION,
+                    str(version.id),
+                    snapshot.updated_at.isoformat(),
+                    snapshot.image_key,
+                    ats_safe,
+                ],
                 default=str,
             ).encode()
         ).hexdigest()[:24]
@@ -343,16 +355,37 @@ class ExportCv:
                 spec, view, assets=assets, photo=photo, fit=rendered.fit
             )
         columns = max((len(b["columns"]) for b in spec["bands"]), default=1)
+        # La lecture « comme un ATS » (pdfminer) coûte des centaines de ms de CPU : hors boucle.
         report_pdf = analyse(
-            self._engine.read(rendered.data, "pdf"), view, snapshot.data, columns=columns
+            await asyncio.to_thread(self._engine.read, rendered.data, "pdf"),
+            view,
+            snapshot.data,
+            columns=columns,
         )
         report_docx = (
-            analyse(self._engine.read(docx, "docx"), view, snapshot.data, columns=columns)
+            analyse(
+                await asyncio.to_thread(self._engine.read, docx, "docx"),
+                view,
+                snapshot.data,
+                columns=columns,
+            )
             if docx
             else None
         )
         main = report_pdf if "pdf" in wanted or report_docx is None else report_docx
-        suggest = not safe and ats_safe_helps(version.spec or spec) and main.spaced_titles()
+        suggest = (
+            await self._variant_helps(
+                version.spec or spec,
+                view,
+                assets=assets,
+                photo=photo,
+                cv=snapshot.data,
+                columns=columns,
+                score=main.score,
+            )
+            if not safe and ats_safe_helps(version.spec or spec) and main.spaced_titles()
+            else False
+        )
         generated_id = uuid4()
         prefix = f"generated-cvs/{user_id}/{generated_id}"
         pdf_key = docx_key = None
@@ -383,7 +416,14 @@ class ExportCv:
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)
-        await self._jobs.defer_explanation(generated.id)
+        try:
+            await self._jobs.defer_explanation(generated.id)
+        except Exception:
+            # L'export existe et ses fichiers sont là : une file en panne ne doit
+            # pas le faire passer pour raté. L'explication est simplement absente.
+            logger.exception("documents.explanation_not_deferred", generated_id=str(generated.id))
+            generated = replace(generated, explanation_status=ExplanationStatus.UNAVAILABLE)
+            await self._generated.set_explanation(generated.id, None, ExplanationStatus.UNAVAILABLE)
         logger.info(
             "documents.cv_exported",
             template=template.name,
@@ -395,6 +435,35 @@ class ExportCv:
             ms=round((time.monotonic() - started) * 1000),
         )
         return generated
+
+    async def _variant_helps(
+        self,
+        spec: dict[str, Any],
+        view: dict[str, Any],
+        *,
+        assets: dict[str, bytes],
+        photo: bytes | None,
+        cv: dict[str, Any],
+        columns: int,
+        score: int,
+    ) -> bool:
+        """La variante « optimisée ATS » n'est proposée que si, rendue et notée, elle fait mieux.
+
+        Avant, elle était proposée sur un indice textuel (« lu lettre à lettre »)
+        sans être mesurée ; sur Minimalist elle perdait 4 points (87 → 83, l'ordre
+        de lecture de pdfminer). Un rendu de plus, seulement quand l'indice existe.
+        """
+        variant = await self._engine.render_pdf(
+            ats_safe_spec(spec), view, assets=assets, photo=photo
+        )
+        report = analyse(
+            await asyncio.to_thread(self._engine.read, variant.data, "pdf"),
+            view,
+            cv,
+            columns=columns,
+        )
+        logger.info("documents.ats_variant_measured", main=score, variant=report.score)
+        return report.score > score
 
 
 class ListGeneratedCvs:
@@ -583,6 +652,10 @@ class IngestTemplateVersion:
             failed = version.with_status(
                 VersionStatus.FAILED, error=str(exc.details.get("detail") or exc)
             )
+        except RenderingUnavailableError:
+            # Gotenberg absent : rien n'est faux dans le modèle. La version reste
+            # « en cours » et le travail de file se rejoue (avant : échec définitif).
+            raise
         except Exception as exc:
             logger.exception("documents.ingestion_crashed", version_id=str(version_id))
             failed = version.with_status(

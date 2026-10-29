@@ -57,7 +57,9 @@ class FakeLibrary:
             note="test",
         )
 
-    async def file(self, family: str, weight: int, italic: bool) -> FontFile | None:
+    async def file(
+        self, family: str, weight: int, italic: bool, *, download: bool = False
+    ) -> FontFile | None:
         if family != "Testa":
             return None
         if weight in self._extra:
