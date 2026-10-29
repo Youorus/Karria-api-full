@@ -8,6 +8,7 @@ appelé par Stripe et authentifié par sa signature.
 from __future__ import annotations
 
 import html
+import json
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Header, Path, Query, Request, status
@@ -258,14 +259,18 @@ async def payment_return(
         params = {"status": outcome}
         if session_id:
             params["session_id"] = session_id
-        target = html.escape(with_query(destination, **params), quote=True)
+        raw_target = with_query(destination, **params)
+        target = html.escape(raw_target, quote=True)
         refresh = f'<meta http-equiv="refresh" content="0;url={target}">'
         link = (
             f'<p><a href="{target}" style="display:inline-block;padding:.75rem 1.25rem;'
             "border-radius:999px;background:#1877f2;color:#fff;text-decoration:none;"
             'font-weight:700">Revenir dans Karria</a></p>'
         )
-        script = f"<script>location.replace({_js_string(target)});</script>"
+        # Le contenu d'un <script> n'est **pas** décodé par le navigateur : les
+        # entités HTML n'y ont pas cours. La chaîne est encodée en JSON, avec
+        # les caractères qui fermeraient la balise échappés en \uXXXX.
+        script = f"<script>location.replace({_js_string(raw_target)});</script>"
     else:
         refresh = link = script = ""
     page = _PAGE.format(
@@ -278,9 +283,9 @@ async def payment_return(
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
-def _js_string(escaped_html: str) -> str:
-    """Une chaîne JavaScript sûre : les entités HTML sont déjà posées, on cite et borne."""
-    return '"' + escaped_html.replace("\\", "\\\\").replace('"', '\\"') + '"'
+def _js_string(url: str) -> str:
+    """Une chaîne JavaScript sûre dans un `<script>` : JSON, sans `<`, `>` ni `&`."""
+    return json.dumps(url).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 @router.post(

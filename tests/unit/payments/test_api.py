@@ -318,8 +318,9 @@ class TestReturnPage:
         page = response.text
         assert "Merci" in page
         assert 'url=karria://paiement/retour?status=success&amp;session_id=cs_1"' in page
+        # Dans un <script>, pas d'entité HTML : le `&` est un `\\u0026` JSON.
         assert (
-            'location.replace("karria://paiement/retour?status=success&amp;session_id=cs_1")'
+            'location.replace("karria://paiement/retour?status=success\u0026session_id=cs_1")'
             in page
         )
         assert "Revenir dans Karria" in page
@@ -352,6 +353,9 @@ class TestReturnPage:
             params={"to": 'karria://retour?x="></script><script>alert(1)</script>'},
         )
         assert "<script>alert" not in response.text
+        assert "</script><script>" not in response.text.replace("</script>\n</body>", "").replace(
+            "<script>location", ""
+        )
 
 
 class TestWebhook:
