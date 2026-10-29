@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-29**
+**Dernière mise à jour : 2026-10-29 (soir)**
 
 ## Où on en est
 
@@ -23,8 +23,51 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
-| `payments` | **en production, désactivé** (ADR-0023 « Proposée » ; sans `PAYMENTS__SECRET_KEY` → 503) | `POST /payments/checkout-session`, `GET /payments/status/{id}` (session requise), `POST /payments/webhook` (signature Stripe) |
+| `payments` | **en production, éteint** (ADR-0023 + **ADR-0024** « Proposées » ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-29, suite (paiements Stripe : « sans pub », cafés, modèles Premium) — en production, éteint
+
+**Décision de Marc** : Stripe seul, par le navigateur, comme Zoumani (validée par Apple) ; pas
+d'achat intégré, pas de RevenueCat, aucun SDK Stripe dans l'app. **ADR-0024** (Proposée) complète
+l'ADR-0023 ; les deux attendent la validation de Marc.
+
+**Livré** (commits `6445f4f`, `3c89c9c` sur `main`, déployés par Dokploy ; **migration 12
+appliquée** en production le 29/10 ; les trois services en service, `/health/ready` 200) :
+
+- Catalogue dans le domaine (`domain/catalog.py`) : sans pub **4,99 €/mois** sans engagement ;
+  cafés **1 / 2 / 3 / 5 à 2,99 / 4,99 / 7,99 / 12,99 €** ; modèle Premium au prix de `documents`
+  (port `TemplateStore` ← `documents.TemplateShop`). Prix Stripe retrouvés par `lookup_key`
+  (`karria_ad_free_monthly`, `karria_coffee_{n}`, `karria_template_{uuid}`) et **créés par le
+  code**, TTC : Marc ne saisit aucun produit.
+- Tables `payments_accounts` (projection : client Stripe, statut, fin de période, résiliation,
+  départ de la grâce), `payments_purchases` (uniques par session), `payments_webhook_events`
+  (registre). Webhook idempotent (identifiant noté dans la transaction de l'effet), état relu
+  chez Stripe, **grâce de 7 jours** après `invoice.payment_failed`, modèle remis par `grant`
+  dans la même transaction. `ForgetUser` sur `AccountDeleted` : client Stripe supprimé
+  (résiliation), projection et achats effacés.
+- Page de retour `GET /payments/return` (Stripe refuse `karria://`) : revalide la destination
+  et renvoie vers `karria://paiement/retour?status=…&session_id=…`, ce qui referme la session du
+  navigateur de l'app. Interrupteur `PAYMENTS__IOS_ENABLED` / `ANDROID_ENABLED` exposé dans
+  `enabled`. Sans clé : 503, `enabled: false`, et `/me` ne lit pas la base (déployable avant
+  migration — c'est ce qui a été fait).
+- `identity` expose `GetCurrentUser` / `UserNotFoundError` / `get_current_user_reader` ;
+  `documents` expose `TemplateShop` / `PremiumTemplate` / `get_template_shop` ; `wiring.py` :
+  6 branchements, 5 ponts.
+- Tests : `make check` vert (2 721 tests, 72 ignorés = intégration sans Docker local) ; le
+  nouveau code est à 100 % hors `infrastructure/repositories.py`, couvert par
+  `tests/integration/test_payments_repositories.py` — **non exécuté ici** (Docker arrêté) : à
+  lancer avec `make db-up` à la prochaine session.
+
+**Pour Marc — à faire chez Stripe** (détail dans `DEPLOIEMENT.md` § Encaissements) : activer le
+compte ; créer le webhook `https://api.karria.fr/api/v1/payments/webhook` (5 événements) ;
+activer le portail client (résiliation, factures, moyen de paiement) et les e-mails de reçu ;
+poser `PAYMENTS__SECRET_KEY`, `PAYMENTS__WEBHOOK_SECRET` (+ `PAYMENTS__IOS_ENABLED=true`,
+`PAYMENTS__ANDROID_ENABLED=true`, `PAYMENTS__AUTOMATIC_TAX=false`) dans Dokploy pour l'API et
+redéployer ; tester avec `4242 4242 4242 4242` puis passer en live. Valider ADR-0023/0024.
+
+**Reste** : la réconciliation planifiée avec Stripe (`PLUS-TARD.md`), un courriel Karria sur
+prélèvement en échec (idem), relire la carte de soutien de l'app sur le simulateur.
 
 ### Session du 2026-10-29 (relecture Fable avant lancement — défauts corrigés, mesures)
 
@@ -84,9 +127,8 @@ Corpus au 29/10 : **196 196 offres actives canoniques** (FT 158 k, Indeed 21 k, 
 13,5 k, LinkedIn 3 k), index Qdrant à l'identique, outbox vide, collecte FT toutes les 3 min
 et JobSpy en continu (collecteur, worker, API en service).
 
-**Pour Marc** : valider l'ADR-0023 et trancher l'achat intégré (règle 3.1.1) ; côté app, les
-modifications non commitées (café Stripe, écran d'accueil, annonce dans le détail d'une
-offre) sont les siennes et n'ont pas été touchées — voir `karria_app/docs/REPRISE.md`.
+**Pour Marc** : tranché le 29/10 au soir (Stripe seul, ADR-0024) ; les modifications non
+commitées de l'app ont été reprises et commitées — voir `karria_app/docs/REPRISE.md`.
 
 ### Session du 2026-10-25 (contrat des notifications push, ADR-0022)
 
@@ -427,8 +469,8 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    l'image ; retrait des traits du texte plongé (ré-indexage) ; champs qui
    valent un appel au modèle. Puis la relecture du travail (Tâche 3) et la
    purge des offres inactives en production.
-3. **Modules suivants**, à décider par Marc un par un : abonnement Stripe
-   (les modèles de CV sont en production, voir la session du 2026-10-24, suite).
+3. **Paiements** : poser les clés Stripe et tester (voir la session du 2026-10-29, suite) ;
+   modules suivants à décider par Marc un par un.
 4. **Points listés dans `docs/PLUS-TARD.md`** :
    - purge planifiée ;
    - limiteur de débit et cache JWKS multi-réplicas (Redis) ;
