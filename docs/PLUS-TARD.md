@@ -476,3 +476,30 @@ estimation (`reltuples`) ou un compte mis en cache une minute.
 `HandleWebhook` journalise et ne livre rien (ADR-0023). **Déclencheur :** la
 décision de Marc sur l'achat intégré ; alors un événement `PaymentCompleted`
 sur le bus, consommé par `documents`.
+
+---
+
+## Encaissements (ADR-0024)
+
+### Aucune réconciliation planifiée avec Stripe
+
+La projection des abonnements n'est mise à jour que par les webhooks. Un
+webhook perdu (point de terminaison mal configuré, panne longue de l'API au
+moment de l'envoi, Stripe réessaie trois jours) laisserait `payments_accounts`
+diverger de Stripe jusqu'à la notification suivante — un abonné résilié verrait
+encore « sans pub », ou l'inverse.
+
+**Ce que ça coûte :** rare, borné à un cycle de facturation.
+**Déclencheur :** le premier écart constaté, ou le premier millier d'abonnés.
+Un travail `payments.reconcile` nocturne dans le worker (`subscriptions.list`
+par client, `BillingAccount.synced`) ; le worker recevrait alors les variables
+`PAYMENTS__*`.
+
+### Aucun courriel de Karria autour d'un paiement
+
+Les reçus sont ceux de Stripe (à activer dans le tableau de bord). Karria ne
+dit rien par e-mail à un prélèvement en échec : la personne le découvre dans
+l'app (« paiement en attente ») et par le reçu d'échec de Stripe.
+
+**Déclencheur :** une plainte, ou l'ouverture du compte de messagerie
+transactionnel de Karria pour d'autres usages.

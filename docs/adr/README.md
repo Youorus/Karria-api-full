@@ -55,3 +55,5 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0020](0020-modeles-de-cv-et-exports.md) | Modèles de CV : spécification canonique tirée du PDF, deux rendus (PDF, DOCX), score ATS déterministe | Proposée |
 | [0021](0021-entreprises-et-logos.md) | Entreprises communes aux sources, logos téléchargés une fois et servis par un bucket public adressé par condensat | Proposée |
 | [0022](0022-contrat-des-notifications-push.md) | Un contrat typé et versionné (`shared/push`) pour toute notification push : type, identifiant, lien, canal | Proposée |
+| [0023](0023-encaissements-stripe.md) | Encaissements : un module `payments` sur Stripe Checkout, sans démonstration, retour borné à Karria | Proposée |
+| [0024](0024-sans-pub-cafes-et-modeles-par-stripe.md) | « Karria sans pub », cafés et modèles Premium par Stripe Checkout seul : prix par `lookup_key`, projection des droits, webhook idempotent, grâce, interrupteur par plateforme | Proposée |

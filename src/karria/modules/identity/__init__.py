@@ -15,23 +15,29 @@ Ce qu'il expose, et pour qui :
   sur le bus, auxquels un autre module s'abonne via `bootstrap` ;
 - `MainDeviceLookup`, `MainDeviceSnapshot`, `get_main_device_lookup` — le
   port « sur quoi tournait l'app de cette personne ? », que
-  `bootstrap/wiring.py` branche sur le module `devices` (ADR-0015).
+  `bootstrap/wiring.py` branche sur le module `devices` (ADR-0015) ;
+- `GetCurrentUser`, `get_current_user_reader`, `UserNotFoundError` — la
+  lecture d'un compte, que `bootstrap` branche sur le port `AccountDirectory`
+  de `payments` (l'adresse des reçus Stripe).
 """
 
 from karria.modules.identity.api import router
 from karria.modules.identity.api.dependencies import (
+    get_current_user_reader,
     get_main_device_lookup,
     get_resolve_session,
 )
 from karria.modules.identity.application import (
     AccountDeleted,
     AuthenticatedCaller,
+    GetCurrentUser,
     MainDeviceLookup,
     MainDeviceSnapshot,
     ResolveSession,
     UserRegistered,
     UserSignedIn,
 )
+from karria.modules.identity.domain import UserNotFoundError
 from karria.shared.module import ModuleDescriptor
 
 MODULE = ModuleDescriptor(
@@ -44,11 +50,14 @@ __all__ = [
     "MODULE",
     "AccountDeleted",
     "AuthenticatedCaller",
+    "GetCurrentUser",
     "MainDeviceLookup",
     "MainDeviceSnapshot",
     "ResolveSession",
+    "UserNotFoundError",
     "UserRegistered",
     "UserSignedIn",
+    "get_current_user_reader",
     "get_main_device_lookup",
     "get_resolve_session",
 ]

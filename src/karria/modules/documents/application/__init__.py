@@ -27,10 +27,12 @@ from karria.modules.documents.application.use_cases import (
     ListGeneratedCvs,
     ListOwnedTemplates,
     ListTemplates,
+    PremiumTemplate,
     PreviewTemplate,
     RecordTemplateView,
     SelectTemplate,
     SubmitTemplate,
+    TemplateShop,
 )
 
 __all__ = [
@@ -53,6 +55,7 @@ __all__ = [
     "ListGeneratedCvs",
     "ListOwnedTemplates",
     "ListTemplates",
+    "PremiumTemplate",
     "PreviewTemplate",
     "Previews",
     "RecordTemplateView",
@@ -61,5 +64,6 @@ __all__ = [
     "SubmitTemplate",
     "TemplateJobs",
     "TemplateRepository",
+    "TemplateShop",
     "UserTemplateRepository",
 ]

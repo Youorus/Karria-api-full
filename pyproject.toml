@@ -358,6 +358,7 @@ containers = [
     "karria.modules.cv",
     "karria.modules.offers",
     "karria.modules.documents",
+    "karria.modules.payments",
 ]
 
 [[tool.importlinter.contracts]]

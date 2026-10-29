@@ -179,15 +179,39 @@ sert `/opt/karria/models/e5-base-int8`, produit par
   retire au besoin) ; ses réglages propres (`COLLECTOR__SITE_HOURLY_BUDGETS`,
   `…_SITE_PAUSE_SECONDS`, `…_BLOCKED_COOLDOWN_SECONDS`) ont des défauts prudents.
 
-## Encaissements Stripe (ADR-0023, 2026-10-29)
+## Encaissements Stripe (ADR-0023, ADR-0024 — 2026-10-29)
 
-- Variables de l'API : `PAYMENTS__SECRET_KEY`, `PAYMENTS__WEBHOOK_SECRET`,
-  `PAYMENTS__RETURN_URL`. **Aucune n'est posée** : les routes `/payments`
-  répondent `503` tant que Marc n'a pas tranché la question de l'achat intégré
-  (ADR-0023). Pas de mode démonstration.
-- Le webhook Stripe vise `https://api.karria.fr/api/v1/payments/webhook`
-  (événement `checkout.session.completed`) ; le secret du webhook va dans
-  `PAYMENTS__WEBHOOK_SECRET`.
+- **Migration 12** (`encaissements_stripe` : `payments_accounts`,
+  `payments_purchases`, `payments_webhook_events`) : `aerich upgrade` dans un
+  conteneur ponctuel (voir § État réel). Sans clé Stripe, le code ne lit pas ces
+  tables : il peut être déployé avant la migration, mais la migration doit être
+  passée **avant de poser la clé**.
+- **Variables de l'API** (le worker n'en a pas besoin aujourd'hui — aucun
+  travail de file ne touche Stripe) : `PAYMENTS__SECRET_KEY` (clé secrète
+  `sk_test_…` puis `sk_live_…`), `PAYMENTS__WEBHOOK_SECRET` (`whsec_…` du point
+  de terminaison), `PAYMENTS__RETURN_URL` (destination par défaut, l'app passe
+  `karria://paiement/retour`), `PAYMENTS__IOS_ENABLED` / `PAYMENTS__ANDROID_ENABLED`
+  (`true` ; `false` cache tout paiement dans l'app sans livraison),
+  `PAYMENTS__AUTOMATIC_TAX` (`false` tant que Stripe Tax n'est pas activé dans
+  le tableau de bord). `APP__PUBLIC_URL=https://api.karria.fr` compose la page
+  de retour (déjà posée).
+- **Chez Stripe** (Marc, tableau de bord) : le compte activé ; le **webhook**
+  `https://api.karria.fr/api/v1/payments/webhook` abonné à
+  `checkout.session.completed`, `customer.subscription.created`,
+  `customer.subscription.updated`, `customer.subscription.deleted`,
+  `invoice.payment_failed` ; le **portail client** activé (résiliation
+  immédiate ou en fin de période permise, historique des factures, mise à jour
+  du moyen de paiement) ; les **e-mails de reçu** activés. **Aucun produit ni
+  prix à créer** : le code les crée par `lookup_key` au premier achat
+  (`karria_ad_free_monthly`, `karria_coffee_1|2|3|5`, `karria_template_<uuid>`),
+  TTC. Les faire en mode test d'abord, puis refaire webhook et clés en mode live.
+- **Vérifier** : `GET /api/v1/payments/catalog` avec une session → `enabled`
+  à `true` ; un paiement test (carte `4242 4242 4242 4242`) → le webhook
+  répond 200 dans le tableau Stripe et `GET /payments/me` passe `ad_free.active`
+  à `true` ; `docker logs` de l'API : `payments.webhook_received`,
+  `payments.subscription_synced` / `payments.purchase_recorded`.
+- **Couper d'urgence** : `PAYMENTS__IOS_ENABLED=false` (ou retirer la clé :
+  503 partout) et redéployer l'API — aucune livraison de l'app.
 
 ## Mesure de la recherche en production (relecture du 2026-10-29)
 

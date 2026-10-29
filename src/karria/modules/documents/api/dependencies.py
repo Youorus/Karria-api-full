@@ -37,6 +37,7 @@ from karria.modules.documents.application import (
     SubmitTemplate,
     TemplateJobs,
     TemplateRepository,
+    TemplateShop,
     UserTemplateRepository,
 )
 from karria.modules.documents.application.use_cases import CvRenderer
@@ -160,6 +161,11 @@ def get_list_owned(owned: OwnedDep) -> ListOwnedTemplates:
 
 def get_acquire(templates: TemplatesDep, owned: OwnedDep, clock: ClockDep) -> AcquireFreeTemplate:
     return AcquireFreeTemplate(templates, owned, clock)
+
+
+def get_template_shop(templates: TemplatesDep, owned: OwnedDep, clock: ClockDep) -> TemplateShop:
+    """La vitrine des modèles Premium, pour le module `payments` (branché par `bootstrap`)."""
+    return TemplateShop(templates, owned, clock)
 
 
 def get_get_selection(owned: OwnedDep) -> GetSelection:

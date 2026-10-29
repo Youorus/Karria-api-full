@@ -42,6 +42,11 @@ Les branchements d'aujourd'hui
   (`offers.notifier_unwired`) : dégradé, pas cassé.
 - `documents.get_cv_source` ← `cv.GetMyCv`. Sans lui, aperçus et exports
   répondent `cv_missing` (le refus par défaut de `documents`).
+- `payments.get_account_directory` ← `identity.GetCurrentUser`. Sans lui, le
+  client Stripe naît sans adresse : les reçus ne partent pas (dégradé).
+- `payments.get_template_store` ← `documents.TemplateShop`. Sans lui, aucun
+  modèle n'est en vente et un modèle payé ne peut pas être remis : le webhook
+  répond 503 et Stripe réémet jusqu'au branchement (refus, pas faille).
 
 Les ponts du bus
 ----------------
@@ -51,7 +56,8 @@ dans `subscribe_bridges`, appelé par le `lifespan` une fois les ressources
 ouvertes. Aujourd'hui : `identity.AccountDeleted` → `devices` oublie les
 appareils, `cv` oublie brouillon, CV et photos, `offers` oublie critères,
 fil, états et conversations, `documents` oublie exports (fichiers compris),
-modèles possédés et choix (ADR-0015).
+modèles possédés et choix (ADR-0015), `payments` supprime le client Stripe (ce
+qui résilie l'abonnement) et efface projection et achats (ADR-0024).
 """
 
 from __future__ import annotations
@@ -69,13 +75,22 @@ from karria.modules.devices import (
     get_get_main_device,
     get_send_push_to_user,
 )
-from karria.modules.documents import CvSnapshot, CvSource, get_cv_source
+from karria.modules.documents import (
+    CvSnapshot,
+    CvSource,
+    TemplateShop,
+    get_cv_source,
+    get_template_shop,
+)
 from karria.modules.documents import build_forget_user as build_forget_user_documents
 from karria.modules.identity import (
     AccountDeleted,
+    GetCurrentUser,
     MainDeviceLookup,
     MainDeviceSnapshot,
     ResolveSession,
+    UserNotFoundError,
+    get_current_user_reader,
     get_main_device_lookup,
     get_resolve_session,
 )
@@ -86,7 +101,16 @@ from karria.modules.offers import (
 from karria.modules.offers import (
     build_forget_user as build_forget_user_offers,
 )
+from karria.modules.payments import (
+    AccountDirectory,
+    PremiumOffer,
+    TemplateStore,
+    get_account_directory,
+    get_template_store,
+)
+from karria.modules.payments import build_forget_user as build_forget_user_payments
 from karria.shared.auth import Principal, resolve_principal
+from karria.shared.config import get_settings
 from karria.shared.logging import get_logger
 from karria.shared.push import PushMessage
 
@@ -216,6 +240,63 @@ def cv_source_from_cv(get_my_cv: Annotated[GetMyCv, Depends(get_get_my_cv)]) -> 
     return CvModuleSource(get_my_cv)
 
 
+class IdentityAccountDirectory:
+    """Implémente le port `AccountDirectory` de `payments` avec `identity.GetCurrentUser`."""
+
+    def __init__(self, reader: GetCurrentUser) -> None:
+        self._reader = reader
+
+    async def email_of(self, user_id: UUID) -> str | None:
+        """L'adresse du compte, ou `None` s'il n'existe plus."""
+        try:
+            return str((await self._reader.execute(user_id)).email)
+        except UserNotFoundError:
+            return None
+
+
+def account_directory_from_identity(
+    reader: Annotated[GetCurrentUser, Depends(get_current_user_reader)],
+) -> AccountDirectory:
+    """La réponse du module `identity` au besoin de `payments`."""
+    return IdentityAccountDirectory(reader)
+
+
+class DocumentsTemplateStore:
+    """Implémente le port `TemplateStore` de `payments` avec `documents.TemplateShop`.
+
+    Le prix de `documents` est un `Decimal` en euros ; `payments` compte en
+    centimes entiers. La conversion vit ici, à la couture, et nulle part ailleurs.
+    """
+
+    def __init__(self, shop: TemplateShop) -> None:
+        self._shop = shop
+
+    async def premium_offers(self) -> list[PremiumOffer]:
+        return [
+            PremiumOffer(o.template_id, o.label, round(o.price * 100))
+            for o in await self._shop.premium_offers()
+        ]
+
+    async def premium_offer(self, template_id: UUID) -> PremiumOffer | None:
+        offer = await self._shop.premium_offer(template_id)
+        if offer is None:
+            return None
+        return PremiumOffer(offer.template_id, offer.label, round(offer.price * 100))
+
+    async def owns(self, user_id: UUID, template_id: UUID) -> bool:
+        return await self._shop.owns(user_id, template_id)
+
+    async def grant(self, user_id: UUID, template_id: UUID) -> None:
+        await self._shop.grant(user_id, template_id)
+
+
+def template_store_from_documents(
+    shop: Annotated[TemplateShop, Depends(get_template_shop)],
+) -> TemplateStore:
+    """La réponse du module `documents` au besoin de `payments`."""
+    return DocumentsTemplateStore(shop)
+
+
 def build_user_notifier() -> UserNotifier:
     """Le même branchement, hors requête, pour `scripts/offers_worker.py`."""
     from karria.modules.devices.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
@@ -256,8 +337,13 @@ def wire_modules(app: FastAPI) -> None:
     # Sans cette ligne : aucun CV n'est visible des modèles, tout aperçu et
     # tout export répondent `cv_missing`.
     app.dependency_overrides[get_cv_source] = cv_source_from_cv
+    # Sans cette ligne : le client Stripe naît sans adresse, aucun reçu ne part.
+    app.dependency_overrides[get_account_directory] = account_directory_from_identity
+    # Sans cette ligne : aucun modèle Premium n'est en vente, et un modèle payé
+    # ne peut pas être remis — le webhook refuse, Stripe réémet.
+    app.dependency_overrides[get_template_store] = template_store_from_documents
 
-    logger.debug("bootstrap.modules_wired", bindings=4)
+    logger.debug("bootstrap.modules_wired", bindings=6)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
@@ -269,7 +355,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     assemblés par son module (`build_*`) — `bootstrap` ne connaît pas leurs
     dépôts.
 
-    Les deux abonnés sont **indépendants** : le bus absorbe l'échec de l'un
+    Les abonnés sont **indépendants** : le bus absorbe l'échec de l'un
     sans priver l'autre (`event_bus.handler_failed`), et chacun est
     idempotent : rejouer l'événement termine ce qui aurait manqué.
     """
@@ -277,6 +363,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     forget_cv = build_forget_user(storage)
     forget_offers = build_forget_user_offers()
     forget_documents = build_forget_user_documents(storage)
+    forget_payments = build_forget_user_payments(get_settings())
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -290,6 +377,9 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def documents_forget(event: AccountDeleted) -> None:
         await forget_documents.execute(event.user_id)
 
+    async def payments_forget(event: AccountDeleted) -> None:
+        await forget_payments.execute(event.user_id)
+
     # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
     # photos, ses critères et ses conversations — c'est-à-dire exactement
     # ce que la personne a demandé d'effacer.
@@ -297,4 +387,6 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     bus.subscribe(AccountDeleted, cv_forget)
     bus.subscribe(AccountDeleted, offers_forget)
     bus.subscribe(AccountDeleted, documents_forget)
-    logger.debug("bootstrap.bridges_subscribed", bridges=4)
+    # Sans cette ligne : un compte supprimé continue d'être prélevé chez Stripe.
+    bus.subscribe(AccountDeleted, payments_forget)
+    logger.debug("bootstrap.bridges_subscribed", bridges=5)

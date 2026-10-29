@@ -20,7 +20,8 @@ import asyncio
 import hashlib
 import json
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -209,6 +210,69 @@ class SelectTemplate:
         )
         await self._owned.save_selection(selection)
         return selection
+
+
+# ---------------------------------------------------------------------- vente
+
+
+@dataclass(frozen=True, slots=True)
+class PremiumTemplate:
+    """Un modèle Premium en vente : ce que le module `payments` a besoin de savoir."""
+
+    template_id: UUID
+    label: str
+    price: Decimal
+
+
+class TemplateShop:
+    """La vitrine des modèles Premium, et leur remise une fois payés.
+
+    Le prix vient d'ici (`Template.price`) : `documents` est la source de
+    vérité, `payments` encaisse. `grant` est **idempotent** : le prestataire
+    rejoue ses notifications, et un modèle remis deux fois n'est qu'une ligne.
+    """
+
+    def __init__(
+        self, templates: TemplateRepository, owned: UserTemplateRepository, clock: Clock
+    ) -> None:
+        self._templates, self._owned, self._clock = templates, owned, clock
+
+    async def premium_offers(self) -> list[PremiumTemplate]:
+        """Les modèles publiés, payants et dotés d'un prix."""
+        return [
+            PremiumTemplate(t.id, t.label, t.price)
+            for t in await self._templates.list_published(category=None, premium=True)
+            if t.price is not None
+        ]
+
+    async def premium_offer(self, template_id: UUID) -> PremiumTemplate | None:
+        """Ce modèle, s'il est publié, payant et doté d'un prix ; `None` sinon."""
+        template = await self._templates.get(template_id)
+        if (
+            template is None
+            or not template.is_published
+            or not template.is_premium
+            or template.price is None
+        ):
+            return None
+        return PremiumTemplate(template.id, template.label, template.price)
+
+    async def owns(self, user_id: UUID, template_id: UUID) -> bool:
+        return await self._owned.owns(user_id, template_id)
+
+    async def grant(self, user_id: UUID, template_id: UUID) -> Ownership:
+        """Remet un modèle payé. Le modèle doit exister ; publié ou non, il a été payé."""
+        if await self._templates.get(template_id) is None:
+            raise TemplateNotFoundError()
+        return await self._owned.add(
+            Ownership(
+                id=uuid4(),
+                user_id=user_id,
+                template_id=template_id,
+                source="purchase",
+                acquired_at=self._clock.now(),
+            )
+        )
 
 
 # ---------------------------------------------------------------------- rendu du CV

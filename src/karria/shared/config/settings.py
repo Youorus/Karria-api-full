@@ -550,16 +550,26 @@ class DocumentsSettings(BaseModel):
 class PaymentsSettings(BaseModel):
     """Encaissements Stripe (module `payments`).
 
-    Sans `secret_key`, les routes de paiement répondent 503 : il n'y a pas de
-    mode démonstration. `webhook_secret` authentifie les événements que Stripe
-    envoie ; vide, ils sont tous refusés. `return_url` est la page de retour
-    par défaut après paiement ; l'app peut en proposer une autre, dans les
-    bornes du domaine (site de Karria ou schéma de l'app).
+    Sans `secret_key`, les routes de paiement répondent 503 et le catalogue dit
+    `enabled: false` : il n'y a pas de mode démonstration. `webhook_secret`
+    authentifie les événements que Stripe envoie ; vide, ils sont tous refusés.
+    `return_url` est la destination par défaut après paiement ; l'app en propose
+    une autre (`karria://…`), dans les bornes du domaine.
     """
 
     secret_key: SecretStr = SecretStr("")
     webhook_secret: SecretStr = SecretStr("")
     return_url: str = "https://karria.fr/paiement"
+    #: L'interrupteur par plateforme (ADR-0024). Éteindre `ios_enabled` cache
+    #: tout paiement dans l'app iOS sans livraison — si Apple s'y oppose. Ce
+    #: n'est pas une règle métier mais un fait d'exploitation : « ce canal
+    #: est-il ouvert aujourd'hui ? ».
+    ios_enabled: bool = True
+    android_enabled: bool = True
+    #: Stripe Tax calcule et ventile la TVA sur des prix TTC. Faux par défaut :
+    #: Stripe refuse d'ouvrir une session tant que Stripe Tax n'est pas activé
+    #: dans le tableau de bord.
+    automatic_tax: bool = False
 
 
 class CollectorAccessSettings(BaseModel):
