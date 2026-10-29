@@ -69,11 +69,16 @@ AdMob, performance de l'app). Tout est commité sur `main` des deux dépôts.
 
 | | avant (`review_before`) | après (`review_after`) |
 |---|---|---|
-| demandes cherchables au 1er tour | **11 / 20** | AFTER_SEARCHABLE |
-| précision@10 jugée | 97,0 % (98/101 ; FT 94 %, HW/Indeed/LinkedIn 100 %) | AFTER_PRECISION |
-| recherche totale p50 / p95 | 217 / 688 ms | AFTER_SEARCH |
-| dont base (lecture des candidats) p50 / p95 | 84 / 129 ms | AFTER_DB |
-| dont index Qdrant p50 / p95 | 46 / 397 ms | AFTER_INDEX |
+| demandes cherchables au 1er tour | **11 / 20** | **20 / 20** (schéma seul, aucun second appel) |
+| précision@10 jugée | 97,0 % (98/101 ; FT 94 %, HW/Indeed/LinkedIn 100 %) | 96,2 % (177/184 ; FT 99 %, Indeed 93 %, HW 91 %, LinkedIn 100 %) — équivalent, sur 20 demandes au lieu de 11 |
+| recherche totale p50 / p95 | 217 / 688 ms | 241 / 329 ms |
+| dont base (lecture des candidats) p50 / p95 | 84 / 129 ms | 108 / 154 ms (20 demandes ; le coût est la matérialisation ORM, pas le transfert : gain en mémoire, pas en latence médiane) |
+| dont index Qdrant p50 / p95 | 46 / 397 ms | 42 / 90 ms |
+
+Lecture honnête : le gain net est la **cherchabilité** (9 demandes sur 20 ne cherchaient pas) ;
+la précision est inchangée ; la latence p95 baisse (688 → 329 ms) mais les deux passes ne
+portent pas le même nombre de demandes et le serveur est partagé — à relire sur une semaine.
+`scripts/offers_eval.py` accepte désormais `find_many(light=…)`.
 
 Corpus au 29/10 : **196 196 offres actives canoniques** (FT 158 k, Indeed 21 k, HelloWork
 13,5 k, LinkedIn 3 k), index Qdrant à l'identique, outbox vide, collecte FT toutes les 3 min

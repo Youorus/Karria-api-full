@@ -234,11 +234,11 @@ class TimedOffers:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
 
-    async def find_many(self, offer_ids: Any) -> Any:
+    async def find_many(self, offer_ids: Any, *, light: bool = False) -> Any:
         """Chronométré."""
         started = time.perf_counter()
         try:
-            return await self._inner.find_many(offer_ids)
+            return await self._inner.find_many(offer_ids, light=light)
         finally:
             self._timed.record("database", time.perf_counter() - started)
 
