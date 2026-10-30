@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-29 (soir)**
+**Dernière mise à jour : 2026-10-30**
 
 ## Où on en est
 
@@ -19,12 +19,52 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | Module     | État | Routes (préfixe `/api/v1`) |
 | ---------- | ---- | -------------------------- |
 | `health`   | fait | santé |
-| `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `DELETE /auth/me` |
+| `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` (+ `ai_consent`), `DELETE /auth/me`, `GET/PUT/DELETE /auth/me/ai-consent` (ADR-0025) |
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `payments` | **en production, éteint** (ADR-0023 + **ADR-0024** « Proposées » ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-30 (consentement à l'IA et lecture sans compte — ADR-0025) — en production
+
+**Pourquoi** : revue App Store — 5.1.2 (i) (données envoyées à des tiers : accord explicite
+avant le premier usage) et 5.1.1 (v) (Karria déjà refusée pour la connexion exigée au
+lancement : les offres ne sont pas un contenu de compte).
+
+**Livré** (commit `1192117` sur `main`, déployé par le webhook Dokploy ; **migration 13
+appliquée avant le code** par un conteneur ponctuel avec le fichier monté ; `/health/ready`
+200, API/worker/collecteur en service ; `GET /offers/feed` → 200 sans jeton) — ADR-0025
+« Proposée » :
+
+- `identity` : table `identity_ai_consents` (une ligne par compte, FK en cascade ; le
+  retrait pose `revoked_at`), domaine `domain/ai_consent.py` — la **version se calcule**
+  (`2026-10.<empreinte>`) depuis les fournisseurs réellement routés (`LLM__TASKS__*`,
+  `LLM__FALLBACKS__*`, appelables seulement ; port `AiProviderCatalog` lu dans `Settings.llm`)
+  et les usages (`AiPurpose` : assistant, transcription, cv_creation, cv_import,
+  photo_enhancement, template_analysis). Un fournisseur de plus → version nouvelle →
+  l'app redemande. Routes `GET/PUT/DELETE /auth/me/ai-consent`, champ `ai_consent` sur
+  `GET /auth/me` ; erreurs `ai_consent_required` (403) et `ai_consent_version_mismatch` (409).
+- `shared/auth` : **porte d'IA refusée par défaut** (`get_ai_consent_gate`,
+  `AiConsentedPrincipalDep`), branchée dans `bootstrap/wiring.py` sur
+  `identity.EnsureAiConsent` (7 branchements). Sous la porte : `POST /assistant/messages`,
+  `/cv/draft/interpret`, `/cv/import`, `/voice/transcribe`, `/cv/photo` (si
+  `enhance=true`), `/cv/me/generated-cvs` (le score ATS est expliqué par un modèle).
+- `shared/http/ratelimit.py` : fenêtre glissante en mémoire, bornée ; `allow_anonymous`
+  dans `shared/auth`. `offers` : `GET /job-matches/me`, `/me/filter-options`, `/{id}` sans
+  session (`all_offers`, sans état ni journal ; `saved_only`/`unseen_only`/`unapplied_only`
+  → 401 `account_required`), alias `/offers/feed`, `/offers/filter-options`, `/offers/{id}` ;
+  240 lectures / 10 min par origine (`429 anonymous_rate_limited`). `documents` : galerie,
+  détail, avis publics, 120 / 10 min. Tout ce qui écrit reste authentifié.
+- Tests : `make check` vert (2 774 tests, 72 ignorés sans Docker), nouveau code à 100 % ;
+  fixtures `ai_consented` (porte ouverte pour les tests de bout en bout) et `identity_env`
+  (doublures `InMemoryAiConsentRepository`, `StaticAiProviderCatalog`).
+- Docs : ADR-0025, README `identity`, `DEPLOIEMENT.md` § Consentement, `PLUS-TARD.md`
+  (quotas anonymes par processus), contrats de l'app (`contrat-api-consentement-ia.md`
+  nouveau ; offres, modèles, compte mis à jour). Côté app : `karria_app` commit `f8a6344`.
+
+**Reste** : valider l'ADR-0025 (Marc) ; si l'API se réplique, compteur Redis derrière
+`SlidingWindowLimiter` ; un test de charge du fil anonyme avant une campagne.
 
 ### Session du 2026-10-29, suite (paiements Stripe : « sans pub », cafés, modèles Premium) — en production, éteint
 
