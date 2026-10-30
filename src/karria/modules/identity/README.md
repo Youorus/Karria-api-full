@@ -30,8 +30,18 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
   de l'app de l'appareil principal, date.
   **Aucune colonne ne désigne une personne** — ni `user_id`, ni adresse.
   Écriture seule depuis l'API ; la lecture appartient à l'analyse produit.
-- **Les raisons d'erreur** `auth_*`, `user_email_invalid` et
-  `account_deletion_*` que l'app branche (`domain/errors.py`).
+- **Le consentement à l'IA** (`identity_ai_consents`, ADR-0025) : une ligne
+  par compte — la version de l'information acceptée, les fournisseurs et
+  usages nommés, la date, le retrait. La version se **calcule** depuis le
+  routage réel des modèles (`domain/ai_consent.py`, port `AiProviderCatalog`
+  lu dans `Settings.llm`) : un fournisseur de plus redemande l'accord.
+  Routes `GET/PUT/DELETE /auth/me/ai-consent` et champ `ai_consent` de
+  `GET /auth/me`. La porte que les routes d'IA franchissent vit dans
+  `shared/auth` (`AiConsentedPrincipalDep`) ; `bootstrap/wiring.py` y
+  branche `EnsureAiConsent`.
+- **Les raisons d'erreur** `auth_*`, `user_email_invalid`,
+  `account_deletion_*`, `ai_consent_required` et
+  `ai_consent_version_mismatch` que l'app branche (`domain/errors.py`).
 - **La couture d'authentification** : `ResolveSession`, que
   `bootstrap/wiring.py` branche sur `resolve_principal`. Toute route
   protégée de l'application en dépend ; aucune ne l'importe.
@@ -86,3 +96,10 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
   plus vrai depuis l'ADR-0015.
 - **`AccountDeleted` est publié après la transaction, jamais avant** : un
   abonné ne doit pas effacer un CV pour un compte finalement conservé.
+- **Le consentement à l'IA part avec le compte par clé étrangère en
+  cascade** — la seule table du module qui s'y fie : rien n'y doit survivre
+  au compte. Le retrait, lui, ne supprime pas la ligne : `revoked_at`
+  garde la trace, parce que les deux dates sont la preuve.
+- **Une acceptation identique et valable n'est pas réécrite** : sa date
+  d'origine est ce qui en fait une preuve (même règle que le consentement
+  aux conditions).

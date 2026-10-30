@@ -26,6 +26,13 @@ répartiteur, le plafond de tentatives est multiplié par N.
 **Déclencheur :** la première réplication de l'API. Écrire alors un
 compteur Redis derrière le port `LoginThrottle` ; le use case ne change pas.
 
+### Les quotas anonymes du fil et de la galerie sont en mémoire, par processus
+
+Même limite que le limiteur de connexion (ci-dessus) : chaque worker Gunicorn
+compte seul, et un déploiement remet les compteurs à zéro. Le jour où
+l'aspiration du fil se mesure, l'implémentation à écrire est un compteur Redis
+derrière `SlidingWindowLimiter` — les routes ne changent pas (ADR-0025).
+
 ### Aucune purge des sessions closes, des parcours et des tickets
 
 Les dépôts offrent `purge_ended_before`, `purge_before` et

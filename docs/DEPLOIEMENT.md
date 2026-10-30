@@ -213,6 +213,21 @@ sert `/opt/karria/models/e5-base-int8`, produit par
 - **Couper d'urgence** : `PAYMENTS__IOS_ENABLED=false` (ou retirer la clé :
   503 partout) et redéployer l'API — aucune livraison de l'app.
 
+## Consentement à l'IA et accès sans compte (ADR-0025 — 2026-10-30)
+
+- **Migration 13** (`consentement_ia` : `identity_ai_consents`) : `aerich upgrade`
+  dans un conteneur ponctuel (voir § État réel), **avant** de déployer le code :
+  sans la table, `GET /auth/me` répond 500 et toute route d'IA refuse.
+- Aucune variable nouvelle. La liste des fournisseurs montrée à la personne se
+  lit dans `LLM__TASKS__*` / `LLM__FALLBACKS__*` : changer un fournisseur change
+  la version du consentement, et l'app redemande l'accord — c'est voulu.
+- **Vérifier** : `curl https://api.karria.fr/api/v1/offers/feed?limit=1` → 200
+  sans jeton (`mode: all_offers`) ; `.../templates/` → 200 ; `.../auth/me/ai-consent`
+  → 401 sans jeton ; avec une session, `GET /auth/me` porte `ai_consent`.
+- Les quotas anonymes (240 lectures / 10 min pour les offres, 120 pour les
+  modèles, par origine `X-Forwarded-For`) sont en mémoire, par processus
+  Gunicorn : le total réel est multiplié par le nombre de workers.
+
 ## Mesure de la recherche en production (relecture du 2026-10-29)
 
 `python -m scripts.offers_eval --runs 2 --judge --only <indices>` dans un

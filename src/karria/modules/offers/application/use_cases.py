@@ -1629,11 +1629,15 @@ def _same_day(moment: datetime | None, now: datetime) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class FeedItem:
-    """Une offre telle que la personne la voit : l'offre, sa place, son état."""
+    """Une offre telle que la personne la voit : l'offre, sa place, son état.
+
+    `state` vaut `None` pour un lecteur anonyme : il n'a rien fait de
+    l'offre, et il n'y a personne à qui rattacher un état.
+    """
 
     offer: Offer
     entry: FeedEntry | None
-    state: OfferState
+    state: OfferState | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1648,9 +1652,14 @@ class FeedPage:
 
 @dataclass(frozen=True, slots=True)
 class FeedRequest:
-    """Ce que la route demande."""
+    """Ce que la route demande.
 
-    user_id: UUID
+    `user_id` à `None` : un lecteur **anonyme** (ADR-0025). Il ne voit que
+    `ALL_OFFERS`, sans critères, sans état, sans filtre personnel — la route
+    a déjà refusé `saved_only` et consorts.
+    """
+
+    user_id: UUID | None
     limit: int
     offset: int
     sort: str = "relevance"
@@ -1689,6 +1698,8 @@ class GetFeed:
 
     async def execute(self, request: FeedRequest) -> FeedPage:
         """Une page."""
+        if request.user_id is None:
+            return await self._anonymous(request)
         stored = await self._criteria.find(request.user_id)
         mode = FeedMode.SEARCH if stored else FeedMode.ALL_OFFERS
         if request.mode is FeedMode.ALL_OFFERS:
@@ -1744,7 +1755,23 @@ class GetFeed:
         ]
         return FeedPage(mode=mode, items=items, total=total, criteria_summary=summary)
 
+    async def _anonymous(self, request: FeedRequest) -> FeedPage:
+        """Le corpus actif, le plus récent d'abord : aucun état, aucune personnalisation."""
+        contracts = tuple(ContractType(c) for c in request.contract_types if c in set(ContractType))
+        offers, total = await self._offers.page_active(
+            filters=OfferFilters(
+                contract_types=contracts,
+                cities=request.cities,
+                published_after=request.published_after,
+            ),
+            limit=request.limit,
+            offset=request.offset,
+        )
+        items = [FeedItem(offer=o, entry=None, state=None) for o in offers]
+        return FeedPage(mode=FeedMode.ALL_OFFERS, items=items, total=total, criteria_summary=None)
+
     async def _saved(self, request: FeedRequest, mode: FeedMode, summary: str | None) -> FeedPage:
+        assert request.user_id is not None  # noqa: S101 - `execute` a déjà écarté l'anonyme
         ids = list(await self._states.offer_ids_where(request.user_id, saved=True))
         found = await self._offers.find_many(ids)
         states = await self._states.find_many(request.user_id, ids)
@@ -1769,11 +1796,16 @@ class GetOfferForUser:
         self._feed = feed
         self._states = states
 
-    async def execute(self, user_id: UUID, offer_id: UUID) -> FeedItem:
-        """Rend l'offre même inactive : une offre sauvegardée reste lisible."""
+    async def execute(self, user_id: UUID | None, offer_id: UUID) -> FeedItem:
+        """Rend l'offre même inactive : une offre sauvegardée reste lisible.
+
+        Sans compte (`user_id` à `None`), l'offre seule : ni place, ni état.
+        """
         offer = await self._offers.find(offer_id)
         if offer is None:
             raise OfferNotFoundError(offer_id)
+        if user_id is None:
+            return FeedItem(offer=offer, entry=None, state=None)
         entry = await self._feed.find(user_id, offer_id)
         state = await self._states.find(user_id, offer_id) or OfferState(
             user_id=user_id, offer_id=offer_id
@@ -1967,15 +1999,18 @@ class GetFeedFilters:
         self._feed = feed
         self._offers = offers
 
-    async def execute(self, user_id: UUID, mode: FeedMode | None = None) -> FeedFilterOptions:
+    async def execute(
+        self, user_id: UUID | None, mode: FeedMode | None = None
+    ) -> FeedFilterOptions:
         """Contrats et villes du fil (ou de tout le corpus actif sans critères).
 
         `mode` suit la même règle que `GetFeed` : `ALL_OFFERS` lit tout le corpus actif même
-        si des critères existent ; `None` ou `SEARCH` le déduisent des critères.
+        si des critères existent ; `None` ou `SEARCH` le déduisent des critères. Sans compte,
+        toujours le corpus.
         """
-        stored = await self._criteria.find(user_id)
-        searching = stored is not None and mode is not FeedMode.ALL_OFFERS
-        ids = list(await self._feed.offer_ids_of(user_id)) if searching else None
+        stored = await self._criteria.find(user_id) if user_id is not None else None
+        searching = user_id is not None and stored is not None and mode is not FeedMode.ALL_OFFERS
+        ids = list(await self._feed.offer_ids_of(user_id)) if searching and user_id else None
         contracts, cities = await self._offers.filter_options(ids)
         return FeedFilterOptions(
             contract_types={kind.value: count for kind, count in contracts.items()}, cities=cities

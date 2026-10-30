@@ -15,18 +15,23 @@ from __future__ import annotations
 from fastapi import APIRouter, status
 
 from karria.modules.identity.api.dependencies import (
+    AcceptAiConsentDep,
     AppleLoginDep,
     DeleteAccountDep,
+    GetAiConsentStatusDep,
     GetCurrentUserDep,
     GoogleLoginDep,
     LogoutDep,
     RefreshSessionDep,
     RequestContextDep,
     ResendEmailLoginCodeDep,
+    RevokeAiConsentDep,
     StartEmailLoginDep,
     VerifyEmailLoginCodeDep,
 )
 from karria.modules.identity.api.schemas import (
+    AiConsentAcceptRequest,
+    AiConsentResponse,
     AppleLoginRequest,
     ChallengeResponse,
     DeleteAccountRequest,
@@ -35,9 +40,9 @@ from karria.modules.identity.api.schemas import (
     EmailVerifyRequest,
     GoogleLoginRequest,
     LoginResponse,
+    MeResponse,
     RefreshRequest,
     SessionTokens,
-    UserResponse,
 )
 from karria.shared.auth import CurrentPrincipalDep
 from karria.shared.errors import ErrorCode, error_responses
@@ -243,14 +248,87 @@ async def logout(body: RefreshRequest, logout_uc: LogoutDep) -> None:
 
 @router.get(
     "/me",
-    response_model=UserResponse,
+    response_model=MeResponse,
     summary="Qui suis-je ?",
-    description="Le compte connecté : son identifiant et son adresse. Rien d'autre.",
+    description=(
+        "Le compte connecté : son identifiant, son adresse, et où en est son consentement "
+        "à l'IA (`ai_consent`, même forme que `GET /auth/me/ai-consent`). Rien d'autre."
+    ),
     responses=error_responses(ErrorCode.UNAUTHENTICATED),
 )
-async def me(principal: CurrentPrincipalDep, reader: GetCurrentUserDep) -> UserResponse:
-    """Retourne le compte connecté."""
-    return UserResponse.from_domain(await reader.execute(principal.subject_id))
+async def me(
+    principal: CurrentPrincipalDep, reader: GetCurrentUserDep, consent: GetAiConsentStatusDep
+) -> MeResponse:
+    """Retourne le compte connecté et son consentement à l'IA."""
+    user = await reader.execute(principal.subject_id)
+    return MeResponse.from_user_and_consent(user, await consent.execute(principal.subject_id))
+
+
+# ---------------------------------------------------------------------
+# Consentement à l'IA (ADR-0025)
+# ---------------------------------------------------------------------
+
+
+@router.get(
+    "/me/ai-consent",
+    response_model=AiConsentResponse,
+    summary="Mon consentement à l'IA",
+    description=(
+        "Ce que la personne doit accepter **avant la première utilisation** d'un outil d'IA "
+        "(parler à Karria, dicter, créer ou importer un CV, améliorer une photo, expliquer "
+        "un score ATS) : la `disclosure` courante — version, fournisseurs réellement routés, "
+        "usages — et l'état de son accord. `required: true` tant qu'aucun accord ne couvre "
+        "la version courante.\n\n"
+        "Les routes d'IA refusent avec `403 forbidden` et "
+        "`details.reason = ai_consent_required` (`details.version` dit quoi accepter) : "
+        "l'app ne peut pas contourner cette porte."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED),
+)
+async def read_ai_consent(
+    principal: CurrentPrincipalDep, status_uc: GetAiConsentStatusDep
+) -> AiConsentResponse:
+    """L'état courant."""
+    return AiConsentResponse.from_status(await status_uc.execute(principal.subject_id))
+
+
+@router.put(
+    "/me/ai-consent",
+    response_model=AiConsentResponse,
+    summary="Accepter l'information sur l'IA",
+    description=(
+        "Enregistre l'accord pour la `version` lue, horodaté par le serveur, avec la liste "
+        "des fournisseurs montrés. Une acceptation déjà valable n'est pas réécrite.\n\n"
+        "Erreurs : `ai_consent_version_mismatch` (409, `details.expected_version`) si "
+        "l'information a changé entre la lecture et l'acceptation — la remontrer."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.RULE_VIOLATION),
+)
+async def accept_ai_consent(
+    body: AiConsentAcceptRequest, principal: CurrentPrincipalDep, accept: AcceptAiConsentDep
+) -> AiConsentResponse:
+    """Consigne l'accord."""
+    return AiConsentResponse.from_status(
+        await accept.execute(principal.subject_id, version=body.version)
+    )
+
+
+@router.delete(
+    "/me/ai-consent",
+    response_model=AiConsentResponse,
+    summary="Retirer mon consentement à l'IA",
+    description=(
+        "Marque le retrait (la trace de l'accord et sa date restent). Dès lors, "
+        "`required` repasse à vrai et les outils d'IA redemandent l'accord. "
+        "Silencieux s'il n'y avait rien à retirer."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED),
+)
+async def revoke_ai_consent(
+    principal: CurrentPrincipalDep, revoke: RevokeAiConsentDep
+) -> AiConsentResponse:
+    """Retire l'accord."""
+    return AiConsentResponse.from_status(await revoke.execute(principal.subject_id))
 
 
 @router.delete(

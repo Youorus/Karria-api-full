@@ -25,6 +25,7 @@ from karria.bootstrap.wiring import (
     DocumentsTemplateStore,
     IdentityAccountDirectory,
     account_directory_from_identity,
+    ai_consent_gate_from_identity,
     build_user_notifier,
     main_device_lookup_from_devices,
     subscribe_bridges,
@@ -42,7 +43,7 @@ from karria.modules.identity import (
 )
 from karria.modules.offers import get_user_notifier
 from karria.modules.payments import PremiumOffer, get_account_directory, get_template_store
-from karria.shared.auth import resolve_principal
+from karria.shared.auth import get_ai_consent_gate, resolve_principal
 from karria.shared.config import AppSettings, Environment, Settings, StorageSettings
 from karria.shared.database import NullUnitOfWork
 from karria.shared.push import PushKind, PushMessage
@@ -57,6 +58,7 @@ def test_les_deux_ports_inter_modules_sont_branches() -> None:
     assert resolve_principal in app.dependency_overrides
     assert app.dependency_overrides[get_main_device_lookup] is main_device_lookup_from_devices
     assert app.dependency_overrides[get_user_notifier] is user_notifier_from_devices
+    assert app.dependency_overrides[get_ai_consent_gate] is ai_consent_gate_from_identity
 
 
 class TestMainDeviceLookup:

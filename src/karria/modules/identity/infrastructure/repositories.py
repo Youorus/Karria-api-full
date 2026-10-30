@@ -19,6 +19,8 @@ from typing import Any
 from uuid import UUID
 
 from karria.modules.identity.domain import (
+    AiConsent,
+    AiPurpose,
     Consent,
     DepartureRecord,
     EmailAddress,
@@ -31,6 +33,7 @@ from karria.modules.identity.domain import (
     User,
 )
 from karria.modules.identity.infrastructure.models import (
+    AiConsentModel,
     DepartureFeedbackModel,
     LoginChallengeModel,
     ProviderIdentityModel,
@@ -334,4 +337,40 @@ class TortoiseDepartureFeedbackRepository:
             account_age_days=record.account_age_days,
             platform=record.platform,
             app_version=record.app_version,
+        )
+
+
+# ---------------------------------------------------------------------
+# Consentement à l'IA
+# ---------------------------------------------------------------------
+
+
+def _to_ai_consent(row: AiConsentModel) -> AiConsent:
+    return AiConsent(
+        user_id=row.user_id,
+        version=row.version,
+        providers=tuple(row.providers),
+        purposes=tuple(AiPurpose(p) for p in row.purposes if p in set(AiPurpose)),
+        accepted_at=row.accepted_at,
+        revoked_at=row.revoked_at,
+    )
+
+
+class TortoiseAiConsentRepository:
+    """Une ligne par compte, remplacée à chaque nouvel accord."""
+
+    async def find(self, user_id: UUID) -> AiConsent | None:
+        row = await AiConsentModel.get_or_none(user_id=user_id)
+        return _to_ai_consent(row) if row else None
+
+    async def save(self, consent: AiConsent) -> None:
+        await AiConsentModel.update_or_create(
+            defaults={
+                "version": consent.version,
+                "providers": list(consent.providers),
+                "purposes": [p.value for p in consent.purposes],
+                "accepted_at": consent.accepted_at,
+                "revoked_at": consent.revoked_at,
+            },
+            user_id=consent.user_id,
         )

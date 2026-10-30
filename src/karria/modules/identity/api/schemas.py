@@ -13,6 +13,7 @@ d'utilisateur, et un compte connecté a accès à tout (ADR-0007).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -27,8 +28,11 @@ from karria.modules.identity.application import (
 from karria.modules.identity.domain import (
     DEPARTURE_DETAILS_MAX_LENGTH,
     EMAIL_MAX_LENGTH,
+    AiConsentStatus,
+    AiPurpose,
     DepartureFeedback,
     User,
+    provider_name,
 )
 
 #: Longueur maximale d'une version de document contractuel.
@@ -164,6 +168,92 @@ class UserResponse(BaseModel):
     def from_domain(cls, user: User) -> UserResponse:
         """Projette un compte."""
         return cls(id=user.id, email=user.email.value)
+
+
+# ---------------------------------------------------------------------
+# Consentement à l'IA (ADR-0025)
+# ---------------------------------------------------------------------
+
+
+class AiProviderResponse(BaseModel):
+    """Un fournisseur nommé à la personne."""
+
+    id: str = Field(description="L'identifiant du routage : `gemini`, `anthropic`, `openai`…")
+    name: str = Field(description="Le nom à afficher : « Google Gemini »…")
+
+
+class AiDisclosureResponse(BaseModel):
+    """Ce que la personne doit accepter aujourd'hui."""
+
+    version: str = Field(
+        description=(
+            "La version à renvoyer dans `PUT /auth/me/ai-consent`. Change dès qu'un "
+            "fournisseur ou un usage entre ou sort : le consentement se redemande alors."
+        )
+    )
+    providers: list[AiProviderResponse] = Field(
+        description="Les fournisseurs qui reçoivent des données, d'après le routage réel."
+    )
+    purposes: list[AiPurpose] = Field(
+        description=(
+            "Les outils concernés : `assistant`, `transcription`, `cv_creation`, `cv_import`, "
+            "`photo_enhancement`, `template_analysis`."
+        )
+    )
+
+
+class AiConsentResponse(BaseModel):
+    """`GET /auth/me/ai-consent`, et le champ `ai_consent` de `GET /auth/me`."""
+
+    required: bool = Field(
+        description="Vrai : montrer l'information et obtenir l'accord avant tout outil d'IA."
+    )
+    disclosure: AiDisclosureResponse
+    accepted_version: str | None = Field(description="La version du dernier accord, ou `null`.")
+    accepted_at: datetime | None = Field(description="Quand il a été donné, ou `null`.")
+    revoked_at: datetime | None = Field(description="Quand il a été retiré, ou `null`.")
+
+    @classmethod
+    def from_status(cls, status: AiConsentStatus) -> AiConsentResponse:
+        """Projette l'état."""
+        consent = status.consent
+        return cls(
+            required=status.required,
+            disclosure=AiDisclosureResponse(
+                version=status.disclosure.version,
+                providers=[
+                    AiProviderResponse(id=p, name=provider_name(p))
+                    for p in status.disclosure.providers
+                ],
+                purposes=list(status.disclosure.purposes),
+            ),
+            accepted_version=consent.version if consent else None,
+            accepted_at=consent.accepted_at if consent else None,
+            revoked_at=consent.revoked_at if consent else None,
+        )
+
+
+class AiConsentAcceptRequest(BaseModel):
+    """`PUT /auth/me/ai-consent` : la version lue, et rien d'autre."""
+
+    version: str = Field(
+        min_length=1,
+        max_length=64,
+        description="La `disclosure.version` que la personne vient de lire et d'accepter.",
+    )
+
+
+class MeResponse(UserResponse):
+    """`GET /auth/me` : le compte, et où en est son consentement à l'IA."""
+
+    ai_consent: AiConsentResponse
+
+    @classmethod
+    def from_user_and_consent(cls, user: User, status: AiConsentStatus) -> MeResponse:
+        """Projette le compte et son consentement."""
+        return cls(
+            id=user.id, email=user.email.value, ai_consent=AiConsentResponse.from_status(status)
+        )
 
 
 class LoginResponse(BaseModel):

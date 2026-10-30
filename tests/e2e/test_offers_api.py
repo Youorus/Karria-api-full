@@ -147,7 +147,7 @@ def user(authenticate: Callable[..., Principal]) -> UUID:
 
 
 @pytest.fixture
-def use(app: FastAPI) -> Iterator[Callable[[Callable[..., Any], Stub], Stub]]:
+def use(app: FastAPI, ai_consented: None) -> Iterator[Callable[[Callable[..., Any], Stub], Stub]]:
     providers: list[Callable[..., Any]] = []
 
     def _use(provider: Callable[..., Any], stub: Stub) -> Stub:
@@ -339,8 +339,18 @@ class TestFil:
         assert response.status_code == 422
         assert response.json()["error"]["details"]["reason"] == "interaction_empty"
 
-    async def test_sans_session_le_fil_est_refuse(self, client: AsyncClient) -> None:
-        assert (await client.get(f"{API}/job-matches/me")).status_code == 401
+    async def test_sans_session_le_fil_se_lit_en_lecture_seule(
+        self, client: AsyncClient, use: Callable[..., Stub]
+    ) -> None:
+        # ADR-0025 : les offres ne sont pas un contenu de compte. Le fil se
+        # lit sans session, mais rien ne s'y écrit.
+        use(deps.get_get_feed, Stub(FeedPage(FeedMode.ALL_OFFERS, [], 0, None)))
+
+        assert (await client.get(f"{API}/job-matches/me")).status_code == 200
+        assert (await client.get(f"{API}/offers/feed")).status_code == 200
+        assert (
+            await client.post(f"{API}/job-matches/me/seen", json={"offer_ids": []})
+        ).status_code == 401
 
 
 def turn(user: UUID, *, status: DialogueStatus, with_criteria: bool) -> ConversationTurn:

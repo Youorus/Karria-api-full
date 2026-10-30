@@ -1,8 +1,20 @@
 """Routes du module `offers` : le fil (`/job-matches`), Karria (`/assistant`), la recherche (`/search`).
 
-Toutes exigent la session, sauf `/internal/offers/*` : celles-là n'acceptent
-que le jeton de service du collecteur (`karria.collector`). Le contrat en prose fait foi :
-`karria_app/docs/contrat-api-recherche.md`.
+Toutes exigent la session, sauf :
+
+- la **lecture du fil** — `GET /job-matches/me`, `/me/filter-options`,
+  `/{offer_id}` — ouverte aux lecteurs **anonymes** (ADR-0025) sous quota
+  par origine : tout le corpus, les plus récentes d'abord, sans état ni
+  critères ni journal, et jamais les filtres personnels (`saved_only`…).
+  Les mêmes gestionnaires répondent aussi sous `/offers/feed`,
+  `/offers/filter-options`, `/offers/{offer_id}` — un nom qui ne dit plus
+  « me » ; `/job-matches/me` reste servi tel quel pour l'app installée ;
+- `/internal/offers/*` : celles-là n'acceptent que le jeton de service du
+  collecteur (`karria.collector`).
+
+Karria (`POST /assistant/messages`) exige en plus le consentement à l'IA :
+le message part chez un modèle tiers. Le contrat en prose fait foi :
+`karria_app/docs/contrat-api-recherche.md`, `contrat-api-offres.md`.
 """
 
 from __future__ import annotations
@@ -23,6 +35,7 @@ from karria.modules.offers.api.dependencies import (
     GetFeedFiltersDep,
     GetMemoryDep,
     GetOfferDep,
+    GuestPrincipalDep,
     LeaseTargetsDep,
     LogoUrlDep,
     MarkSeenDep,
@@ -61,10 +74,17 @@ from karria.modules.offers.domain import (
     CriteriaNotFoundError,
     FeedMode,
 )
-from karria.shared.auth import CurrentPrincipalDep
-from karria.shared.errors import ErrorCode, InvalidInputError, error_responses
+from karria.shared.auth import AiConsentedPrincipalDep, CurrentPrincipalDep, Principal
+from karria.shared.errors import (
+    AuthenticationError,
+    ErrorCode,
+    InvalidInputError,
+    error_responses,
+)
 
 matches_router = APIRouter(prefix="/job-matches", tags=["Fil d'offres"])
+#: Le même fil sous un nom public : `/offers/feed`, `/offers/filter-options`, `/offers/{id}`.
+offers_router = APIRouter(prefix="/offers", tags=["Fil d'offres"])
 assistant_router = APIRouter(prefix="/assistant", tags=["Karria"])
 search_router = APIRouter(prefix="/search", tags=["Recherche"])
 internal_router = APIRouter(
@@ -76,7 +96,32 @@ TARGETS_MAX_LIMIT = 100
 
 FEED_MAX_LIMIT = 50
 
+#: La raison fine d'un filtre personnel demandé sans compte.
+ACCOUNT_REQUIRED = "account_required"
 
+
+def _require_account_for(principal: Principal | None, *flags: tuple[str, bool]) -> None:
+    """Un filtre qui parle de la personne (`saved_only`…) n'a pas de sens sans compte."""
+    if principal is not None:
+        return
+    asked = [name for name, value in flags if value]
+    if asked:
+        raise AuthenticationError(
+            "Connecte-toi pour retrouver tes offres.",
+            details={"reason": ACCOUNT_REQUIRED, "field": asked[0]},
+        )
+
+
+@offers_router.get(
+    "/feed",
+    operation_id="offers_public_feed",
+    response_model=FeedPageResponse,
+    summary="Le fil (nom public)",
+    description="Le même fil que `GET /job-matches/me`, sous un nom qui vaut aussi sans compte.",
+    responses=error_responses(
+        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.RATE_LIMITED
+    ),
+)
 @matches_router.get(
     "/me",
     response_model=FeedPageResponse,
@@ -94,13 +139,18 @@ FEED_MAX_LIMIT = 50
         "aux critères** — la recherche reste enregistrée et ses alertes actives ; `search` "
         "montre le fil de la recherche (sans critères, retombe sur `all_offers`). Absent : "
         "déduit des critères. La réponse rend toujours le `mode` réellement servi, et "
-        "`criteria_summary` dès que des critères existent."
+        "`criteria_summary` dès que des critères existent.\n\n"
+        "**Sans session** (ADR-0025) : la même page, en `all_offers`, sans état ni critères ; "
+        "`saved_only`, `unseen_only`, `unapplied_only` répondent `401 account_required`. "
+        "Compté par origine : `429 anonymous_rate_limited` (`retry_after`) au-delà du quota."
     ),
-    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
+    responses=error_responses(
+        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.RATE_LIMITED
+    ),
 )
 async def get_feed(
     *,
-    principal: CurrentPrincipalDep,
+    principal: GuestPrincipalDep,
     feed: GetFeedDep,
     clock: ClockDep,
     logo_url: LogoUrlDep,
@@ -116,9 +166,15 @@ async def get_feed(
     mode: FeedMode | None = None,
 ) -> FeedPageResponse:
     """Une page du fil."""
+    _require_account_for(
+        principal,
+        ("saved_only", saved_only),
+        ("unseen_only", unseen_only),
+        ("unapplied_only", unapplied_only),
+    )
     page = await feed.execute(
         FeedRequest(
-            user_id=principal.subject_id,
+            user_id=principal.subject_id if principal else None,
             limit=limit,
             offset=offset,
             sort="recent" if sort == "fresh" else "relevance",
@@ -136,23 +192,34 @@ async def get_feed(
     )
 
 
+@offers_router.get(
+    "/filter-options",
+    operation_id="offers_public_filter_options",
+    response_model=FilterOptionsResponse,
+    summary="Les valeurs de filtre (nom public)",
+    description="Les mêmes options que `GET /job-matches/me/filter-options`, sans compte aussi.",
+    responses=error_responses(ErrorCode.INVALID_INPUT, ErrorCode.RATE_LIMITED),
+)
 @matches_router.get(
     "/me/filter-options",
     response_model=FilterOptionsResponse,
     summary="Les valeurs de filtre du fil",
     description=(
         "Contrats et villes présents dans le fil de la personne (dans tout le corpus actif "
-        "sans recherche, ou avec `mode=all_offers`), avec leurs effectifs."
+        "sans recherche, ou avec `mode=all_offers`), avec leurs effectifs. Sans session : "
+        "ceux de tout le corpus actif."
     ),
-    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
+    responses=error_responses(ErrorCode.INVALID_INPUT, ErrorCode.RATE_LIMITED),
 )
 async def get_filter_options(
-    principal: CurrentPrincipalDep,
+    principal: GuestPrincipalDep,
     filters: GetFeedFiltersDep,
     mode: FeedMode | None = None,
 ) -> FilterOptionsResponse:
     """Les options."""
-    return FilterOptionsResponse.from_options(await filters.execute(principal.subject_id, mode))
+    return FilterOptionsResponse.from_options(
+        await filters.execute(principal.subject_id if principal else None, mode)
+    )
 
 
 @matches_router.post(
@@ -173,6 +240,14 @@ async def mark_seen(
     return SeenResponse(updated=await mark.execute(principal.subject_id, body.to_impressions()))
 
 
+@offers_router.get(
+    "/{offer_id}",
+    operation_id="offers_public_offer",
+    response_model=JobMatchResponse,
+    summary="Une offre (nom public)",
+    description="La même offre que `GET /job-matches/{offer_id}`, sans compte aussi.",
+    responses=error_responses(ErrorCode.NOT_FOUND, ErrorCode.RATE_LIMITED),
+)
 @matches_router.get(
     "/{offer_id}",
     response_model=JobMatchResponse,
@@ -180,19 +255,20 @@ async def mark_seen(
     description=(
         "L'offre complète (`job_offer.description`), sa pertinence pour la personne si elle est "
         "dans son fil, et son état. Une offre expirée reste lisible (`is_active: false`). "
-        "`404 offer_not_found` si elle n'existe pas."
+        "`404 offer_not_found` si elle n'existe pas. Sans session : l'offre seule, sans place "
+        "ni état, et rien n'est consigné."
     ),
-    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
+    responses=error_responses(ErrorCode.NOT_FOUND, ErrorCode.RATE_LIMITED),
 )
 async def get_match(
     offer_id: UUID,
-    principal: CurrentPrincipalDep,
+    principal: GuestPrincipalDep,
     get: GetOfferDep,
     clock: ClockDep,
     logo_url: LogoUrlDep,
 ) -> JobMatchResponse:
     """Le détail."""
-    item = await get.execute(principal.subject_id, offer_id)
+    item = await get.execute(principal.subject_id if principal else None, offer_id)
     return JobMatchResponse.from_item(item, now=clock.now(), detail=True, logo_url=logo_url)
 
 
@@ -249,10 +325,13 @@ async def update_interaction(
         "`clarify` — Karria pose une question ; `chat` — rien n'a changé. `suggestions` : des "
         "réponses rapides à proposer.\n\n"
         "`404 conversation_not_found` ; `429 assistant_rate_limited` au-delà du quota "
-        "journalier ; `503 ai_unavailable` ou `search_unavailable` si un service ne répond pas."
+        "journalier ; `503 ai_unavailable` ou `search_unavailable` si un service ne répond pas. "
+        "`403 ai_consent_required` tant que la personne n'a pas accepté l'information sur "
+        "l'IA (`GET /auth/me/ai-consent`, ADR-0025)."
     ),
     responses=error_responses(
         ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
         ErrorCode.INVALID_INPUT,
         ErrorCode.NOT_FOUND,
         ErrorCode.RATE_LIMITED,
@@ -260,7 +339,7 @@ async def update_interaction(
     ),
 )
 async def post_message(
-    body: MessageRequest, principal: CurrentPrincipalDep, converse: ConverseSearchDep
+    body: MessageRequest, principal: AiConsentedPrincipalDep, converse: ConverseSearchDep
 ) -> AssistantReplyResponse:
     """Un tour."""
     content = body.content.strip()
@@ -434,6 +513,7 @@ async def receive_batch(
 
 router = APIRouter()
 router.include_router(matches_router)
+router.include_router(offers_router)
 router.include_router(assistant_router)
 router.include_router(search_router)
 router.include_router(internal_router)

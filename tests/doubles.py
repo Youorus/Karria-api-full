@@ -44,6 +44,7 @@ from karria.modules.devices.domain import (
 )
 from karria.modules.identity.application import ConsentGiven, MainDeviceSnapshot
 from karria.modules.identity.domain import (
+    AiConsent,
     DepartureRecord,
     EmailAddress,
     InvalidSocialTokenError,
@@ -404,6 +405,31 @@ class StaticJwksSource:
         return self.document
 
 
+class InMemoryAiConsentRepository:
+    """Implémentation en mémoire du port `AiConsentRepository`."""
+
+    def __init__(self) -> None:
+        self.rows: dict[UUID, AiConsent] = {}
+
+    async def find(self, user_id: UUID) -> AiConsent | None:
+        return self.rows.get(user_id)
+
+    async def save(self, consent: AiConsent) -> None:
+        self.rows[consent.user_id] = consent
+
+
+class StaticAiProviderCatalog:
+    """Implémentation du port `AiProviderCatalog` : les mêmes fournisseurs pour toute tâche."""
+
+    def __init__(self, *providers: str) -> None:
+        self.providers = frozenset(providers)
+        self.asked: list[tuple[str, ...]] = []
+
+    def providers_for(self, tasks: Sequence[str]) -> frozenset[str]:
+        self.asked.append(tuple(tasks))
+        return self.providers
+
+
 @dataclass(slots=True)
 class IdentityEnv:
     """Toutes les doublures du module `identity`, câblées ensemble."""
@@ -413,6 +439,8 @@ class IdentityEnv:
     sessions: InMemorySessionRepository
     challenges: InMemoryLoginChallengeRepository
     departures: InMemoryDepartureFeedbackRepository
+    ai_consents: InMemoryAiConsentRepository
+    ai_catalog: StaticAiProviderCatalog
     main_device: StaticMainDeviceLookup
     sender: RecordingCodeSender
     throttle: PermissiveThrottle
@@ -429,6 +457,8 @@ class IdentityEnv:
             sessions=InMemorySessionRepository(),
             challenges=InMemoryLoginChallengeRepository(),
             departures=InMemoryDepartureFeedbackRepository(),
+            ai_consents=InMemoryAiConsentRepository(),
+            ai_catalog=StaticAiProviderCatalog("gemini"),
             main_device=StaticMainDeviceLookup(),
             sender=RecordingCodeSender(),
             throttle=PermissiveThrottle(),

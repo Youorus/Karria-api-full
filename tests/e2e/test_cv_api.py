@@ -76,7 +76,7 @@ class Fakes:
 
 
 @pytest.fixture
-def fakes(app: FastAPI) -> Fakes:
+def fakes(app: FastAPI, ai_consented: None) -> Fakes:
     doubles = Fakes()
     app.dependency_overrides.update(
         {

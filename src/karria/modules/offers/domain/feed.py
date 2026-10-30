@@ -12,6 +12,10 @@ Deux tables, deux rôles :
 
 Sans critères, le fil est le corpus entier, du plus récent au plus ancien :
 une personne qui vient de s'inscrire voit toutes les offres actives.
+
+Sans compte du tout (ADR-0025), le fil est le même corpus, en lecture
+seule : ni état, ni critères, ni journal — et compté par origine, parce
+qu'un fil public sans quota est un fil qu'on aspire.
 """
 
 from __future__ import annotations
@@ -19,9 +23,17 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
+from typing import Final
 from uuid import UUID
 
 from karria.modules.offers.domain.ranking import MatchQuality
+
+#: Lectures anonymes permises par origine sur la fenêtre : assez pour
+#: feuilleter le fil et ouvrir des offres pendant dix minutes, trop peu pour
+#: le recopier.
+GUEST_RATE_LIMIT: Final = 240
+#: Largeur de la fenêtre glissante des lectures anonymes, en secondes.
+GUEST_RATE_WINDOW_SECONDS: Final = 600
 
 
 class FeedOrigin(StrEnum):

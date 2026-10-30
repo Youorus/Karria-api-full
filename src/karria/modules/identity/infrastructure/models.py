@@ -53,6 +53,38 @@ class UserModel(BaseDBModel):
         table_description = "Comptes Karria : une adresse e-mail prouvée, rien d'autre."
 
 
+class AiConsentModel(BaseDBModel):
+    """L'accord d'une personne à la remise de ses données à un modèle tiers (ADR-0025).
+
+    Une ligne par compte : un nouvel accord remplace l'ancien, un retrait
+    pose `revoked_at` sans effacer. La clé étrangère en cascade fait partir
+    la ligne avec le compte (ADR-0015) — c'est la seule table du module qui
+    s'y fie, parce qu'elle ne contient rien qui doive survivre au compte.
+    """
+
+    user: fields.ForeignKeyRelation[UserModel] = fields.ForeignKeyField(
+        "models.UserModel", related_name="ai_consent", on_delete=fields.CASCADE, unique=True
+    )
+    user_id: UUID
+    version = fields.CharField(
+        max_length=64, description="La version de l'information acceptée (`2026-10.<empreinte>`)."
+    )
+    providers: list[str] = fields.JSONField(
+        description="Les fournisseurs nommés à la personne à ce moment-là."
+    )
+    purposes: list[str] = fields.JSONField(
+        description="Les usages nommés à la personne à ce moment-là."
+    )
+    accepted_at = fields.DatetimeField(description="Quand la personne a accepté.")
+    revoked_at = fields.DatetimeField(
+        null=True, description="Quand elle s'est ravisée, le cas échéant."
+    )
+
+    class Meta:
+        table = "identity_ai_consents"
+        table_description = "Consentement à l'IA : version acceptée, fournisseurs, retrait."
+
+
 class ProviderIdentityModel(BaseDBModel):
     """Le rattachement d'un compte à un `sub` Apple ou Google.
 

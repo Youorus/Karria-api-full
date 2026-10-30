@@ -26,7 +26,7 @@ from doubles import CollectingBus, DevicesEnv, IdentityEnv
 from karria.bootstrap.app import create_app
 from karria.modules.devices.api import dependencies as devices_deps
 from karria.modules.identity.api import dependencies as identity_deps
-from karria.shared.auth import Principal, resolve_principal
+from karria.shared.auth import AiConsentGate, Principal, get_ai_consent_gate, resolve_principal
 from karria.shared.config import (
     AppSettings,
     Environment,
@@ -118,6 +118,30 @@ def authenticate(app: FastAPI) -> Iterator[Callable[..., Principal]]:
     app.dependency_overrides.pop(resolve_principal, None)
 
 
+class _OpenAiConsentGate:
+    """Une porte d'IA qui laisse passer : la personne a consenti (ADR-0025)."""
+
+    async def ensure(self, principal: Principal) -> None:
+        _ = principal
+
+
+@pytest.fixture
+def ai_consented(app: FastAPI) -> Iterator[None]:
+    """Tient le consentement à l'IA pour acquis.
+
+    Les tests de bout en bout du CV, de Karria et des exports exercent ce
+    qui se passe **après** la porte ; la porte elle-même a ses tests
+    (`tests/unit/test_ai_consent_gate.py`).
+    """
+
+    def gate() -> AiConsentGate:
+        return _OpenAiConsentGate()
+
+    app.dependency_overrides[get_ai_consent_gate] = gate
+    yield
+    app.dependency_overrides.pop(get_ai_consent_gate, None)
+
+
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Client HTTP parlant directement à l'application ASGI, sans socket."""
@@ -142,6 +166,8 @@ def identity_env(app: FastAPI) -> Iterator[IdentityEnv]:
         identity_deps.get_session_repository: lambda: env.sessions,
         identity_deps.get_challenge_repository: lambda: env.challenges,
         identity_deps.get_departure_repository: lambda: env.departures,
+        identity_deps.get_ai_consent_repository: lambda: env.ai_consents,
+        identity_deps.get_ai_provider_catalog: lambda: env.ai_catalog,
         identity_deps.get_main_device_lookup: lambda: env.main_device,
         identity_deps.get_login_code_sender: lambda: env.sender,
         identity_deps.get_login_throttle: lambda: env.throttle,

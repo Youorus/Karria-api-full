@@ -1,4 +1,4 @@
-"""Règles pures du module `identity` : comptes, parcours, sessions."""
+"""Règles pures du module `identity` : comptes, parcours, sessions, consentement à l'IA."""
 
 from karria.modules.identity.domain.accounts import (
     EMAIL_MAX_LENGTH,
@@ -8,6 +8,17 @@ from karria.modules.identity.domain.accounts import (
     SocialProvider,
     User,
     VerifiedSocialProfile,
+)
+from karria.modules.identity.domain.ai_consent import (
+    AI_DISCLOSURE_REVISION,
+    PROVIDER_NAMES,
+    PURPOSE_TASKS,
+    AiConsent,
+    AiConsentStatus,
+    AiDisclosure,
+    AiPurpose,
+    provider_name,
+    user_data_tasks,
 )
 from karria.modules.identity.domain.departures import (
     DEPARTURE_DETAILS_MAX_LENGTH,
@@ -19,6 +30,8 @@ from karria.modules.identity.domain.departures import (
     scrub_personal_data,
 )
 from karria.modules.identity.domain.errors import (
+    AiConsentRequiredError,
+    AiConsentVersionMismatchError,
     DepartureDetailsInvalidError,
     DepartureDetailsTooLongError,
     DepartureReasonInvalidError,
@@ -61,6 +74,7 @@ from karria.modules.identity.domain.sessions import (
 
 __all__ = [
     "ACCESS_TOKEN_LIFETIME",
+    "AI_DISCLOSURE_REVISION",
     "CODE_DIGITS",
     "DEPARTURE_DETAILS_MAX_LENGTH",
     "EMAIL_MAX_LENGTH",
@@ -69,8 +83,16 @@ __all__ = [
     "MAX_CODE_ATTEMPTS",
     "MAX_CODE_SENDS",
     "MAX_SESSIONS_PER_USER",
+    "PROVIDER_NAMES",
+    "PURPOSE_TASKS",
     "REFRESH_REUSE_GRACE",
     "REFRESH_TOKEN_LIFETIME",
+    "AiConsent",
+    "AiConsentRequiredError",
+    "AiConsentStatus",
+    "AiConsentVersionMismatchError",
+    "AiDisclosure",
+    "AiPurpose",
     "Consent",
     "DepartureDetailsInvalidError",
     "DepartureDetailsTooLongError",
@@ -107,5 +129,7 @@ __all__ = [
     "normalize_details",
     "open_challenge",
     "open_session",
+    "provider_name",
     "scrub_personal_data",
+    "user_data_tasks",
 ]

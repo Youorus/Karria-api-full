@@ -6,6 +6,8 @@ from karria.modules.identity.application.events import (
     UserSignedIn,
 )
 from karria.modules.identity.application.ports import (
+    AiConsentRepository,
+    AiProviderCatalog,
     DepartureFeedbackRepository,
     JwksSource,
     LoginChallengeRepository,
@@ -20,10 +22,13 @@ from karria.modules.identity.application.ports import (
     UserRepository,
 )
 from karria.modules.identity.application.use_cases import (
+    AcceptAiConsent,
     AuthenticatedCaller,
     ChallengeStarted,
     ConsentGiven,
     DeleteAccount,
+    EnsureAiConsent,
+    GetAiConsentStatus,
     GetCurrentUser,
     IssuedSession,
     LoginOutcome,
@@ -31,18 +36,24 @@ from karria.modules.identity.application.use_cases import (
     RefreshSession,
     ResendEmailLoginCode,
     ResolveSession,
+    RevokeAiConsent,
     SocialLogin,
     StartEmailLogin,
     VerifyEmailLoginCode,
 )
 
 __all__ = [
+    "AcceptAiConsent",
     "AccountDeleted",
+    "AiConsentRepository",
+    "AiProviderCatalog",
     "AuthenticatedCaller",
     "ChallengeStarted",
     "ConsentGiven",
     "DeleteAccount",
     "DepartureFeedbackRepository",
+    "EnsureAiConsent",
+    "GetAiConsentStatus",
     "GetCurrentUser",
     "IssuedSession",
     "JwksSource",
@@ -57,6 +68,7 @@ __all__ = [
     "RefreshSession",
     "ResendEmailLoginCode",
     "ResolveSession",
+    "RevokeAiConsent",
     "SessionRepository",
     "SocialLogin",
     "SocialTokenVerifier",

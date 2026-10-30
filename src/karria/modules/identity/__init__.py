@@ -18,18 +18,24 @@ Ce qu'il expose, et pour qui :
   `bootstrap/wiring.py` branche sur le module `devices` (ADR-0015) ;
 - `GetCurrentUser`, `get_current_user_reader`, `UserNotFoundError` — la
   lecture d'un compte, que `bootstrap` branche sur le port `AccountDirectory`
-  de `payments` (l'adresse des reçus Stripe).
+  de `payments` (l'adresse des reçus Stripe) ;
+- `EnsureAiConsent`, `get_ensure_ai_consent` — la vérification du
+  consentement à l'IA, que `bootstrap/wiring.py` branche sur la porte
+  `get_ai_consent_gate` de `shared/auth` (ADR-0025). Les modules `cv`,
+  `offers` et `documents` dépendent de la porte, jamais d'`identity`.
 """
 
 from karria.modules.identity.api import router
 from karria.modules.identity.api.dependencies import (
     get_current_user_reader,
+    get_ensure_ai_consent,
     get_main_device_lookup,
     get_resolve_session,
 )
 from karria.modules.identity.application import (
     AccountDeleted,
     AuthenticatedCaller,
+    EnsureAiConsent,
     GetCurrentUser,
     MainDeviceLookup,
     MainDeviceSnapshot,
@@ -50,6 +56,7 @@ __all__ = [
     "MODULE",
     "AccountDeleted",
     "AuthenticatedCaller",
+    "EnsureAiConsent",
     "GetCurrentUser",
     "MainDeviceLookup",
     "MainDeviceSnapshot",
@@ -58,6 +65,7 @@ __all__ = [
     "UserRegistered",
     "UserSignedIn",
     "get_current_user_reader",
+    "get_ensure_ai_consent",
     "get_main_device_lookup",
     "get_resolve_session",
 ]

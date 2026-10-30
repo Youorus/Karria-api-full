@@ -47,6 +47,10 @@ Les branchements d'aujourd'hui
 - `payments.get_template_store` ← `documents.TemplateShop`. Sans lui, aucun
   modèle n'est en vente et un modèle payé ne peut pas être remis : le webhook
   répond 503 et Stripe réémet jusqu'au branchement (refus, pas faille).
+- `shared.auth.get_ai_consent_gate` ← `identity.EnsureAiConsent`. Sans lui,
+  toute route d'IA (Karria, dictée, CV en conversation, import, photo,
+  explication ATS) répond 403 `ai_consent_required` : le refus par défaut
+  de l'ADR-0025 — un oubli se voit, il ne laisse rien partir.
 
 Les ponts du bus
 ----------------
@@ -85,12 +89,14 @@ from karria.modules.documents import (
 from karria.modules.documents import build_forget_user as build_forget_user_documents
 from karria.modules.identity import (
     AccountDeleted,
+    EnsureAiConsent,
     GetCurrentUser,
     MainDeviceLookup,
     MainDeviceSnapshot,
     ResolveSession,
     UserNotFoundError,
     get_current_user_reader,
+    get_ensure_ai_consent,
     get_main_device_lookup,
     get_resolve_session,
 )
@@ -109,7 +115,7 @@ from karria.modules.payments import (
     get_template_store,
 )
 from karria.modules.payments import build_forget_user as build_forget_user_payments
-from karria.shared.auth import Principal, resolve_principal
+from karria.shared.auth import AiConsentGate, Principal, get_ai_consent_gate, resolve_principal
 from karria.shared.config import get_settings
 from karria.shared.logging import get_logger
 from karria.shared.push import PushMessage
@@ -156,6 +162,24 @@ async def resolve_principal_from_session(
     # session.
     request.state.session_id = caller.session_id
     return Principal(subject_id=caller.user_id)
+
+
+class IdentityAiConsentGate:
+    """Implémente la porte d'IA du socle avec `identity.EnsureAiConsent` (ADR-0025)."""
+
+    def __init__(self, ensure: EnsureAiConsent) -> None:
+        self._ensure = ensure
+
+    async def ensure(self, principal: Principal) -> None:
+        """Laisse passer ou lève `AiConsentRequiredError` (403 `ai_consent_required`)."""
+        await self._ensure.execute(principal.subject_id)
+
+
+def ai_consent_gate_from_identity(
+    ensure: Annotated[EnsureAiConsent, Depends(get_ensure_ai_consent)],
+) -> AiConsentGate:
+    """La réponse du module `identity` à la porte d'IA de `shared/auth`."""
+    return IdentityAiConsentGate(ensure)
 
 
 class DevicesMainDeviceLookup:
@@ -342,8 +366,11 @@ def wire_modules(app: FastAPI) -> None:
     # Sans cette ligne : aucun modèle Premium n'est en vente, et un modèle payé
     # ne peut pas être remis — le webhook refuse, Stripe réémet.
     app.dependency_overrides[get_template_store] = template_store_from_documents
+    # Sans cette ligne : aucun outil d'IA ne sert — 403 `ai_consent_required`
+    # partout, même pour qui a accepté. Le refus est voulu, pas l'oubli.
+    app.dependency_overrides[get_ai_consent_gate] = ai_consent_gate_from_identity
 
-    logger.debug("bootstrap.modules_wired", bindings=6)
+    logger.debug("bootstrap.modules_wired", bindings=7)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:

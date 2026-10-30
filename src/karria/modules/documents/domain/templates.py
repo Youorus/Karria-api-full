@@ -30,6 +30,11 @@ from uuid import UUID, uuid4
 from karria.modules.documents.domain.errors import InvalidFormatError, TemplateLockedError
 
 FORMATS: Final = ("pdf", "docx")
+#: Lectures anonymes de la galerie permises par origine sur la fenêtre
+#: (ADR-0025) : feuilleter et ouvrir des modèles, pas aspirer les aperçus.
+GUEST_RATE_LIMIT: Final = 120
+#: Largeur de la fenêtre glissante des lectures anonymes, en secondes.
+GUEST_RATE_WINDOW_SECONDS: Final = 600
 #: Interlettrage au-delà duquel un intitulé du dessin se lit lettre à lettre (em).
 SPACED_TITLE_EM: Final = 0.1
 

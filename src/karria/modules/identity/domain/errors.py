@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 # le droit de voir (règle 2 bis). Le noyau d'exceptions, lui, ne dépend de rien.
 from karria.shared.errors.exceptions import (
     AuthenticationError,
+    AuthorizationError,
     BusinessRuleViolationError,
     DependencyUnavailableError,
     InvalidInputError,
@@ -79,6 +80,13 @@ class IdentityReason(StrEnum):
     DELETION_DETAILS_INVALID = "account_deletion_details_invalid"
     #: Le mot libre dépasse le plafond. `field: "details"`, `details.max_length`.
     DELETION_DETAILS_TOO_LONG = "account_deletion_details_too_long"
+    #: Aucun consentement à l'IA valable pour l'information courante.
+    #: `details.version` dit laquelle accepter. Même valeur que
+    #: `shared.auth.AI_CONSENT_REQUIRED` : c'est la raison que l'app branche.
+    AI_CONSENT_REQUIRED = "ai_consent_required"
+    #: L'app a accepté une version qui n'est plus celle du serveur.
+    #: `details.expected_version` dit laquelle redemander.
+    AI_CONSENT_VERSION_MISMATCH = "ai_consent_version_mismatch"
 
 
 def _with_reason(
@@ -345,4 +353,38 @@ class DepartureDetailsTooLongError(InvalidInputError):
         super().__init__(
             f"Le commentaire ne doit pas dépasser {max_length} caractères.",
             details=_with_reason(self.reason, field="details", max_length=max_length),
+        )
+
+
+# ---------------------------------------------------------------------
+# Consentement à l'IA (ADR-0025)
+# ---------------------------------------------------------------------
+
+
+class AiConsentRequiredError(AuthorizationError):
+    """La personne n'a pas (ou plus) accepté la remise de ses données à un modèle tiers.
+
+    `403` et non `401` : la session est bonne, c'est une permission qui
+    manque — et l'app sait la demander, grâce à `details.version`.
+    """
+
+    reason: ClassVar[IdentityReason] = IdentityReason.AI_CONSENT_REQUIRED
+
+    def __init__(self, *, version: str, providers: tuple[str, ...]) -> None:
+        super().__init__(
+            "Avant de continuer, Karria doit t'expliquer ce qu'elle partage avec ses "
+            "fournisseurs d'IA.",
+            details=_with_reason(self.reason, version=version, providers=list(providers)),
+        )
+
+
+class AiConsentVersionMismatchError(BusinessRuleViolationError):
+    """L'accord envoyé vise une autre version que celle en cours : l'app doit la remontrer."""
+
+    reason: ClassVar[IdentityReason] = IdentityReason.AI_CONSENT_VERSION_MISMATCH
+
+    def __init__(self, *, expected_version: str) -> None:
+        super().__init__(
+            "L'information a changé depuis : relis-la avant d'accepter.",
+            details=_with_reason(self.reason, expected_version=expected_version),
         )

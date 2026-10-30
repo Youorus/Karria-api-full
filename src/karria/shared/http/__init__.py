@@ -7,6 +7,7 @@ from karria.shared.http.pagination import (
     Page,
     PaginationParams,
 )
+from karria.shared.http.ratelimit import SlidingWindowLimiter, client_ip
 
 __all__ = [
     "DEFAULT_PAGE_SIZE",
@@ -15,4 +16,6 @@ __all__ = [
     "PaginationParams",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
+    "SlidingWindowLimiter",
+    "client_ip",
 ]

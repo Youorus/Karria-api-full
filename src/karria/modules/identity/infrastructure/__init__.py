@@ -3,7 +3,9 @@
 from karria.modules.identity.infrastructure.devices import UnknownMainDeviceLookup
 from karria.modules.identity.infrastructure.jwks import HttpJwksSource
 from karria.modules.identity.infrastructure.mail import MailLoginCodeSender
+from karria.modules.identity.infrastructure.providers import SettingsAiProviderCatalog
 from karria.modules.identity.infrastructure.repositories import (
+    TortoiseAiConsentRepository,
     TortoiseDepartureFeedbackRepository,
     TortoiseLoginChallengeRepository,
     TortoiseProviderIdentityRepository,
@@ -25,7 +27,9 @@ __all__ = [
     "InMemoryLoginThrottle",
     "JwtSocialTokenVerifier",
     "MailLoginCodeSender",
+    "SettingsAiProviderCatalog",
     "Sha256TokenFactory",
+    "TortoiseAiConsentRepository",
     "TortoiseDepartureFeedbackRepository",
     "TortoiseLoginChallengeRepository",
     "TortoiseProviderIdentityRepository",

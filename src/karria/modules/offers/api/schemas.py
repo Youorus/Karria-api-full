@@ -40,6 +40,7 @@ from karria.modules.offers.domain import (
     MatchQuality,
     MemoryFacts,
     Offer,
+    OfferState,
     RemoteMode,
     Schedule,
     SearchCriteria,
@@ -224,7 +225,9 @@ class JobMatchResponse(BaseModel):
         logo_url: LogoUrl | None = None,
     ) -> JobMatchResponse:
         """Projette."""
-        entry, state, offer = item.entry, item.state, item.offer
+        entry, offer = item.entry, item.offer
+        # Un lecteur anonyme n'a d'état sur rien : tout est faux, comme au premier jour.
+        state = item.state or OfferState(user_id=offer.id, offer_id=offer.id)
         fresh = (now - offer.published_at).total_seconds() < NEW_WITHIN_HOURS * 3600
         return cls(
             id=offer.id,

@@ -65,6 +65,7 @@ from karria.modules.offers.application import (
     UpdateOfferState,
     UserNotifier,
 )
+from karria.modules.offers.domain import GUEST_RATE_LIMIT, GUEST_RATE_WINDOW_SECONDS
 from karria.modules.offers.domain.companies import logo_object_key
 from karria.modules.offers.infrastructure import (
     BanGeocoder,
@@ -94,10 +95,12 @@ from karria.modules.offers.infrastructure import (
     collection_name,
 )
 from karria.modules.offers.infrastructure.constitution import CONSTITUTION_VERSION
+from karria.shared.auth import Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import Settings
 from karria.shared.database import TortoiseUnitOfWork
 from karria.shared.errors import AuthenticationError
+from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import (
     LanguageModelDep,
     ObjectStorageDep,
@@ -216,6 +219,18 @@ class SilentNotifier:
 def get_user_notifier() -> UserNotifier:
     """**Branché par `bootstrap`** sur `devices.SendPushToUser`. Muet par défaut."""
     return SilentNotifier()
+
+
+#: Le compteur des lectures anonymes du fil : un par processus, comme le
+#: limiteur de connexion d'`identity` (même limite connue : par réplique).
+_guest_limiter = SlidingWindowLimiter(
+    max_hits=GUEST_RATE_LIMIT, window_seconds=GUEST_RATE_WINDOW_SECONDS
+)
+
+#: Une personne connectée, ou un lecteur anonyme admis sous quota (ADR-0025).
+GuestPrincipalDep = Annotated[
+    Principal | None, Depends(allow_anonymous(_guest_limiter, scope="offers"))
+]
 
 
 def require_collector(

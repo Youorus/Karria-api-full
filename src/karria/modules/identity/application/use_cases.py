@@ -23,6 +23,13 @@ Partir : tout s'efface, une trace anonyme reste
 parcours, ligne du compte — en une transaction, consigne une trace de
 départ qui ne désigne personne, puis publie `AccountDeleted` pour que les
 autres modules effacent ce qu'ils détiennent (ADR-0015).
+
+Le consentement à l'IA (ADR-0025)
+---------------------------------
+Quatre intentions sur le même objet : savoir où l'on en est, accepter,
+retirer, et **exiger** avant de servir un outil d'IA. L'information
+courante se recompose à chaque appel depuis le routage réel des modèles :
+c'est ce qui garantit qu'un changement de fournisseur redemande l'accord.
 """
 
 from __future__ import annotations
@@ -38,6 +45,8 @@ from karria.modules.identity.application.events import (
     UserSignedIn,
 )
 from karria.modules.identity.application.ports import (
+    AiConsentRepository,
+    AiProviderCatalog,
     DepartureFeedbackRepository,
     LoginChallengeRepository,
     LoginCodeSender,
@@ -53,6 +62,11 @@ from karria.modules.identity.domain import (
     CODE_DIGITS,
     LOGIN_CHALLENGE_LIFETIME,
     MAX_SESSIONS_PER_USER,
+    AiConsent,
+    AiConsentRequiredError,
+    AiConsentStatus,
+    AiConsentVersionMismatchError,
+    AiDisclosure,
     Consent,
     DepartureFeedback,
     DepartureRecord,
@@ -73,6 +87,7 @@ from karria.modules.identity.domain import (
     account_age_in_days,
     open_challenge,
     open_session,
+    user_data_tasks,
 )
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
@@ -881,3 +896,107 @@ class DeleteAccount:
         )
         if self._events is not None:
             await self._events.publish(AccountDeleted(user_id=user_id))
+
+
+# ---------------------------------------------------------------------
+# Le consentement à l'IA (ADR-0025)
+# ---------------------------------------------------------------------
+
+
+class _AiConsentBase:
+    """Le tronc commun : composer l'information courante, lire l'état de la personne."""
+
+    def __init__(self, *, consents: AiConsentRepository, catalog: AiProviderCatalog) -> None:
+        self._consents = consents
+        self._catalog = catalog
+
+    def disclosure(self) -> AiDisclosure:
+        """L'information d'aujourd'hui, depuis le routage réel des modèles."""
+        return AiDisclosure.build(self._catalog.providers_for(user_data_tasks()))
+
+    async def status_of(self, user_id: UUID) -> AiConsentStatus:
+        """Où en est la personne."""
+        return AiConsentStatus(
+            disclosure=self.disclosure(), consent=await self._consents.find(user_id)
+        )
+
+
+class GetAiConsentStatus(_AiConsentBase):
+    """`GET /auth/me/ai-consent`, et le champ `ai_consent` de `GET /auth/me`."""
+
+    async def execute(self, user_id: UUID) -> AiConsentStatus:
+        """L'état courant."""
+        return await self.status_of(user_id)
+
+
+class AcceptAiConsent(_AiConsentBase):
+    """`PUT /auth/me/ai-consent` : la personne accepte l'information **qu'elle a lue**."""
+
+    def __init__(
+        self, *, consents: AiConsentRepository, catalog: AiProviderCatalog, clock: Clock
+    ) -> None:
+        super().__init__(consents=consents, catalog=catalog)
+        self._clock = clock
+
+    async def execute(self, user_id: UUID, *, version: str) -> AiConsentStatus:
+        """Enregistre l'accord si la version est celle en cours.
+
+        Une acceptation identique et toujours valable n'est pas réécrite :
+        sa date d'origine est ce qui en fait une preuve.
+
+        Raises:
+            AiConsentVersionMismatchError: L'app a accepté une version périmée.
+        """
+        disclosure = self.disclosure()
+        if version != disclosure.version:
+            raise AiConsentVersionMismatchError(expected_version=disclosure.version)
+        existing = await self._consents.find(user_id)
+        if existing is not None and existing.covers(disclosure):
+            return AiConsentStatus(disclosure=disclosure, consent=existing)
+        consent = AiConsent.given(user_id, disclosure, at=self._clock.now())
+        await self._consents.save(consent)
+        logger.info(
+            "identity.ai_consent_given",
+            user_id=str(user_id),
+            version=consent.version,
+            providers=list(consent.providers),
+        )
+        return AiConsentStatus(disclosure=disclosure, consent=consent)
+
+
+class RevokeAiConsent(_AiConsentBase):
+    """`DELETE /auth/me/ai-consent` : la personne retire son accord ; la trace reste."""
+
+    def __init__(
+        self, *, consents: AiConsentRepository, catalog: AiProviderCatalog, clock: Clock
+    ) -> None:
+        super().__init__(consents=consents, catalog=catalog)
+        self._clock = clock
+
+    async def execute(self, user_id: UUID) -> AiConsentStatus:
+        """Marque le retrait. Sans accord préalable, rien à faire : l'état est déjà « requis »."""
+        disclosure = self.disclosure()
+        existing = await self._consents.find(user_id)
+        if existing is None or not existing.active:
+            return AiConsentStatus(disclosure=disclosure, consent=existing)
+        revoked = existing.revoked(at=self._clock.now())
+        await self._consents.save(revoked)
+        logger.info("identity.ai_consent_revoked", user_id=str(user_id), version=revoked.version)
+        return AiConsentStatus(disclosure=disclosure, consent=revoked)
+
+
+class EnsureAiConsent(_AiConsentBase):
+    """Ce que `bootstrap/wiring.py` branche sur la porte d'IA du socle."""
+
+    async def execute(self, user_id: UUID) -> None:
+        """Ne rend rien si l'accord vaut.
+
+        Raises:
+            AiConsentRequiredError: Aucun accord valable pour l'information courante.
+        """
+        status = await self.status_of(user_id)
+        if status.required:
+            logger.info("identity.ai_consent_missing", user_id=str(user_id))
+            raise AiConsentRequiredError(
+                version=status.disclosure.version, providers=status.disclosure.providers
+            )

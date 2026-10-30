@@ -18,6 +18,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from karria.modules.identity.domain import (
+    AiConsent,
     DepartureRecord,
     EmailAddress,
     LoginChallenge,
@@ -65,6 +66,32 @@ class UserRepository(Protocol):
         ce qui permet à la même adresse de s'inscrire à nouveau comme une
         première venue (ADR-0015).
         """
+        ...
+
+
+class AiConsentRepository(Protocol):
+    """Port : le consentement à l'IA d'une personne — une ligne par compte (ADR-0025)."""
+
+    async def find(self, user_id: UUID) -> AiConsent | None:
+        """Le dernier accord donné, retiré ou non ; `None` s'il n'y en a jamais eu."""
+        ...
+
+    async def save(self, consent: AiConsent) -> None:
+        """Pose ou remplace l'accord de la personne."""
+        ...
+
+
+class AiProviderCatalog(Protocol):
+    """Port : quels fournisseurs de modèles servent **réellement** ces tâches aujourd'hui.
+
+    La réponse vient du routage configuré (`LLM__TASKS__*`, `LLM__FALLBACKS__*`),
+    pour que l'information donnée à la personne reste vraie quand le
+    fournisseur change. Seuls les fournisseurs appelables comptent : une
+    route vers un fournisseur sans clé n'envoie rien à personne.
+    """
+
+    def providers_for(self, tasks: Sequence[str]) -> frozenset[str]:
+        """Les identifiants de fournisseurs (`gemini`, `anthropic`…) derrière ces tâches."""
         ...
 
 

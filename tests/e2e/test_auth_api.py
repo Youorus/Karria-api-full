@@ -85,7 +85,12 @@ class TestEmailLogin:
             headers={"Authorization": f"Bearer {login['session']['access_token']}"},
         )
         assert me.status_code == 200
-        assert me.json() == login["user"]
+        assert {k: me.json()[k] for k in ("id", "email")} == login["user"]
+        # ADR-0025 : `/auth/me` dit où en est le consentement à l'IA.
+        assert me.json()["ai_consent"]["required"] is True
+        assert me.json()["ai_consent"]["disclosure"]["providers"] == [
+            {"id": "gemini", "name": "Google Gemini"}
+        ]
 
     async def test_une_adresse_invalide_repond_422_sous_le_champ(self, client: AsyncClient) -> None:
         response = await client.post("/api/v1/auth/email/start", json={"email": "nope", **CONSENT})

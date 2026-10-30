@@ -42,6 +42,7 @@ from karria.modules.documents.application import (
 )
 from karria.modules.documents.application.use_cases import CvRenderer
 from karria.modules.documents.application.use_cases import ForgetUser as ForgetDocuments
+from karria.modules.documents.domain import GUEST_RATE_LIMIT, GUEST_RATE_WINDOW_SECONDS
 from karria.modules.documents.infrastructure import (
     FontLibrary,
     GotenbergClient,
@@ -53,10 +54,12 @@ from karria.modules.documents.infrastructure import (
     TortoiseUserTemplateRepository,
     VisionLineLabeler,
 )
+from karria.shared.auth import Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import Settings, get_settings
 from karria.shared.database import TortoiseUnitOfWork
 from karria.shared.errors.exceptions import AuthenticationError
+from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import (
     LanguageModelDep,
     ObjectStorageDep,
@@ -83,6 +86,17 @@ class NoCvSource:
 
 def get_clock() -> Clock:
     return SystemClock()
+
+
+#: Le compteur des lectures anonymes de la galerie : un par processus.
+_guest_limiter = SlidingWindowLimiter(
+    max_hits=GUEST_RATE_LIMIT, window_seconds=GUEST_RATE_WINDOW_SECONDS
+)
+
+#: Une personne connectée, ou un lecteur anonyme admis sous quota (ADR-0025).
+GuestPrincipalDep = Annotated[
+    Principal | None, Depends(allow_anonymous(_guest_limiter, scope="documents"))
+]
 
 
 def get_template_repository() -> TemplateRepository:

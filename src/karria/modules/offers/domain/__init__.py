@@ -53,6 +53,8 @@ from karria.modules.offers.domain.errors import (
     SearchUnavailableError,
 )
 from karria.modules.offers.domain.feed import (
+    GUEST_RATE_LIMIT,
+    GUEST_RATE_WINDOW_SECONDS,
     FeedEntry,
     FeedMode,
     FeedOrigin,
@@ -189,6 +191,8 @@ __all__ = [
     "DEFAULT_RADIUS_KM",
     "DEMAND_TTL",
     "FEED_MAX_ENTRIES",
+    "GUEST_RATE_LIMIT",
+    "GUEST_RATE_WINDOW_SECONDS",
     "HANDOFF_VERSION",
     "HISTORY_WINDOW",
     "IDENTITY_REPLY",

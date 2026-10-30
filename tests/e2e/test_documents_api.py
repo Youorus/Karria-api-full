@@ -66,7 +66,7 @@ class Fakes:
 
 
 @pytest.fixture
-def fakes(app: FastAPI) -> Iterator[Fakes]:
+def fakes(app: FastAPI, ai_consented: None) -> Iterator[Fakes]:
     doubles = Fakes()
     overrides = {
         get_template_repository: lambda: doubles.templates,
@@ -107,12 +107,15 @@ def reason(response: object) -> str:
 
 
 class TestGalerie:
-    async def test_sans_session_la_galerie_est_refusee(
+    async def test_sans_session_la_galerie_se_lit_mais_rien_ne_s_ecrit(
         self, client: AsyncClient, fakes: Fakes
     ) -> None:
-        response = await client.get(f"{API}/templates/")
+        # ADR-0025 : un modèle de CV n'est pas un contenu de compte.
+        listing = await client.get(f"{API}/templates/")
+        owned = await client.get(f"{API}/user-templates/me")
 
-        assert response.status_code == 401
+        assert listing.status_code == 200
+        assert owned.status_code == 401
 
     async def test_la_galerie_presente_les_modeles_publies_avec_leurs_apercus_signes(
         self, client: AsyncClient, fakes: Fakes, me: Principal

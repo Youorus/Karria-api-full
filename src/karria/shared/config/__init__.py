@@ -6,6 +6,7 @@ from karria.shared.config.providers import (
     ProviderProfile,
 )
 from karria.shared.config.settings import (
+    LLM_PROVIDERS,
     AppSettings,
     CollectorAccessSettings,
     DatabaseSettings,
@@ -31,6 +32,7 @@ from karria.shared.config.settings import (
 )
 
 __all__ = [
+    "LLM_PROVIDERS",
     "PROFILES",
     "AppSettings",
     "CollectorAccessSettings",

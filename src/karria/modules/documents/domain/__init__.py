@@ -14,6 +14,8 @@ from karria.modules.documents.domain.errors import (
 )
 from karria.modules.documents.domain.gate import Fidelity, GateDecision, evaluate
 from karria.modules.documents.domain.templates import (
+    GUEST_RATE_LIMIT,
+    GUEST_RATE_WINDOW_SECONDS,
     ExplanationStatus,
     Fit,
     GeneratedCv,
@@ -25,6 +27,8 @@ from karria.modules.documents.domain.templates import (
 )
 
 __all__ = [
+    "GUEST_RATE_LIMIT",
+    "GUEST_RATE_WINDOW_SECONDS",
     "AtsReport",
     "Check",
     "CvMissingError",

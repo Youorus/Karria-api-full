@@ -21,8 +21,13 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from karria.modules.identity.application import (
+    AcceptAiConsent,
+    AiConsentRepository,
+    AiProviderCatalog,
     DeleteAccount,
     DepartureFeedbackRepository,
+    EnsureAiConsent,
+    GetAiConsentStatus,
     GetCurrentUser,
     JwksSource,
     LoginChallengeRepository,
@@ -34,6 +39,7 @@ from karria.modules.identity.application import (
     RefreshSession,
     ResendEmailLoginCode,
     ResolveSession,
+    RevokeAiConsent,
     SessionRepository,
     SocialLogin,
     StartEmailLogin,
@@ -48,7 +54,9 @@ from karria.modules.identity.infrastructure import (
     HttpJwksSource,
     InMemoryLoginThrottle,
     MailLoginCodeSender,
+    SettingsAiProviderCatalog,
     Sha256TokenFactory,
+    TortoiseAiConsentRepository,
     TortoiseDepartureFeedbackRepository,
     TortoiseLoginChallengeRepository,
     TortoiseProviderIdentityRepository,
@@ -95,6 +103,16 @@ def get_challenge_repository() -> LoginChallengeRepository:
 def get_departure_repository() -> DepartureFeedbackRepository:
     """La trace anonyme des départs."""
     return TortoiseDepartureFeedbackRepository()
+
+
+def get_ai_consent_repository() -> AiConsentRepository:
+    """Le consentement à l'IA de chaque compte (ADR-0025)."""
+    return TortoiseAiConsentRepository()
+
+
+def get_ai_provider_catalog(settings: SettingsDep) -> AiProviderCatalog:
+    """Les fournisseurs réellement routés, lus dans la configuration."""
+    return SettingsAiProviderCatalog(settings)
 
 
 def get_main_device_lookup() -> MainDeviceLookup:
@@ -152,6 +170,8 @@ def get_login_code_sender(settings: SettingsDep) -> LoginCodeSender:
 
 ClockDep = Annotated[Clock, Depends(get_clock)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
+AiConsentRepositoryDep = Annotated[AiConsentRepository, Depends(get_ai_consent_repository)]
+AiProviderCatalogDep = Annotated[AiProviderCatalog, Depends(get_ai_provider_catalog)]
 IdentityRepositoryDep = Annotated[ProviderIdentityRepository, Depends(get_identity_repository)]
 SessionRepositoryDep = Annotated[SessionRepository, Depends(get_session_repository)]
 ChallengeRepositoryDep = Annotated[LoginChallengeRepository, Depends(get_challenge_repository)]
@@ -360,6 +380,34 @@ def get_current_user_reader(users: UserRepositoryDep) -> GetCurrentUser:
     return GetCurrentUser(users=users)
 
 
+def get_ai_consent_status(
+    consents: AiConsentRepositoryDep, catalog: AiProviderCatalogDep
+) -> GetAiConsentStatus:
+    """Assemble la lecture du consentement à l'IA."""
+    return GetAiConsentStatus(consents=consents, catalog=catalog)
+
+
+def get_accept_ai_consent(
+    consents: AiConsentRepositoryDep, catalog: AiProviderCatalogDep, clock: ClockDep
+) -> AcceptAiConsent:
+    """Assemble l'acceptation."""
+    return AcceptAiConsent(consents=consents, catalog=catalog, clock=clock)
+
+
+def get_revoke_ai_consent(
+    consents: AiConsentRepositoryDep, catalog: AiProviderCatalogDep, clock: ClockDep
+) -> RevokeAiConsent:
+    """Assemble le retrait."""
+    return RevokeAiConsent(consents=consents, catalog=catalog, clock=clock)
+
+
+def get_ensure_ai_consent(
+    consents: AiConsentRepositoryDep, catalog: AiProviderCatalogDep
+) -> EnsureAiConsent:
+    """Assemble la vérification que `bootstrap/wiring.py` branche sur la porte d'IA du socle."""
+    return EnsureAiConsent(consents=consents, catalog=catalog)
+
+
 def get_delete_account(
     *,
     users: UserRepositoryDep,
@@ -396,14 +444,23 @@ ResolveSessionDep = Annotated[ResolveSession, Depends(get_resolve_session)]
 LogoutDep = Annotated[Logout, Depends(get_logout)]
 GetCurrentUserDep = Annotated[GetCurrentUser, Depends(get_current_user_reader)]
 DeleteAccountDep = Annotated[DeleteAccount, Depends(get_delete_account)]
+GetAiConsentStatusDep = Annotated[GetAiConsentStatus, Depends(get_ai_consent_status)]
+AcceptAiConsentDep = Annotated[AcceptAiConsent, Depends(get_accept_ai_consent)]
+RevokeAiConsentDep = Annotated[RevokeAiConsent, Depends(get_revoke_ai_consent)]
+EnsureAiConsentDep = Annotated[EnsureAiConsent, Depends(get_ensure_ai_consent)]
 
 __all__ = [
+    "AcceptAiConsentDep",
+    "AiConsentRepositoryDep",
+    "AiProviderCatalogDep",
     "AppleLoginDep",
     "ChallengeRepositoryDep",
     "ClockDep",
     "CodeSenderDep",
     "DeleteAccountDep",
     "DepartureRepositoryDep",
+    "EnsureAiConsentDep",
+    "GetAiConsentStatusDep",
     "GetCurrentUserDep",
     "GoogleLoginDep",
     "IdentityRepositoryDep",
@@ -415,21 +472,28 @@ __all__ = [
     "RequestContextDep",
     "ResendEmailLoginCodeDep",
     "ResolveSessionDep",
+    "RevokeAiConsentDep",
     "SessionRepositoryDep",
     "StartEmailLoginDep",
     "ThrottleDep",
     "TokenFactoryDep",
     "UserRepositoryDep",
     "VerifyEmailLoginCodeDep",
+    "get_accept_ai_consent",
+    "get_ai_consent_repository",
+    "get_ai_consent_status",
+    "get_ai_provider_catalog",
     "get_challenge_repository",
     "get_clock",
     "get_departure_repository",
+    "get_ensure_ai_consent",
     "get_identity_repository",
     "get_jwks_source",
     "get_login_code_sender",
     "get_login_throttle",
     "get_main_device_lookup",
     "get_resolve_session",
+    "get_revoke_ai_consent",
     "get_session_repository",
     "get_token_factory",
     "get_user_repository",

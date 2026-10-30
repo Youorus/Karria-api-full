@@ -1,8 +1,15 @@
 """Routes du module `documents` — `karria_app/docs/contrat-api-modeles.md`.
 
-Toutes exigent la session, sauf `/internal/templates/*` qui n'accepte que le
-jeton d'administration (`DOCUMENTS__ADMIN_TOKEN`) : dépôt d'un PDF de modèle
-et revue des versions.
+Toutes exigent la session, sauf :
+
+- la **galerie** et le **détail** — `GET /templates/`, `GET /templates/{id}`,
+  `GET /templates/{id}/reviews` — ouverts aux lecteurs anonymes sous quota
+  par origine (ADR-0025) : un modèle de CV n'est pas un contenu de compte ;
+- `/internal/templates/*`, qui n'accepte que le jeton d'administration
+  (`DOCUMENTS__ADMIN_TOKEN`) : dépôt d'un PDF de modèle et revue des versions.
+
+L'export (`POST /cv/me/generated-cvs`) exige en plus le consentement à l'IA :
+le score ATS est **expliqué** par un modèle tiers.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 
 from karria.modules.documents.api.dependencies import (
+    GuestPrincipalDep,
     TemplatesDep,
     get_acquire,
     get_delete_generated,
@@ -61,15 +69,19 @@ from karria.modules.documents.application import (
     SubmitTemplate,
 )
 from karria.modules.documents.domain.errors import TemplateNotFoundError
-from karria.shared.auth import CurrentPrincipalDep, require_authentication
+from karria.shared.auth import (
+    AiConsentedPrincipalDep,
+    CurrentPrincipalDep,
+    require_authentication,
+)
 from karria.shared.errors import ErrorCode, InvalidInputError, error_responses
 from karria.shared.http.dependencies import ObjectStorageDep
 from karria.shared.storage import Bucket
 
 router = APIRouter()
-templates_router = APIRouter(
-    prefix="/templates", tags=["Modèles"], dependencies=[Depends(require_authentication)]
-)
+# Pas de session au niveau du routeur : la galerie se lit sans compte, et
+# chaque route qui écrit ou rend un CV la redemande explicitement.
+templates_router = APIRouter(prefix="/templates", tags=["Modèles"])
 user_router = APIRouter(
     prefix="/user-templates", tags=["Modèles"], dependencies=[Depends(require_authentication)]
 )
@@ -87,8 +99,18 @@ MAX_TEMPLATE_PDF = 20 * 1024 * 1024
 # ---------------------------------------------------------------------- galerie
 
 
-@templates_router.get("/", summary="La galerie", response_model=list[TemplateRead])
+@templates_router.get(
+    "/",
+    summary="La galerie",
+    response_model=list[TemplateRead],
+    description=(
+        "Les modèles publiés. Sans session aussi (ADR-0025), compté par origine : "
+        "`429 anonymous_rate_limited` au-delà du quota."
+    ),
+    responses=error_responses(ErrorCode.RATE_LIMITED),
+)
 async def list_templates(
+    _principal: GuestPrincipalDep,
     use_case: Annotated[ListTemplates, Depends(get_list_templates)],
     templates: TemplatesDep,
     storage: ObjectStorageDep,
@@ -111,10 +133,12 @@ async def list_templates(
     "/{template_id}",
     summary="Un modèle",
     response_model=TemplateRead,
-    responses=error_responses(ErrorCode.NOT_FOUND),
+    description="Le modèle et ses pages. Sans session aussi, compté par origine.",
+    responses=error_responses(ErrorCode.NOT_FOUND, ErrorCode.RATE_LIMITED),
 )
 async def get_template(
     template_id: UUID,
+    _principal: GuestPrincipalDep,
     use_case: Annotated[GetTemplate, Depends(get_get_template)],
     storage: ObjectStorageDep,
 ) -> TemplateRead:
@@ -124,7 +148,10 @@ async def get_template(
 
 
 @templates_router.post(
-    "/{template_id}/view", status_code=status.HTTP_204_NO_CONTENT, summary="Compter une vue"
+    "/{template_id}/view",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Compter une vue",
+    dependencies=[Depends(require_authentication)],
 )
 async def view_template(
     template_id: UUID, use_case: Annotated[RecordTemplateView, Depends(get_record_view)]
@@ -134,10 +161,16 @@ async def view_template(
 
 
 @templates_router.get(
-    "/{template_id}/reviews", summary="Les avis d'un modèle", response_model=ReviewListRead
+    "/{template_id}/reviews",
+    summary="Les avis d'un modèle",
+    response_model=ReviewListRead,
+    description="Sans session aussi, compté par origine.",
+    responses=error_responses(ErrorCode.NOT_FOUND, ErrorCode.RATE_LIMITED),
 )
 async def template_reviews(
-    template_id: UUID, use_case: Annotated[GetTemplate, Depends(get_get_template)]
+    template_id: UUID,
+    _principal: GuestPrincipalDep,
+    use_case: Annotated[GetTemplate, Depends(get_get_template)],
 ) -> ReviewListRead:
     """Forme V1 ; la v2 ne recueille pas encore d'avis."""
     template, _ = await use_case.execute(template_id)
@@ -254,10 +287,11 @@ async def select_template(
 )
 async def export_cv(
     body: ExportRequest,
-    principal: CurrentPrincipalDep,
+    principal: AiConsentedPrincipalDep,
     use_case: Annotated[ExportCv, Depends(get_export)],
     storage: ObjectStorageDep,
 ) -> GeneratedCvRead:
+    """`403 ai_consent_required` sans consentement à l'IA : le score ATS est expliqué par un modèle."""
     generated = await use_case.execute(
         principal.subject_id,
         template_id=body.template_id,

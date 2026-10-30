@@ -14,22 +14,38 @@ Contrat
 - **Le refus ne renseigne pas.** Le client reçoit « Accès refusé. » sans
   savoir quelle permission lui manque ; le détail part dans les journaux,
   où il sert au support et à personne d'autre.
+- **Une porte d'IA, refusée par défaut.** `get_ai_consent_gate` est la
+  seconde couture du socle : une route qui confie des données d'une
+  personne à un modèle tiers dépend d'`AiConsentedPrincipalDep`, et c'est
+  `bootstrap/wiring.py` qui branche le registre des consentements. Non
+  branchée, la porte refuse (403 `ai_consent_required`) : un oubli se voit,
+  il ne laisse pas passer.
+- **L'accès anonyme est une décision de route, et il est compté.**
+  `allow_anonymous` admet un appelant sans session sous un limiteur par
+  origine dont le quota appartient au module qui ouvre la route.
 
-Voir l'ADR-0007 pour la justification complète.
+Voir l'ADR-0007 pour la justification complète, l'ADR-0025 pour la porte
+d'IA et l'accès anonyme.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Annotated, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Annotated, Final, Protocol
 
 from fastapi import Depends, Request
 
 from karria.shared.auth.principal import Principal
-from karria.shared.errors import AuthenticationError, AuthorizationError
+from karria.shared.errors import AuthenticationError, AuthorizationError, RateLimitedError
+from karria.shared.http.ratelimit import SlidingWindowLimiter, client_ip
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+#: La raison fine que l'app branche quand le consentement à l'IA manque.
+AI_CONSENT_REQUIRED: Final = "ai_consent_required"
+#: La raison fine d'un appel anonyme refusé pour excès.
+ANONYMOUS_RATE_LIMITED: Final = "anonymous_rate_limited"
 
 
 class PrincipalResolver(Protocol):
@@ -99,3 +115,84 @@ def require_permissions(*required: str) -> Callable[[Principal], Principal]:
         return principal
 
     return guard
+
+
+# ---------------------------------------------------------------------
+# L'accès anonyme, compté par origine
+# ---------------------------------------------------------------------
+
+
+def allow_anonymous(
+    limiter: SlidingWindowLimiter, *, scope: str
+) -> Callable[[Request, Principal | None], Awaitable[Principal | None]]:
+    """Construit une dépendance qui admet un appelant sans session, sous quota.
+
+    Une personne connectée passe sans être comptée : son identité est déjà
+    une limite. Un appelant anonyme est compté par origine (`client_ip`),
+    dans le périmètre `scope` — deux modules ne partagent pas leurs quotas.
+
+    Args:
+        limiter: Le compteur, construit par le module avec **son** quota.
+        scope: Le préfixe de clé, pour que les routes d'un module ne
+            consomment pas le quota d'un autre.
+    """
+
+    async def guard(request: Request, principal: OptionalPrincipalDep) -> Principal | None:
+        if principal is not None:
+            return principal
+        retry_after = limiter.hit(f"{scope}|{client_ip(request)}")
+        if retry_after is not None:
+            logger.warning("auth.anonymous_throttled", scope=scope, retry_after=retry_after)
+            raise RateLimitedError(
+                "Trop de demandes. Réessaie dans un instant.",
+                retry_after=retry_after,
+                details={"reason": ANONYMOUS_RATE_LIMITED},
+            )
+        return None
+
+    return guard
+
+
+# ---------------------------------------------------------------------
+# La porte de l'IA
+# ---------------------------------------------------------------------
+
+
+class AiConsentGate(Protocol):
+    """Port : vérifie que la personne a accepté la remise de ses données à un modèle tiers.
+
+    `shared/` ne sait pas ce qu'est un consentement : il sait seulement
+    qu'une route d'IA doit demander la permission avant de servir.
+    """
+
+    async def ensure(self, principal: Principal) -> None:
+        """Ne rend rien si le consentement vaut ; lève sinon (403 `ai_consent_required`)."""
+        ...
+
+
+class RefusingAiConsentGate:
+    """Le défaut : personne n'a consenti, parce que personne n'a été branché."""
+
+    async def ensure(self, principal: Principal) -> None:
+        """Refuse, bruyamment : un branchement oublié ne doit pas servir en silence."""
+        logger.error("auth.ai_consent_gate_unwired", subject_id=str(principal.subject_id))
+        raise AuthorizationError(
+            "Le consentement à l'IA est requis.", details={"reason": AI_CONSENT_REQUIRED}
+        )
+
+
+def get_ai_consent_gate() -> AiConsentGate:
+    """La porte de l'IA. `bootstrap/wiring.py` la remplace par celle d'`identity`."""
+    return RefusingAiConsentGate()
+
+
+AiConsentGateDep = Annotated[AiConsentGate, Depends(get_ai_consent_gate)]
+
+
+async def require_ai_consent(principal: CurrentPrincipalDep, gate: AiConsentGateDep) -> Principal:
+    """Exige une session **et** un consentement à l'IA en cours de validité."""
+    await gate.ensure(principal)
+    return principal
+
+
+AiConsentedPrincipalDep = Annotated[Principal, Depends(require_ai_consent)]

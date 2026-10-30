@@ -39,7 +39,12 @@ from karria.modules.cv.domain import (
     Chapter,
     ChapterSubmission,
 )
-from karria.shared.auth import CurrentPrincipalDep, require_authentication
+from karria.shared.auth import (
+    AiConsentedPrincipalDep,
+    AiConsentGateDep,
+    CurrentPrincipalDep,
+    require_authentication,
+)
 from karria.shared.errors import ErrorCode, error_responses
 from karria.shared.http.dependencies import ObjectStorageDep
 from karria.shared.storage import REGISTRY, Bucket
@@ -99,17 +104,20 @@ async def open_draft(
     summary="Interpréter une réponse",
     response_model=InterpretationRead,
     responses=error_responses(
-        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.DEPENDENCY_FAILURE
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
 async def interpret_answer(
-    body: InterpretRequest, interpret: InterpretAnswerDep, _principal: CurrentPrincipalDep
+    body: InterpretRequest, interpret: InterpretAnswerDep, _principal: AiConsentedPrincipalDep
 ) -> InterpretationRead:
     """Un premier jet au format du chapitre, ou une relance (`off_topic`).
 
     La réponse est une donnée : aucune instruction qu'elle contient n'est
     suivie. `503` avec `details.reason = ai_unavailable` si le modèle ne
-    répond pas.
+    répond pas. `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
     result = await interpret.execute(body.chapter, body.answer, body.correction_of)
     return InterpretationRead(
@@ -167,11 +175,15 @@ async def finalize_draft(
     response_model=PhotoRead,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(
-        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.DEPENDENCY_FAILURE
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
-async def upload_photo(
+async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
     principal: CurrentPrincipalDep,
+    gate: AiConsentGateDep,
     upload: UploadPhotoDep,
     storage: ObjectStorageDep,
     image: Annotated[UploadFile, File(description="La photo (JPEG, PNG, WebP, HEIC).")],
@@ -179,7 +191,13 @@ async def upload_photo(
         bool, Form(description="Vrai si la personne a demandé l'amélioration.")
     ] = False,
 ) -> PhotoRead:
-    """`422 photo_enhance_refused` si le générateur refuse ; `503 photo_enhance_unavailable` s'il est en panne."""
+    """`422 photo_enhance_refused` si le générateur refuse ; `503 photo_enhance_unavailable` s'il est en panne.
+
+    Sans amélioration, la photo ne quitte pas Karria : la porte d'IA ne joue
+    que si `enhance` est vrai (`403 ai_consent_required` sinon, ADR-0025).
+    """
+    if enhance:
+        await gate.ensure(principal)
     payload = await image.read(_PHOTO_READ_LIMIT)
     photo = await upload.execute(principal.subject_id, payload, image.content_type, enhance=enhance)
     return await PhotoRead.present(photo, storage)
@@ -191,18 +209,24 @@ async def upload_photo(
     response_model=DraftRead,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(
-        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.DEPENDENCY_FAILURE
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
 async def import_cv(
-    principal: CurrentPrincipalDep,
+    principal: AiConsentedPrincipalDep,
     import_cv: ImportCvDep,
     presenter: DraftPresenterDep,
     file: Annotated[
         UploadFile, File(description="PDF, DOCX ou image du CV, 10 Mo et 10 pages au plus.")
     ],
 ) -> DraftRead:
-    """Les chapitres extraits sont posés en **propositions** (`in_progress`), à valider un à un."""
+    """Les chapitres extraits sont posés en **propositions** (`in_progress`), à valider un à un.
+
+    `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
+    """
     payload = await file.read(MAX_DOCUMENT_BYTES + 1)
     draft = await import_cv.execute(principal.subject_id, payload, file.content_type)
     return await presenter.present(draft)
@@ -213,17 +237,23 @@ async def import_cv(
     summary="Transcrire un enregistrement",
     response_model=TranscriptionRead,
     responses=error_responses(
-        ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT, ErrorCode.DEPENDENCY_FAILURE
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
 async def transcribe(
     transcribe_voice: TranscribeVoiceDep,
-    _principal: CurrentPrincipalDep,
+    _principal: AiConsentedPrincipalDep,
     audio_file: Annotated[
         UploadFile, File(description="M4A, MP3, WAV, WebM ou OGG, 5 minutes au plus.")
     ],
 ) -> TranscriptionRead:
-    """Le texte entendu, en français. Même contrat que la V1."""
+    """Le texte entendu, en français. Même contrat que la V1.
+
+    `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
+    """
     payload = await audio_file.read(MAX_AUDIO_BYTES + 1)
     text = await transcribe_voice.execute(payload, audio_file.content_type)
     return TranscriptionRead(text=text)
