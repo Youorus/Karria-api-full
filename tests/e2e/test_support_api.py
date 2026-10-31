@@ -216,13 +216,14 @@ class TestStream:
         return TestClient(app)
 
     def test_refuse_un_jeton_inconnu(self, ws_client: TestClient) -> None:
+        """Accepté puis fermé en 4401 : refusé avant, le client ne verrait qu'un HTTP 403."""
         with (
             pytest.raises(WebSocketDisconnect) as exc,
             ws_client.websocket_connect(
                 f"{API}/support/me/stream", headers={"Authorization": "Bearer mauvais"}
-            ),
+            ) as ws,
         ):
-            pass
+            ws.receive_text()
         assert exc.value.code == 4401
 
     def test_une_reponse_de_l_equipe_arrive_en_direct_et_le_read_pose_la_lecture(

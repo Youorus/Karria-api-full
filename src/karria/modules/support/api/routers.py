@@ -191,6 +191,10 @@ async def stream(  # noqa: PLR0917 - FastAPI injecte par position
     token = bearer_token(websocket.headers.get("authorization"))
     principal = None if token is None else await resolver.resolve(token)
     if principal is None:
+        # Accepter **puis** fermer : refusée avant l'acceptation, la poignée de
+        # main répond un HTTP 403 et le client ne voit jamais le code 4401 —
+        # il ne saurait pas distinguer « session expirée » d'une coupure.
+        await websocket.accept()
         await websocket.close(code=WS_UNAUTHENTICATED)
         return
     conversation = await get.ensure(principal.subject_id)
