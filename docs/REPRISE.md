@@ -58,9 +58,18 @@ notification. Le courriel d'alerte mène directement au fil (`…/console#<id>`)
 console : `curl -H "Authorization: Bearer $JETON" https://api.karria.fr/api/v1/internal/support/conversations`
 puis `POST …/conversations/<id>/messages` avec `{"body": "…"}`.
 
-**Déploiement** : voir `DEPLOIEMENT.md` § « Parler à l'équipe » (migration 14 et bucket
-**avant** le code, puis `SUPPORT__ADMIN_TOKEN`). État réel en fin de session : voir
-ci-dessous « État de la mise en production ».
+**Mise en production (faite le 2026-10-31)** : migration 14 appliquée puis bucket
+`karria-production-support` créé **avant** le code, par conteneurs ponctuels sur l'image en
+place avec `src/`, `scripts/`, `migrations/` du nouveau `main` montés depuis
+`/root/karria-support-deploy` ; `SUPPORT__ADMIN_TOKEN` généré et ajouté à
+`/root/karria-api.env` **et** à l'environnement Dokploy de l'API
+(`application.saveEnvironment`, qui exige `createEnvFile`). Le push de `main` a déclenché
+le webhook (les trois applications redéployées : `ffc17f2`, puis `f35aab4` « le flux accepte
+puis ferme en 4401 » — refusé avant l'acceptation, le client ne voyait qu'un HTTP 403).
+Vérifié : `/health/ready` 200 ; `/support/me` 401 sans jeton ; `/internal/support/conversations`
+401 sans jeton, 200 avec ; console 200 ; `wss://…/support/me/stream` avec un faux jeton →
+fermeture **4401** à travers Traefik. **Non vérifié** : un échange complet avec une vraie
+session (pas de compte de test en production) — à faire depuis l'iPhone de Marc.
 
 **Reste** : relecture par Fable (surtout `shared/realtime/postgres.py` et la boucle
 `api/stream.py`) ; valider l'ADR-0026 (Marc) ; tests d'intégration des dépôts `support`
