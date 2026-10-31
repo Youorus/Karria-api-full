@@ -7,6 +7,7 @@ les options de filtre (agrégats). Tout le reste est l'ORM.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
@@ -218,6 +219,22 @@ def _columns(offer: Offer) -> dict[str, Any]:
         "indexed_hash": offer.indexed_hash,
         "indexed_at": offer.indexed_at,
     }
+
+
+def _reasons_from_raw(value: object) -> tuple[str, ...]:
+    """Les raisons lues par une requête SQL brute.
+
+    Le pilote rend une colonne JSON **en texte** (`'["Paris"]'`) hors de l'ORM :
+    l'itérer donnait une raison par caractère, affichée « [·"·P·a·r… » dans
+    l'app. On décode le texte ; une valeur déjà décodée passe telle quelle.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        value = json.loads(value) if value else []
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(r) for r in value)
 
 
 class TortoiseOfferRepository:
@@ -905,7 +922,7 @@ class TortoiseFeedRepository:
                 offer_id=row["offer_id"],
                 score=float(row["score"]),
                 quality=MatchQuality(row["quality"]),
-                reasons=tuple(str(r) for r in (row["reasons"] or [])),
+                reasons=_reasons_from_raw(row["reasons"]),
                 origin=FeedOrigin(row["origin"]),
                 created_at=row["created_at"],
                 notified_at=row["notified_at"],
