@@ -27,6 +27,52 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
+### Session du 2026-10-31 (« tri rapide et filtres par mode » — ADR-0027) — FAIT PAR OPUS, À RELIRE PAR FABLE
+
+**Demande de Marc** (écran « Pour toi ») : « si je filtre, il filtre sur toutes les offres
+alors que je suis sur ma recherche » ; et un tri rapide « Pertinence · Plus récentes · Plus
+proches » sur l'écran.
+
+**Cause du bug des filtres** (vérifiée dans le code, pas reproduite sur le téléphone de
+Marc) : le jeton d'accès vit 15 min ; `/job-matches/me` et `/filter-options` admettent
+l'anonyme (ADR-0025) et `resolve_principal_from_session` rendait `None` pour un jeton
+**périmé** comme pour un jeton absent. Passé 15 min, la requête déclenchée par un filtre
+était servie **en invité** (200, `all_offers`, tout le corpus) sans 401, donc sans
+renouvellement. Les données de prod étaient saines (fil de la recherche « infirmier ·
+Beaumont » : 408 offres, toutes ≤ 30 km).
+
+**Livré** (commits `60e5199`, `800e0c0`) :
+
+- `shared/auth.allow_anonymous` : un `Bearer` présenté mais refusé → `401 unauthenticated`,
+  `reason = session_expired` (constante `SESSION_EXPIRED`). Vaut aussi pour la galerie
+  (`documents`). Toutes les versions de l'app renouvellent sur 401 et rejouent.
+- `sort=nearest` (`FeedSort` du domaine ; `fresh` → `RECENT`) : haversine en SQL pur
+  (`repositories.distance_sql`, sans PostGIS), depuis `SearchCriteria.reference_point`
+  (lieu géocodé des critères), **dans les deux modes** ; offres sans coordonnées en
+  dernier ; départage `published_at` puis id. Sans point (pas de recherche, « Toute la
+  France », télétravail seul, invité) → `422 nearest_unavailable` (`field: sort`).
+- La page rend `sort` (servi : `relevance` sans recherche devient `fresh`) et
+  `nearest_available` ; chaque `JobMatch` du fil porte `distance_km` (au dixième).
+- `saved_only` reste transversal (garantie V1) mais applique désormais contrat, ville,
+  période **et** le tri (en mémoire).
+- `filter-options?mode=` existait déjà ; c'est l'app qui ne l'envoyait pas.
+- Coût mesuré en prod : `nearest` en « Toutes les offres » ≈ 125 ms sur 308 k offres.
+- Tests : unitaires (tri, refus, sauvegardées, 401 expiré) + intégration sur PostgreSQL réel
+  (`page_active` et `feed.page` par distance, pagination). `make check` vert (2 872 tests).
+  Docker Desktop était bloqué : l'intégration a tourné sur un PostgreSQL 17 Homebrew
+  temporaire (`DB__URL=postgres://karria@127.0.0.1:55432/karria_test`) — 51 passés, MinIO
+  ignoré.
+
+**Aucune migration.** ADR-0027 « Proposée » (à valider par Marc).
+
+**En production** (webhook Dokploy, vérifié le 2026-10-31) : `/health/ready` 200 ;
+`GET /offers/feed?sort=nearest` sans compte → `422 nearest_unavailable` ;
+`GET /job-matches/me` avec un jeton bidon → `401` ; le fil invité rend `sort: fresh`,
+`nearest_available: false`. App : `karria_app` `0926d3c` (rien de natif).
+
+**Reste** : relecture Fable ; essai sur iPhone (laisser l'app 20 min, puis filtrer : le fil
+doit rester « Ma recherche ») ; valider l'ADR-0027.
+
 ### Session du 2026-10-31 (« Parler à l'équipe » — ADR-0026) — ÉCRIT PAR OPUS, À RELIRE PAR FABLE
 
 **Demande de Marc** : messagerie entre une personne et les **humains** de l'équipe (pas
