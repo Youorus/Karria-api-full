@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from karria.shared.auth import (
     AI_CONSENT_REQUIRED,
     ANONYMOUS_RATE_LIMITED,
+    SESSION_EXPIRED,
     AiConsentedPrincipalDep,
     Principal,
     RefusingAiConsentGate,
@@ -117,6 +118,19 @@ class TestAllowAnonymous:
                 response = await client.get("/public")
                 assert response.status_code == 200
                 assert response.json() == {"anonymous": False}
+
+    async def test_un_jeton_refuse_n_est_pas_un_visiteur(self) -> None:
+        # Le jeton expiré ne doit pas valoir le corpus anonyme : 401, pour que
+        # l'app renouvelle sa session et rejoue (le fil de recherche revient).
+        app = _app(SlidingWindowLimiter(max_hits=5, window_seconds=60, monotonic=_Horloge()))
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            expired = await client.get("/public", headers={"Authorization": "Bearer perime"})
+            empty = await client.get("/public", headers={"Authorization": "Bearer "})
+
+        assert expired.status_code == 401
+        assert expired.json()["error"]["details"] == {"reason": SESSION_EXPIRED}
+        assert empty.status_code == 200
+        assert empty.json() == {"anonymous": True}
 
     def test_l_origine_est_le_premier_relais_sinon_le_client(self) -> None:
         class Requete:

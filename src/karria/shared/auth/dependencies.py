@@ -46,6 +46,8 @@ logger = get_logger(__name__)
 AI_CONSENT_REQUIRED: Final = "ai_consent_required"
 #: La raison fine d'un appel anonyme refusé pour excès.
 ANONYMOUS_RATE_LIMITED: Final = "anonymous_rate_limited"
+#: La raison fine d'un jeton présenté mais refusé sur une route qui admet l'anonyme.
+SESSION_EXPIRED: Final = "session_expired"
 
 
 class PrincipalResolver(Protocol):
@@ -172,6 +174,10 @@ def allow_anonymous(
 ) -> Callable[[Request, Principal | None], Awaitable[Principal | None]]:
     """Construit une dépendance qui admet un appelant sans session, sous quota.
 
+    « Sans session » veut dire **sans jeton** : un jeton présenté et refusé
+    (expiré, révoqué) répond `401 session_expired`, pour que l'app le
+    renouvelle et rejoue la requête au lieu de recevoir la version anonyme.
+
     Une personne connectée passe sans être comptée : son identité est déjà
     une limite. Un appelant anonyme est compté par origine (`client_ip`),
     dans le périmètre `scope` — deux modules ne partagent pas leurs quotas.
@@ -185,6 +191,13 @@ def allow_anonymous(
     async def guard(request: Request, principal: OptionalPrincipalDep) -> Principal | None:
         if principal is not None:
             return principal
+        if bearer_token(request.headers.get("authorization")) is not None:
+            # Un jeton présenté mais refusé (le plus souvent : expiré, il vit
+            # 15 min) n'est **pas** un visiteur. Le servir en anonyme rendait
+            # le corpus entier à une personne en pleine recherche, sans 401
+            # pour que l'app renouvelle sa session — constaté le 2026-10-31 :
+            # « je filtre, et il filtre sur toutes les offres ».
+            raise AuthenticationError("Ta session a expiré.", details={"reason": SESSION_EXPIRED})
         retry_after = limiter.hit(f"{scope}|{client_ip(request)}")
         if retry_after is not None:
             logger.warning("auth.anonymous_throttled", scope=scope, retry_after=retry_after)

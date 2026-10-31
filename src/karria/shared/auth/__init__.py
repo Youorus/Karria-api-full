@@ -3,6 +3,7 @@
 from karria.shared.auth.dependencies import (
     AI_CONSENT_REQUIRED,
     ANONYMOUS_RATE_LIMITED,
+    SESSION_EXPIRED,
     AiConsentedPrincipalDep,
     AiConsentGate,
     AiConsentGateDep,
@@ -27,6 +28,7 @@ from karria.shared.auth.principal import Principal
 __all__ = [
     "AI_CONSENT_REQUIRED",
     "ANONYMOUS_RATE_LIMITED",
+    "SESSION_EXPIRED",
     "AiConsentGate",
     "AiConsentGateDep",
     "AiConsentedPrincipalDep",
