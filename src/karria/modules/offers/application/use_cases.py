@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -94,11 +95,13 @@ from karria.modules.offers.domain import (
     FeedEntry,
     FeedMode,
     FeedOrigin,
+    FeedSort,
     Intent,
     InteractionEvent,
     InteractionKind,
     KarriaMemory,
     MemoryFacts,
+    NearestSortUnavailableError,
     Offer,
     OfferNotFoundError,
     OfferState,
@@ -130,6 +133,7 @@ from karria.modules.offers.domain import (
     gate_rejects,
     guard_reply,
     hamming,
+    haversine_km,
     index_version,
     interval_for,
     is_fresh,
@@ -1638,6 +1642,9 @@ class FeedItem:
     offer: Offer
     entry: FeedEntry | None
     state: OfferState | None
+    #: Distance au lieu de la recherche, en km arrondis au dixième ; `None` sans point de
+    #: référence ou sans coordonnées.
+    distance_km: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1648,6 +1655,22 @@ class FeedPage:
     items: list[FeedItem]
     total: int
     criteria_summary: str | None
+    #: L'ordre réellement servi : `RELEVANCE` demandé sans recherche devient `RECENT`.
+    sort: FeedSort = FeedSort.RECENT
+    #: « Plus proches » est possible : la personne a une recherche localisée.
+    nearest_available: bool = False
+
+
+def _distance_or_last(distance: float | None) -> float:
+    return math.inf if distance is None else distance
+
+
+def distance_to(offer: Offer, near: tuple[float, float] | None) -> float | None:
+    """La distance affichable de l'offre au point, ou `None`."""
+    location = offer.location
+    if near is None or location is None or location.latitude is None or location.longitude is None:
+        return None
+    return round(haversine_km(near[0], near[1], location.latitude, location.longitude), 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1662,7 +1685,7 @@ class FeedRequest:
     user_id: UUID | None
     limit: int
     offset: int
-    sort: str = "relevance"
+    sort: FeedSort = FeedSort.RELEVANCE
     saved_only: bool = False
     unseen_only: bool = False
     unapplied_only: bool = False
@@ -1697,7 +1720,11 @@ class GetFeed:
         self._states = states
 
     async def execute(self, request: FeedRequest) -> FeedPage:
-        """Une page."""
+        """Une page.
+
+        Raises:
+            NearestSortUnavailableError: `NEAREST` sans recherche localisée.
+        """
         if request.user_id is None:
             return await self._anonymous(request)
         stored = await self._criteria.find(request.user_id)
@@ -1705,9 +1732,30 @@ class GetFeed:
         if request.mode is FeedMode.ALL_OFFERS:
             mode = FeedMode.ALL_OFFERS
         summary = stored.criteria.summary() if stored else None
+        # Le point de référence vaut dans les deux vues : « Toutes les offres »
+        # triées par distance partent aussi du lieu de la recherche.
+        near = stored.criteria.reference_point if stored else None
+        if request.sort == FeedSort.NEAREST and near is None:
+            raise NearestSortUnavailableError
+        sort = request.sort
+        if mode is FeedMode.ALL_OFFERS and sort == FeedSort.RELEVANCE:
+            sort = FeedSort.RECENT
 
+        contracts = tuple(ContractType(c) for c in request.contract_types if c in set(ContractType))
         if request.saved_only:
-            return await self._saved(request, mode, summary)
+            return await self._saved(
+                request,
+                FeedPage(
+                    mode=mode,
+                    items=[],
+                    total=0,
+                    criteria_summary=summary,
+                    sort=sort,
+                    nearest_available=near is not None,
+                ),
+                contracts,
+                near,
+            )
 
         excluded = list(
             await self._states.offer_ids_where(
@@ -1717,7 +1765,6 @@ class GetFeed:
                 applied=request.unapplied_only,
             )
         )
-        contracts = tuple(ContractType(c) for c in request.contract_types if c in set(ContractType))
         filters = OfferFilters(
             contract_types=contracts,
             cities=request.cities,
@@ -1726,7 +1773,10 @@ class GetFeed:
         )
         if mode is FeedMode.ALL_OFFERS:
             offers, total = await self._offers.page_active(
-                filters=filters, limit=request.limit, offset=request.offset
+                filters=filters,
+                limit=request.limit,
+                offset=request.offset,
+                near=near if sort == FeedSort.NEAREST else None,
             )
             entries: dict[UUID, FeedEntry] = {}
             ordered = list(offers)
@@ -1736,9 +1786,10 @@ class GetFeed:
                     user_id=request.user_id,
                     limit=request.limit,
                     offset=request.offset,
-                    sort=request.sort,
+                    sort=sort,
                     unseen_only=request.unseen_only,
                     filters=filters,
+                    near=near,
                 )
             )
             found = await self._offers.find_many([e.offer_id for e in page])
@@ -1750,13 +1801,24 @@ class GetFeed:
                 offer=o,
                 entry=entries.get(o.id),
                 state=states.get(o.id) or OfferState(user_id=request.user_id, offer_id=o.id),
+                distance_km=distance_to(o, near),
             )
             for o in ordered
         ]
-        return FeedPage(mode=mode, items=items, total=total, criteria_summary=summary)
+        return FeedPage(
+            mode=mode,
+            items=items,
+            total=total,
+            criteria_summary=summary,
+            sort=sort,
+            nearest_available=near is not None,
+        )
 
     async def _anonymous(self, request: FeedRequest) -> FeedPage:
         """Le corpus actif, le plus récent d'abord : aucun état, aucune personnalisation."""
+        if request.sort == FeedSort.NEAREST:
+            # Un invité n'a pas de recherche, donc pas de lieu d'où mesurer.
+            raise NearestSortUnavailableError
         contracts = tuple(ContractType(c) for c in request.contract_types if c in set(ContractType))
         offers, total = await self._offers.page_active(
             filters=OfferFilters(
@@ -1770,20 +1832,55 @@ class GetFeed:
         items = [FeedItem(offer=o, entry=None, state=None) for o in offers]
         return FeedPage(mode=FeedMode.ALL_OFFERS, items=items, total=total, criteria_summary=None)
 
-    async def _saved(self, request: FeedRequest, mode: FeedMode, summary: str | None) -> FeedPage:
+    async def _saved(
+        self,
+        request: FeedRequest,
+        shell: FeedPage,
+        contracts: tuple[ContractType, ...],
+        near: tuple[float, float] | None,
+    ) -> FeedPage:
+        """Les sauvegardées, **quelle que soit la vue** : une offre gardée ne se perd pas.
+
+        Les autres filtres (contrat, ville, période) et le tri s'y appliquent comme au
+        fil. La liste est courte (des dizaines) : filtrée et triée ici.
+        """
         assert request.user_id is not None  # noqa: S101 - `execute` a déjà écarté l'anonyme
         ids = list(await self._states.offer_ids_where(request.user_id, saved=True))
         found = await self._offers.find_many(ids)
         states = await self._states.find_many(request.user_id, ids)
-        ordered = sorted(
-            (found[i] for i in ids if i in found),
-            key=lambda o: states[o.id].saved_at or states[o.id].updated_at or o.published_at,
-            reverse=True,
-        )
-        window = ordered[request.offset : request.offset + request.limit]
+        kept = [
+            o
+            for o in (found[i] for i in ids if i in found)
+            if (not contracts or o.contract_type in contracts)
+            and (
+                not request.cities or (o.location is not None and o.location.city in request.cities)
+            )
+            and (request.published_after is None or o.published_at >= request.published_after)
+        ]
+        if shell.sort == FeedSort.NEAREST:
+            # Deux passes stables : la date départage, la distance range ; sans
+            # coordonnées, en dernier.
+            kept.sort(key=lambda o: (o.published_at, str(o.id)), reverse=True)
+            kept.sort(key=lambda o: _distance_or_last(distance_to(o, near)))
+        elif shell.sort == FeedSort.RECENT:
+            kept.sort(key=lambda o: (o.published_at, str(o.id)), reverse=True)
+        else:
+            kept.sort(
+                key=lambda o: states[o.id].saved_at or states[o.id].updated_at or o.published_at,
+                reverse=True,
+            )
+        window = kept[request.offset : request.offset + request.limit]
         entries = {e.offer_id: e for e in await self._feed.entries_of(request.user_id)}
-        items = [FeedItem(offer=o, entry=entries.get(o.id), state=states[o.id]) for o in window]
-        return FeedPage(mode=mode, items=items, total=len(ordered), criteria_summary=summary)
+        items = [
+            FeedItem(
+                offer=o,
+                entry=entries.get(o.id),
+                state=states[o.id],
+                distance_km=distance_to(o, near),
+            )
+            for o in window
+        ]
+        return dataclasses.replace(shell, items=items, total=len(kept))
 
 
 class GetOfferForUser:

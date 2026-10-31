@@ -59,3 +59,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0024](0024-sans-pub-cafes-et-modeles-par-stripe.md) | « Karria sans pub », cafés et modèles Premium par Stripe Checkout seul : prix par `lookup_key`, projection des droits, webhook idempotent, grâce, interrupteur par plateforme | Proposée |
 | [0025](0025-consentement-ia-et-acces-invite.md) | Consentement explicite à l'IA, versionné par le routage réel et imposé par une porte du socle ; fil et galerie lisibles sans compte, sous quota par origine | Proposée |
 | [0026](0026-parler-a-l-equipe-et-temps-reel.md) | « Parler à l'équipe » : un fil par compte, un flux WebSocket réveillé par `LISTEN`/`NOTIFY`, push et courriel sans doublon | Proposée |
+| [0027](0027-tri-du-fil-et-session-expiree.md) | Le tri du fil (pertinence, date, distance haversine) en base dans les deux modes ; un jeton présenté mais refusé répond 401 au lieu de valoir un visiteur | Proposée |

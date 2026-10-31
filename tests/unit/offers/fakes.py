@@ -9,6 +9,7 @@ le comportement d'un cas d'usage par ce qu'il a fait faire à ses ports.
 from __future__ import annotations
 
 import dataclasses
+import math
 import random
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -60,6 +61,7 @@ from karria.modules.offers.domain import (
     canonical_text,
     content_hash,
     fold,
+    haversine_km,
     simhash64,
 )
 from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits, LogoStatus
@@ -212,6 +214,13 @@ def make_entry(user_id: UUID, offer_id: UUID, **changes: Any) -> FeedEntry:
 # ---------------------------------------------------------------------
 
 
+def _distance_or_last(offer: Offer, near: tuple[float, float]) -> float:
+    location = offer.location
+    if location is None or location.latitude is None or location.longitude is None:
+        return math.inf
+    return haversine_km(near[0], near[1], location.latitude, location.longitude)
+
+
 class InMemoryOfferRepository:
     """`OfferRepository` en mémoire."""
 
@@ -292,9 +301,14 @@ class InMemoryOfferRepository:
                 self.offers[offer_id] = dataclasses.replace(self.offers[offer_id], last_seen_at=at)
 
     async def page_active(
-        self, *, filters: OfferFilters, limit: int, offset: int
+        self,
+        *,
+        filters: OfferFilters,
+        limit: int,
+        offset: int,
+        near: tuple[float, float] | None = None,
     ) -> tuple[Sequence[Offer], int]:
-        """Actives canoniques filtrées, récentes d'abord."""
+        """Actives canoniques filtrées, récentes d'abord — ou les plus proches de `near`."""
         kept = [
             o
             for o in self.offers.values()
@@ -305,6 +319,8 @@ class InMemoryOfferRepository:
             and o.id not in filters.exclude_offer_ids
         ]
         kept.sort(key=lambda o: o.published_at, reverse=True)
+        if near is not None:
+            kept.sort(key=lambda o: _distance_or_last(o, near))
         return kept[offset : offset + limit], len(kept)
 
     async def mark_indexed(

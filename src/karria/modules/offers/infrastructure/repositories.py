@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from tortoise import connections
-from tortoise.expressions import Q
+from tortoise.expressions import Q, RawSQL
 from tortoise.functions import Count
 
 from karria.modules.offers.application import (
@@ -31,6 +31,7 @@ from karria.modules.offers.domain import (
     ContractType,
     FeedEntry,
     FeedOrigin,
+    FeedSort,
     GeocodedPlace,
     InteractionEvent,
     KarriaMemory,
@@ -321,14 +322,27 @@ class TortoiseOfferRepository:
             await OfferModel.filter(id__in=list(offer_ids)).update(last_seen_at=at)
 
     async def page_active(
-        self, *, filters: OfferFilters, limit: int, offset: int
+        self,
+        *,
+        filters: OfferFilters,
+        limit: int,
+        offset: int,
+        near: tuple[float, float] | None = None,
     ) -> tuple[Sequence[Offer], int]:
-        """Actives, canoniques, récentes d'abord."""
+        """Actives, canoniques, récentes d'abord — ou les plus proches de `near`."""
         query = _apply_filters(
             OfferModel.filter(is_active=True, duplicate_of__isnull=True), filters
         )
         total = await query.count()
-        rows = await query.order_by("-published_at", "-id").offset(offset).limit(limit)
+        if near is None:
+            ordered = query.order_by("-published_at", "-id")
+        else:
+            # PostgreSQL range les `NULL` en dernier en ordre croissant : les
+            # offres sans coordonnées finissent le fil, comme le contrat le dit.
+            ordered = query.annotate(
+                distance=RawSQL(distance_sql("latitude", "longitude", near))
+            ).order_by("distance", "-published_at", "-id")
+        rows = await ordered.offset(offset).limit(limit)
         return [_to_offer(row) for row in rows], total
 
     async def mark_indexed(
@@ -429,6 +443,25 @@ class TortoiseIndexOutbox:
     async def pending(self) -> int:
         """Combien attendent."""
         return await IndexOutboxModel.all().count()
+
+
+def distance_sql(latitude: str, longitude: str, near: tuple[float, float]) -> str:
+    """La distance en kilomètres entre deux colonnes et un point, en SQL pur (haversine).
+
+    Sans PostGIS : l'extension existe en production mais pas forcément
+    ailleurs, et une formule de trigonométrie suffit à trier. `NULL` quand
+    l'offre n'a pas de coordonnées. Le point est inscrit en littéral : ce sont
+    deux `float` (Python les écrit sans rien d'autre que des chiffres, un
+    point, un signe ou un exposant), jamais une chaîne venue de la requête.
+    `LEAST` garde l'arc-sinus dans son domaine malgré l'arrondi flottant.
+    """
+    lat, lon = (repr(float(value)) for value in near)
+    return (
+        f"(12742.0 * ASIN(LEAST(1.0, SQRT("
+        f"POWER(SIN(RADIANS({latitude} - {lat}) / 2), 2) + "
+        f"COS(RADIANS({lat})) * COS(RADIANS({latitude})) * "
+        f"POWER(SIN(RADIANS({longitude} - {lon}) / 2), 2)))))"
+    )
 
 
 def _apply_filters(query: Any, filters: OfferFilters) -> Any:
@@ -904,11 +937,13 @@ class TortoiseFeedRepository:
             params.append(list(query.filters.exclude_offer_ids))
             conditions.append(f"NOT (f.offer_id = ANY(${len(params)}::uuid[]))")
         where = " AND ".join(conditions)
-        order = (
-            "o.published_at DESC, f.score DESC"
-            if query.sort == "recent"
-            else "f.score DESC, o.published_at DESC"
-        )
+        if query.sort == FeedSort.NEAREST and query.near is not None:
+            distance = distance_sql("o.latitude", "o.longitude", query.near)
+            order = f"{distance} ASC NULLS LAST, o.published_at DESC"
+        elif query.sort == FeedSort.RECENT:
+            order = "o.published_at DESC, f.score DESC"
+        else:
+            order = "f.score DESC, o.published_at DESC"
         base = f"FROM offers_feed_entries f JOIN offers_offers o ON o.id = f.offer_id WHERE {where}"
         connection = connections.get("default")
         total_rows = await connection.execute_query_dict(f"SELECT COUNT(*) AS n {base}", params)

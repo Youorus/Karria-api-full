@@ -43,6 +43,23 @@ class FeedOrigin(StrEnum):
     ALERT = "alert"
 
 
+class FeedSort(StrEnum):
+    """L'ordre du fil, choisi par la personne (ADR-0027).
+
+    Le tri se fait **en base**, pagination comprise : l'app ne retrie jamais
+    une page, sinon la page suivante contredirait la précédente.
+    """
+
+    #: Le score de la recherche, puis la date. Sans recherche, il n'y a pas de
+    #: pertinence : le fil retombe sur `RECENT`.
+    RELEVANCE = "relevance"
+    #: Les plus récemment publiées d'abord.
+    RECENT = "recent"
+    #: Du plus proche au plus loin du lieu de la recherche ; les offres sans
+    #: coordonnées en dernier. Exige un point de référence (`SearchCriteria.reference_point`).
+    NEAREST = "nearest"
+
+
 class FeedMode(StrEnum):
     """Ce que le fil montre."""
 

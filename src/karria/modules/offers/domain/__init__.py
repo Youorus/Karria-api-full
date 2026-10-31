@@ -49,6 +49,7 @@ from karria.modules.offers.domain.errors import (
     CriteriaNotFoundError,
     ModelOutputInvalidError,
     ModelUnavailableError,
+    NearestSortUnavailableError,
     OfferNotFoundError,
     SearchUnavailableError,
 )
@@ -58,6 +59,7 @@ from karria.modules.offers.domain.feed import (
     FeedEntry,
     FeedMode,
     FeedOrigin,
+    FeedSort,
     OfferState,
     entries_to_remove,
 )
@@ -227,6 +229,7 @@ __all__ = [
     "FeedEntry",
     "FeedMode",
     "FeedOrigin",
+    "FeedSort",
     "GeocodedPlace",
     "GuardVerdict",
     "Intent",
@@ -240,6 +243,7 @@ __all__ = [
     "MemoryFacts",
     "ModelOutputInvalidError",
     "ModelUnavailableError",
+    "NearestSortUnavailableError",
     "Offer",
     "OfferNotFoundError",
     "OfferState",

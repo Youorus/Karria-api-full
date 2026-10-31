@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Literal, Self
+from typing import Final, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -34,6 +34,7 @@ from karria.modules.offers.domain import (
     ExperienceLevel,
     FeedMode,
     FeedOrigin,
+    FeedSort,
     Intent,
     KarriaMemory,
     LocationCriteria,
@@ -213,6 +214,11 @@ class JobMatchResponse(BaseModel):
     saved: bool
     applied: bool
     dismissed: bool
+    distance_km: float | None = Field(
+        default=None,
+        description="Distance au lieu de la recherche, en km (au dixième) ; `null` sans "
+        "recherche localisée ou sans coordonnées. Rendue dans le fil seulement.",
+    )
     job_offer: JobOfferResponse
 
     @classmethod
@@ -242,8 +248,17 @@ class JobMatchResponse(BaseModel):
             saved=state.saved,
             applied=state.applied,
             dismissed=state.dismissed,
+            distance_km=item.distance_km,
             job_offer=JobOfferResponse.from_domain(offer, detail=detail, logo_url=logo_url),
         )
+
+
+#: L'ordre du domaine vers le vocabulaire de l'API (`fresh`, hérité de la V1).
+SORT_NAMES: Final[dict[FeedSort, Literal["relevance", "fresh", "nearest"]]] = {
+    FeedSort.RELEVANCE: "relevance",
+    FeedSort.RECENT: "fresh",
+    FeedSort.NEAREST: "nearest",
+}
 
 
 class FeedPageResponse(BaseModel):
@@ -260,6 +275,12 @@ class FeedPageResponse(BaseModel):
     )
     criteria_summary: str | None = Field(
         description="La recherche en cours en une ligne (« Serveur · Paris (30 km) · CDI »)."
+    )
+    sort: Literal["relevance", "fresh", "nearest"] = Field(
+        description="L'ordre servi : `relevance` demandé sans recherche devient `fresh`."
+    )
+    nearest_available: bool = Field(
+        description="`sort=nearest` est possible : la personne a une recherche localisée."
     )
 
     @classmethod
@@ -283,6 +304,8 @@ class FeedPageResponse(BaseModel):
             has_next=offset + len(page.items) < page.total,
             mode=page.mode,
             criteria_summary=page.criteria_summary,
+            sort=SORT_NAMES[page.sort],
+            nearest_available=page.nearest_available,
         )
 
 

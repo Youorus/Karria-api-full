@@ -20,7 +20,7 @@ le message part chez un modèle tiers. Le contrat en prose fait foi :
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
@@ -73,6 +73,7 @@ from karria.modules.offers.domain import (
     BatchRejectedError,
     CriteriaNotFoundError,
     FeedMode,
+    FeedSort,
 )
 from karria.shared.auth import AiConsentedPrincipalDep, CurrentPrincipalDep, Principal
 from karria.shared.errors import (
@@ -95,6 +96,13 @@ internal_router = APIRouter(
 TARGETS_MAX_LIMIT = 100
 
 FEED_MAX_LIMIT = 50
+
+#: Le vocabulaire de `sort` (celui de la V1 : `fresh`) vers l'ordre du domaine.
+SORT_PARAMETERS: Final = {
+    "relevance": FeedSort.RELEVANCE,
+    "fresh": FeedSort.RECENT,
+    "nearest": FeedSort.NEAREST,
+}
 
 #: La raison fine d'un filtre personnel demandé sans compte.
 ACCOUNT_REQUIRED = "account_required"
@@ -128,9 +136,15 @@ def _require_account_for(principal: Principal | None, *flags: tuple[str, bool]) 
     summary="Le fil",
     description=(
         "Sans recherche (`mode: all_offers`) : toutes les offres actives, les plus récentes "
-        "d'abord. Avec une recherche (`mode: search`) : les offres retenues pour la personne, "
-        "par pertinence (`sort=relevance`, défaut) ou par date (`sort=fresh`). Les offres "
-        "écartées n'apparaissent jamais.\n\n"
+        "d'abord. Avec une recherche (`mode: search`) : les offres retenues pour la personne. "
+        "Les offres écartées n'apparaissent jamais.\n\n"
+        "`sort` (ADR-0027) : `relevance` (défaut ; sans recherche, il n'y a pas de pertinence "
+        "et le fil sert `fresh`), `fresh` (les plus récemment publiées d'abord), `nearest` (du "
+        "plus proche au plus loin du lieu de la recherche, dans les deux modes ; offres sans "
+        "coordonnées en dernier ; départage par date puis identifiant). `nearest` sans "
+        "recherche localisée, ou sans session : `422 nearest_unavailable` — la réponse dit "
+        "d'avance si c'est possible (`nearest_available`). La réponse rend le `sort` servi, "
+        "et `distance_km` par offre dès qu'un lieu de référence existe.\n\n"
         "`saved_only` : les sauvegardées, quelle que soit la recherche. `unseen_only` : jamais "
         "affichées. `unapplied_only` : sans candidature. `contract_types` et `cities` : les "
         "`value` de `GET /job-matches/me/filter-options`, séparées par des virgules. "
@@ -156,7 +170,7 @@ async def get_feed(
     logo_url: LogoUrlDep,
     limit: Annotated[int, Query(ge=1, le=FEED_MAX_LIMIT)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    sort: Literal["relevance", "fresh"] = "relevance",
+    sort: Literal["relevance", "fresh", "nearest"] = "relevance",
     saved_only: bool = False,
     unseen_only: bool = False,
     unapplied_only: bool = False,
@@ -177,7 +191,7 @@ async def get_feed(
             user_id=principal.subject_id if principal else None,
             limit=limit,
             offset=offset,
-            sort="recent" if sort == "fresh" else "relevance",
+            sort=SORT_PARAMETERS[sort],
             saved_only=saved_only,
             unseen_only=unseen_only,
             unapplied_only=unapplied_only,

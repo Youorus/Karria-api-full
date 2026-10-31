@@ -166,6 +166,38 @@ class TestRoutesSansSession:
         assert response.status_code == 200
         assert response.json()["count"] == 0
 
+    async def test_plus_proches_sans_compte_est_refuse_proprement(
+        self, client: AsyncClient, guest_app: InMemoryOfferRepository
+    ) -> None:
+        response = await client.get("/api/v1/offers/feed", params={"sort": "nearest"})
+        fresh = await client.get("/api/v1/offers/feed", params={"sort": "fresh"})
+
+        assert response.status_code == 422
+        assert response.json()["error"]["details"] == {
+            "reason": "nearest_unavailable",
+            "field": "sort",
+        }
+        assert fresh.json()["sort"] == "fresh"
+        assert fresh.json()["nearest_available"] is False
+
+    @pytest.mark.usefixtures("identity_env")
+    async def test_une_session_expiree_repond_401_et_non_le_fil_anonyme(
+        self, client: AsyncClient, guest_app: InMemoryOfferRepository
+    ) -> None:
+        # La vraie couture `resolve_principal` (doublures d'`identity`) : un
+        # jeton inconnu ne résout personne.
+        response = await client.get(
+            "/api/v1/job-matches/me", headers={"Authorization": "Bearer jeton-perime"}
+        )
+        options = await client.get(
+            "/api/v1/job-matches/me/filter-options",
+            headers={"Authorization": "Bearer jeton-perime"},
+        )
+
+        assert response.status_code == 401
+        assert response.json()["error"]["details"]["reason"] == "session_expired"
+        assert options.status_code == 401
+
     async def test_au_dela_du_quota_l_origine_attend(
         self, client: AsyncClient, guest_app: InMemoryOfferRepository
     ) -> None:

@@ -20,6 +20,7 @@ from karria.modules.offers.domain import (
     ContractType,
     DialogueProposal,
     FeedEntry,
+    FeedSort,
     GeocodedPlace,
     InteractionEvent,
     KarriaMemory,
@@ -112,9 +113,19 @@ class OfferRepository(Protocol):
         ...
 
     async def page_active(
-        self, *, filters: OfferFilters, limit: int, offset: int
+        self,
+        *,
+        filters: OfferFilters,
+        limit: int,
+        offset: int,
+        near: tuple[float, float] | None = None,
     ) -> tuple[Sequence[Offer], int]:
-        """Les offres actives canoniques, les plus récentes d'abord, et leur total."""
+        """Les offres actives canoniques et leur total.
+
+        Les plus récentes d'abord ; avec `near` (latitude, longitude), les plus
+        proches d'abord, les offres sans coordonnées en dernier, puis la date et
+        l'identifiant pour que la pagination reste stable.
+        """
         ...
 
     async def mark_indexed(
@@ -609,10 +620,12 @@ class FeedQuery:
     user_id: UUID
     limit: int
     offset: int
-    sort: str = "relevance"
+    sort: FeedSort = FeedSort.RELEVANCE
     saved_only: bool = False
     unseen_only: bool = False
     filters: OfferFilters = field(default_factory=OfferFilters)
+    #: Le point de référence de `FeedSort.NEAREST` (latitude, longitude) ; ignoré sinon.
+    near: tuple[float, float] | None = None
 
 
 class FeedRepository(Protocol):

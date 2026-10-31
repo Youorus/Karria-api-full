@@ -61,6 +61,10 @@
   sur `GET /job-matches/me` lit le corpus actif sans toucher aux critères, qui
   continuent de nourrir le fil et les alertes. Seul `DELETE /search/criteria`
   arrête la recherche.
+- **Le tri se fait en base** (ADR-0027) : `relevance`, `fresh`, `nearest`
+  (haversine en SQL depuis le lieu géocodé des critères, sans PostGIS ; offres
+  sans coordonnées en dernier ; départage date puis identifiant). Sans lieu :
+  `422 nearest_unavailable`.
 - **L'adresse d'un logo chez la source n'est jamais servie** (elle expire et livre
   l'IP de la personne) : `company.logo` est notre adresse stable, ou `null`
   (initiales dans l'app). Le logo se cherche **par entreprise**, jamais par offre,

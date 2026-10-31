@@ -20,6 +20,7 @@ from karria.modules.offers.domain import (
     ContractType,
     FeedEntry,
     FeedOrigin,
+    FeedSort,
     GeocodedPlace,
     Location,
     MatchQuality,
@@ -218,6 +219,23 @@ class TestOffres:
         assert total == 2
         _, everything = await repository.page_active(filters=OfferFilters(), limit=1, offset=0)
         assert everything == 4
+
+    async def test_la_page_active_par_distance_en_sql(self) -> None:
+        repository = TortoiseOfferRepository()
+        paris = make_offer(published_at=NOW - timedelta(days=2))  # géocodée à Paris
+        lyon = make_offer(
+            location=Location(label="Lyon", city="Lyon", latitude=45.76, longitude=4.83),
+            published_at=NOW,
+        )
+        nowhere = make_offer(location=Location(label="?", city="Paris"), published_at=NOW)
+        await repository.insert_many([lyon, nowhere, paris])
+
+        page, total = await repository.page_active(
+            filters=OfferFilters(), limit=10, offset=0, near=(48.80, 2.13)
+        )
+
+        assert [o.id for o in page] == [paris.id, lyon.id, nowhere.id]
+        assert total == 3
 
     async def test_l_etat_d_indexation_et_la_reconciliation(self) -> None:
         repository = TortoiseOfferRepository()
@@ -504,7 +522,9 @@ class TestFil:
         )
 
         by_score, total = await feed.page(FeedQuery(user_id=user, limit=10, offset=0))
-        by_date, _ = await feed.page(FeedQuery(user_id=user, limit=10, offset=0, sort="recent"))
+        by_date, _ = await feed.page(
+            FeedQuery(user_id=user, limit=10, offset=0, sort=FeedSort.RECENT)
+        )
         filtered, filtered_total = await feed.page(
             FeedQuery(
                 user_id=user,
@@ -524,6 +544,16 @@ class TestFil:
         assert total == 3
         assert by_date[0].offer_id == newest.id
         assert ([e.offer_id for e in filtered], filtered_total) == ([best.id], 1)
+        # Depuis Lyon : les deux offres de Paris à égalité (la date départage),
+        # celle de Lyon sans coordonnées en dernier.
+        by_distance, _ = await feed.page(
+            FeedQuery(user_id=user, limit=10, offset=0, sort=FeedSort.NEAREST, near=(45.75, 4.85))
+        )
+        assert [e.offer_id for e in by_distance] == [newest.id, best.id, lyon.id]
+        second, _ = await feed.page(
+            FeedQuery(user_id=user, limit=1, offset=1, sort=FeedSort.NEAREST, near=(45.75, 4.85))
+        )
+        assert [e.offer_id for e in second] == [best.id]
 
         await feed.mark_notified(user, [], at=NOW)
         await feed.mark_notified(user, [best.id], at=NOW)

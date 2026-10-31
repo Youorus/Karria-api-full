@@ -63,6 +63,16 @@ class CriteriaIncompleteError(InvalidInputError):
         )
 
 
+class NearestSortUnavailableError(InvalidInputError):
+    """« Plus proches » sans point de référence : pas de recherche localisée, ou pas de compte."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Le tri par distance demande une recherche avec un lieu.",
+            details={"reason": "nearest_unavailable", "field": "sort"},
+        )
+
+
 class AssistantRateLimitedError(RateLimitedError):
     """Trop de tours de conversation sur la journée."""
 

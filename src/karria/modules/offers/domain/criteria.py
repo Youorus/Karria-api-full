@@ -219,6 +219,17 @@ class SearchCriteria(BaseModel):
 
     # --- Le filtre dur ------------------------------------------------
 
+    @property
+    def reference_point(self) -> tuple[float, float] | None:
+        """Le point d'où mesurer « Plus proches » : le lieu géocodé de la recherche.
+
+        `None` pour une recherche sans point (« Toute la France », télétravail
+        seul, départements sans centre) : le tri par distance n'y a pas de sens.
+        """
+        if self.location is None or not self.location.is_geocoded:
+            return None
+        return (self.location.latitude or 0.0, self.location.longitude or 0.0)
+
     def distance_km(self, latitude: float, longitude: float) -> float | None:
         """Distance au point cherché, ou `None` sans point."""
         if self.location is None or not self.location.is_geocoded:

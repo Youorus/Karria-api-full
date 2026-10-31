@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -21,7 +22,11 @@ from karria.modules.offers.application import (
 from karria.modules.offers.domain import (
     ContractType,
     FeedMode,
+    FeedSort,
     InteractionKind,
+    Location,
+    NearestSortUnavailableError,
+    Offer,
     OfferNotFoundError,
     OfferState,
 )
@@ -33,6 +38,7 @@ from offers.fakes import (
     InMemoryInteractionLog,
     InMemoryOfferRepository,
     InMemoryStateRepository,
+    make_criteria,
     make_entry,
     make_offer,
     make_stored,
@@ -210,6 +216,104 @@ class TestFilDeRecherche:
         page = await env.get_feed.execute(env.request(saved_only=True, limit=1))
 
         assert [item.offer.id for item in page.items] == [offer.id]
+
+
+def _at(city: str, latitude: float | None, longitude: float | None, **changes: Any) -> Offer:
+    """Une offre posée à ces coordonnées."""
+    return make_offer(
+        location=Location(label=city, city=city, latitude=latitude, longitude=longitude),
+        **changes,
+    )
+
+
+class TestTri:
+    """ADR-0027 : « Pertinence », « Plus récentes », « Plus proches »."""
+
+    async def test_plus_proches_dans_la_recherche_passe_le_lieu_et_rend_les_distances(
+        self, env: Env
+    ) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        near, far = _at("Paris", 48.86, 2.35), _at("Lyon", 45.76, 4.83)
+        env.offers.add(near, far)
+        env.feed.add(make_entry(USER, near.id), make_entry(USER, far.id))
+
+        page = await env.get_feed.execute(env.request(sort=FeedSort.NEAREST))
+
+        query = env.feed.queries[0]
+        assert query.sort is FeedSort.NEAREST
+        assert query.near == make_stored(USER).criteria.reference_point
+        assert page.sort is FeedSort.NEAREST
+        assert page.nearest_available is True
+        distances = {item.offer.id: item.distance_km for item in page.items}
+        near_km, far_km = distances[near.id], distances[far.id]
+        assert near_km is not None
+        assert near_km < 1
+        assert far_km is not None
+        assert 380 < far_km < 400
+
+    async def test_plus_proches_vaut_aussi_pour_toutes_les_offres(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        far = _at("Lyon", 45.76, 4.83)
+        nowhere = _at("Inconnu", None, None, published_at=NOW)
+        near = _at("Versailles", 48.80, 2.13, published_at=NOW - timedelta(days=3))
+        env.offers.add(far, nowhere, near)
+
+        page = await env.get_feed.execute(
+            env.request(mode=FeedMode.ALL_OFFERS, sort=FeedSort.NEAREST)
+        )
+
+        assert page.mode is FeedMode.ALL_OFFERS
+        assert [item.offer.id for item in page.items] == [near.id, far.id, nowhere.id]
+        assert page.items[2].distance_km is None
+
+    async def test_sans_lieu_de_recherche_plus_proches_est_refuse(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(
+            USER, make_criteria(location=None, whole_france=True)
+        )
+
+        page = await env.get_feed.execute(env.request())
+        assert page.nearest_available is False
+        assert all(item.distance_km is None for item in page.items)
+        with pytest.raises(NearestSortUnavailableError):
+            await env.get_feed.execute(env.request(sort=FeedSort.NEAREST))
+
+    async def test_sans_recherche_ni_compte_plus_proches_est_refuse(self, env: Env) -> None:
+        with pytest.raises(NearestSortUnavailableError):
+            await env.get_feed.execute(env.request(sort=FeedSort.NEAREST))
+        with pytest.raises(NearestSortUnavailableError):
+            await env.get_feed.execute(env.request(user_id=None, sort=FeedSort.NEAREST))
+
+    async def test_la_pertinence_sans_recherche_est_servie_par_date(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        env.offers.add(make_offer())
+
+        page = await env.get_feed.execute(env.request(mode=FeedMode.ALL_OFFERS))
+        searching = await env.get_feed.execute(env.request())
+
+        assert page.sort is FeedSort.RECENT
+        assert searching.sort is FeedSort.RELEVANCE
+
+    async def test_les_sauvegardees_suivent_les_filtres_et_le_tri(self, env: Env) -> None:
+        env.criteria.stored[USER] = make_stored(USER)
+        far = _at("Lyon", 45.76, 4.83)
+        near = _at("Paris", 48.86, 2.35, published_at=NOW - timedelta(days=4))
+        cdd = _at("Paris", 48.86, 2.35, contract_type=ContractType.CDD)
+        env.offers.add(far, near, cdd)
+        env.states.add(
+            *(OfferState(user_id=USER, offer_id=o.id, saved=True) for o in (far, near, cdd))
+        )
+
+        by_distance = await env.get_feed.execute(
+            env.request(saved_only=True, sort=FeedSort.NEAREST, contract_types=("cdi",))
+        )
+        by_date = await env.get_feed.execute(
+            env.request(saved_only=True, sort=FeedSort.RECENT, cities=("Paris",))
+        )
+
+        assert [i.offer.id for i in by_distance.items] == [near.id, far.id]
+        assert by_distance.total == 2
+        assert by_distance.items[0].distance_km is not None
+        assert [i.offer.id for i in by_date.items] == [cdd.id, near.id]
 
 
 class TestUneOffre:
