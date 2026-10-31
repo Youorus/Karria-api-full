@@ -50,6 +50,7 @@ Nommés par Marc, module par module. Le reste du découpage n'est pas écrit.
 | `identity` | Compte et session : `/auth/*`, dont la suppression `DELETE /auth/me` | 0010, 0011, 0015 |
 | `devices` | Appareils et notifications push : `/devices/*` | 0012 |
 | `cv` | Le CV en conversation : `/cv/*`, `/voice/transcribe` | 0013, 0014 |
+| `support` | « Parler à l'équipe » : `/support/me*` (dont le WebSocket `/support/me/stream`), `/internal/support/*` et la console | 0026 |
 
 ## Ce qui est déjà fixé, quelle que soit la découpe
 

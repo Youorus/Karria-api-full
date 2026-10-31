@@ -228,6 +228,34 @@ sert `/opt/karria/models/e5-base-int8`, produit par
   modèles, par origine `X-Forwarded-For`) sont en mémoire, par processus
   Gunicorn : le total réel est multiplié par le nombre de workers.
 
+## « Parler à l'équipe » (ADR-0026 — 2026-10-31)
+
+Dans cet ordre, **avant** de déployer le code :
+
+1. **Migration 14** (`parler_a_l_equipe` : `support_conversations`,
+   `support_messages`) : `aerich upgrade` dans un conteneur ponctuel (voir
+   § État réel). Sans les tables, `GET /support/me` répond 500.
+2. **Bucket** `karria-production-support` (privé) :
+   `python -m scripts.storage_provision` dans le même conteneur ponctuel. Sans
+   lui, l'API **refuse de démarrer** (vérification du registre, cf. logos).
+3. **Variables de l'API** : `SUPPORT__ADMIN_TOKEN` (jeton long et aléatoire,
+   `openssl rand -hex 32` ; vide → les routes de l'équipe et la console
+   répondent 401) ; `SUPPORT__TEAM_EMAIL` facultatif (défaut
+   `mtakoumba@gmail.com` — **jamais** `contact@papiers-express.fr`).
+   Le SMTP est celui déjà posé (`MAIL__*`).
+
+Puis déployer l'API (et le worker, même image). Rien à régler côté Traefik :
+le WebSocket `wss://api.karria.fr/api/v1/support/me/stream` passe tel quel.
+
+- **Répondre** : `https://api.karria.fr/api/v1/internal/support/console`,
+  coller le jeton (gardé dans l'onglet, `sessionStorage`). Le courriel envoyé
+  à chaque nouveau message y mène directement (`#<id du fil>`).
+- **Vérifier** : `/health/ready` 200 ; `GET /api/v1/support/me` avec une
+  session → 200 ; `GET /api/v1/internal/support/conversations` sans jeton →
+  401, avec → 200 ; `docker logs` de l'API : `realtime.listening` à la première
+  ouverture d'un flux, `support.stream_opened`.
+- **Couper d'urgence** la console : vider `SUPPORT__ADMIN_TOKEN` et redéployer.
+
 ## Mesure de la recherche en production (relecture du 2026-10-29)
 
 `python -m scripts.offers_eval --runs 2 --judge --only <indices>` dans un

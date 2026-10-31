@@ -60,6 +60,11 @@ CONTEXTE: Final[dict[str, Any]] = {
     "body": "La configuration SMTP de Karria fonctionne correctement.",
     "expires_in": 10,
     "first_name": "Awa",
+    # Ce que `support` passe pour prévenir l'équipe d'un nouveau message.
+    "user_email": "awa@exemple.fr",
+    "preview": "Le fil ne se charge plus depuis ce matin.",
+    "kind_label": "texte",
+    "console_url": "https://api.karria.fr/api/v1/internal/support/console",
 }
 
 
@@ -224,6 +229,7 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.EMAIL_VERIFICATION: "418293 — confirmez votre adresse Karria",
     MailMessage.WELCOME: "Bienvenue sur Karria, Awa",
     MailMessage.SMTP_TEST: "Test SMTP Karria",
+    MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
 }
 
 #: Ce qui trahit une variable mal rendue, quelle que soit sa syntaxe.
@@ -393,12 +399,21 @@ class TestQualiteRedactionnelle:
     def test_une_seule_action_principale_et_son_adresse_en_texte(
         self, message: MailMessage
     ) -> None:
-        """Un bouton, qui mène sur l'application — et que la version texte donne."""
+        """Un bouton, qui mène sur l'application — et que la version texte donne.
+
+        Exception assumée : le courriel adressé à **l'équipe** mène à la console
+        servie par l'API (`CONTEXTE["console_url"]`), pas à l'app des personnes.
+        """
         rendu = _rendre(message)
         boutons = re.findall(r'<a href="([^"]+)"\s+style="display:inline-block', rendu.html_body)
 
         assert len(boutons) == 1
-        assert boutons[0].startswith("https://app.karria.fr")
+        destination = (
+            CONTEXTE["console_url"]
+            if message is MailMessage.SUPPORT_NEW_MESSAGE
+            else "https://app.karria.fr"
+        )
+        assert boutons[0].startswith(destination)
         # Échappée dans l'attribut (`&amp;`), en clair dans le texte.
         assert html.unescape(boutons[0]) in rendu.text_body
 

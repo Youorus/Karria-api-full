@@ -51,6 +51,10 @@ class Bucket(StrEnum):
     #: casserait le cache du téléphone. La clé est un condensat du contenu :
     #: rien à deviner, rien à lister, et un objet ne change jamais.
     LOGOS = "logos"
+    #: Pièces jointes de la messagerie avec l'équipe (module `support`) :
+    #: messages vocaux et captures d'écran, dans les deux sens. Privé, servi
+    #: par URL signée ; conservé tant que la conversation existe.
+    SUPPORT = "support"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +132,29 @@ REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
         max_bytes=512 * 1024,
         # Un an, immuable : la clé change avec le contenu.
         cache_seconds=31_536_000,
+    ),
+    Bucket.SUPPORT: BucketPolicy(
+        allowed_content_types=frozenset(
+            {
+                "image/jpeg",
+                "image/png",
+                "image/webp",
+                # Ce qu'expo-audio enregistre (M4A/AAC) et ce qu'un navigateur
+                # de l'équipe pourrait déposer.
+                "audio/mp4",
+                "audio/m4a",
+                "audio/x-m4a",
+                "audio/aac",
+                "audio/mpeg",
+                "audio/wav",
+                "audio/webm",
+                "audio/ogg",
+            }
+        ),
+        max_bytes=15 * 1024 * 1024,
+        # Une capture d'écran se lit sur un téléphone : même réduction que
+        # les photos de profil.
+        image=ImagePolicy(max_edge=2_048, quality=85),
     ),
     Bucket.LANDING: BucketPolicy(
         allowed_content_types=frozenset({"application/gzip", "application/x-ndjson"}),

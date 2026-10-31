@@ -121,6 +121,9 @@ class MailMessage(StrEnum):
     #: `smtplib.sendmail` écrit pour l'occasion, qui ne prouverait rien
     #: du code que les utilisateurs déclenchent.
     SMTP_TEST = "smtp_test"
+    #: Une personne vient d'écrire à l'équipe dans « Parler à l'équipe »
+    #: (module `support`). Adressé à l'équipe, jamais à la personne.
+    SUPPORT_NEW_MESSAGE = "support_new_message"
 
 
 #: Le registre. Une entrée par message, et rien de plus à toucher ailleurs.
@@ -162,6 +165,28 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
         preview={
             Language.FR: "Votre compte est prêt. Voici comment démarrer.",
             Language.EN: "Your account is ready. Here is how to start.",
+        },
+    ),
+    MailMessage.SUPPORT_NEW_MESSAGE: MailTemplate(
+        subject={
+            Language.FR: "Karria — un mot de $user_email",
+            Language.EN: "Karria — a message from $user_email",
+        },
+        template="support_new_message",
+        category=MailCategory.ACTION,
+        preview={
+            Language.FR: "$preview",
+            Language.EN: "$preview",
+        },
+        footer_note={
+            Language.FR: (
+                "Vous recevez ce message parce que vous êtes de garde pour « Parler à "
+                "l'équipe » (SUPPORT__TEAM_EMAIL)."
+            ),
+            Language.EN: (
+                "You receive this message because you are on duty for « Talk to the "
+                "team » (SUPPORT__TEAM_EMAIL)."
+            ),
         },
     ),
     MailMessage.SMTP_TEST: MailTemplate(

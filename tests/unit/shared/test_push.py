@@ -50,6 +50,7 @@ def _message(
         (PushKind.TEMPLATE, ID, f"karria://modele/{ID}", PushChannel.DOCUMENTS),
         (PushKind.TEMPLATES, None, "karria://modeles", PushChannel.DOCUMENTS),
         (PushKind.ACCOUNT, None, "karria://parametres", PushChannel.COMPTE),
+        (PushKind.SUPPORT, None, "karria://equipe", PushChannel.COMPTE),
     ],
 )
 def test_chaque_type_porte_sa_version_son_lien_et_son_canal(

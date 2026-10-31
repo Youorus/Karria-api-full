@@ -133,4 +133,12 @@ _EXTENSIONS: Final[dict[str, str]] = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "application/json": "json",
     "font/ttf": "ttf",
+    "audio/mp4": "m4a",
+    "audio/m4a": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/aac": "aac",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
 }

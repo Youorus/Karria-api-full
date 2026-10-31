@@ -118,6 +118,51 @@ def require_permissions(*required: str) -> Callable[[Principal], Principal]:
 
 
 # ---------------------------------------------------------------------
+# Le jeton nu — pour les connexions qui n'ont pas de `Request`
+# ---------------------------------------------------------------------
+
+
+class TokenResolver(Protocol):
+    """Port : reconnaît l'appelant à partir de son seul jeton d'accès.
+
+    La couture `resolve_principal` lit l'en-tête d'une `Request` ; une
+    connexion WebSocket n'en a pas, et FastAPI ne lui injecte pas de
+    `Request`. Le même module d'identité répond aux deux : c'est
+    `bootstrap/wiring.py` qui branche ce port, comme l'autre.
+    """
+
+    async def resolve(self, token: str) -> Principal | None:
+        """Reconnaît le porteur du jeton, ou `None` s'il n'est pas valide."""
+        ...
+
+
+class RefusingTokenResolver:
+    """Le défaut : aucun jeton n'est reconnu, parce que rien n'a été branché."""
+
+    async def resolve(self, token: str) -> Principal | None:
+        """Refuse, et le dit : un branchement oublié ne doit pas servir en silence."""
+        _ = token
+        logger.error("auth.token_resolver_unwired")
+        return None
+
+
+def get_token_resolver() -> TokenResolver:
+    """La résolution d'un jeton nu. `bootstrap/wiring.py` la remplace par celle d'`identity`."""
+    return RefusingTokenResolver()
+
+
+TokenResolverDep = Annotated[TokenResolver, Depends(get_token_resolver)]
+
+
+def bearer_token(authorization: str | None) -> str | None:
+    """Extrait le jeton d'un en-tête `Authorization: Bearer …`, ou `None`."""
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
+
+
+# ---------------------------------------------------------------------
 # L'accès anonyme, compté par origine
 # ---------------------------------------------------------------------
 

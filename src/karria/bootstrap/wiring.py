@@ -51,6 +51,14 @@ Les branchements d'aujourd'hui
   toute route d'IA (Karria, dictée, CV en conversation, import, photo,
   explication ATS) répond 403 `ai_consent_required` : le refus par défaut
   de l'ADR-0025 — un oubli se voit, il ne laisse rien partir.
+- `shared.auth.get_token_resolver` ← `identity.ResolveSession`. Sans lui, le
+  flux WebSocket de « Parler à l'équipe » refuse tout jeton (`4401`) : le
+  refus par défaut, comme pour `resolve_principal`.
+- `support.get_user_notifier` ← `devices.SendPushToUser`. Sans lui, une
+  réponse de l'équipe n'est pas notifiée (`support.notifier_unwired`) :
+  dégradé, pas cassé — le direct et le non-lu restent.
+- `support.get_account_directory` ← `identity.GetCurrentUser`. Sans lui, la
+  console de l'équipe montre « compte inconnu » à la place des adresses.
 
 Les ponts du bus
 ----------------
@@ -61,7 +69,8 @@ ouvertes. Aujourd'hui : `identity.AccountDeleted` → `devices` oublie les
 appareils, `cv` oublie brouillon, CV et photos, `offers` oublie critères,
 fil, états et conversations, `documents` oublie exports (fichiers compris),
 modèles possédés et choix (ADR-0015), `payments` supprime le client Stripe (ce
-qui résilie l'abonnement) et efface projection et achats (ADR-0024).
+qui résilie l'abonnement) et efface projection et achats (ADR-0024),
+`support` efface le fil avec l'équipe, fichiers compris.
 """
 
 from __future__ import annotations
@@ -115,7 +124,29 @@ from karria.modules.payments import (
     get_template_store,
 )
 from karria.modules.payments import build_forget_user as build_forget_user_payments
-from karria.shared.auth import AiConsentGate, Principal, get_ai_consent_gate, resolve_principal
+from karria.modules.support import (
+    AccountDirectory as SupportAccountDirectory,
+)
+from karria.modules.support import (
+    UserNotifier as SupportUserNotifier,
+)
+from karria.modules.support import (
+    build_forget_user as build_forget_user_support,
+)
+from karria.modules.support import (
+    get_account_directory as get_support_account_directory,
+)
+from karria.modules.support import (
+    get_user_notifier as get_support_user_notifier,
+)
+from karria.shared.auth import (
+    AiConsentGate,
+    Principal,
+    TokenResolver,
+    get_ai_consent_gate,
+    get_token_resolver,
+    resolve_principal,
+)
 from karria.shared.config import get_settings
 from karria.shared.logging import get_logger
 from karria.shared.push import PushMessage
@@ -162,6 +193,25 @@ async def resolve_principal_from_session(
     # session.
     request.state.session_id = caller.session_id
     return Principal(subject_id=caller.user_id)
+
+
+class IdentityTokenResolver:
+    """Implémente `TokenResolver` du socle avec `identity.ResolveSession` — pour les WebSockets."""
+
+    def __init__(self, resolver: ResolveSession) -> None:
+        self._resolver = resolver
+
+    async def resolve(self, token: str) -> Principal | None:
+        """Le même jugement que `resolve_principal_from_session`, sans `Request`."""
+        caller = await self._resolver.execute(token)
+        return None if caller is None else Principal(subject_id=caller.user_id)
+
+
+def token_resolver_from_identity(
+    resolver: Annotated[ResolveSession, Depends(get_resolve_session)],
+) -> TokenResolver:
+    """La réponse du module `identity` au port de jeton nu de `shared/auth`."""
+    return IdentityTokenResolver(resolver)
 
 
 class IdentityAiConsentGate:
@@ -321,6 +371,20 @@ def template_store_from_documents(
     return DocumentsTemplateStore(shop)
 
 
+def support_user_notifier_from_devices(
+    send: Annotated[SendPushToUser, Depends(get_send_push_to_user)],
+) -> SupportUserNotifier:
+    """La réponse du module `devices` au besoin de `support` (même adaptateur qu'`offers`)."""
+    return DevicesUserNotifier(send)
+
+
+def support_account_directory_from_identity(
+    reader: Annotated[GetCurrentUser, Depends(get_current_user_reader)],
+) -> SupportAccountDirectory:
+    """La réponse du module `identity` au besoin de `support` (même adaptateur que `payments`)."""
+    return IdentityAccountDirectory(reader)
+
+
 def build_user_notifier() -> UserNotifier:
     """Le même branchement, hors requête, pour `scripts/offers_worker.py`."""
     from karria.modules.devices.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
@@ -369,8 +433,17 @@ def wire_modules(app: FastAPI) -> None:
     # Sans cette ligne : aucun outil d'IA ne sert — 403 `ai_consent_required`
     # partout, même pour qui a accepté. Le refus est voulu, pas l'oubli.
     app.dependency_overrides[get_ai_consent_gate] = ai_consent_gate_from_identity
+    # Sans cette ligne : le flux en direct de « Parler à l'équipe » ferme
+    # toute connexion en 4401, même avec une session valide.
+    app.dependency_overrides[get_token_resolver] = token_resolver_from_identity
+    # Sans cette ligne : une réponse de l'équipe n'est jamais notifiée.
+    app.dependency_overrides[get_support_user_notifier] = support_user_notifier_from_devices
+    # Sans cette ligne : la console de l'équipe ne montre aucune adresse.
+    app.dependency_overrides[get_support_account_directory] = (
+        support_account_directory_from_identity
+    )
 
-    logger.debug("bootstrap.modules_wired", bindings=7)
+    logger.debug("bootstrap.modules_wired", bindings=10)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
@@ -391,6 +464,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     forget_offers = build_forget_user_offers()
     forget_documents = build_forget_user_documents(storage)
     forget_payments = build_forget_user_payments(get_settings())
+    forget_support = build_forget_user_support(storage)
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -407,6 +481,9 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def payments_forget(event: AccountDeleted) -> None:
         await forget_payments.execute(event.user_id)
 
+    async def support_forget(event: AccountDeleted) -> None:
+        await forget_support.execute(event.user_id)
+
     # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
     # photos, ses critères et ses conversations — c'est-à-dire exactement
     # ce que la personne a demandé d'effacer.
@@ -416,4 +493,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     bus.subscribe(AccountDeleted, documents_forget)
     # Sans cette ligne : un compte supprimé continue d'être prélevé chez Stripe.
     bus.subscribe(AccountDeleted, payments_forget)
-    logger.debug("bootstrap.bridges_subscribed", bridges=5)
+    # Sans cette ligne : un compte supprimé laisse son fil avec l'équipe,
+    # vocaux et captures compris.
+    bus.subscribe(AccountDeleted, support_forget)
+    logger.debug("bootstrap.bridges_subscribed", bridges=6)

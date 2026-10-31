@@ -28,6 +28,7 @@ from karria.shared.config.settings import (
     Settings,
     SocialSettings,
     StorageSettings,
+    SupportSettings,
     get_settings,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "Settings",
     "SocialSettings",
     "StorageSettings",
+    "SupportSettings",
     "get_settings",
 ]

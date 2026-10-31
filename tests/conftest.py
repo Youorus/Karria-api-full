@@ -22,10 +22,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from doubles import CollectingBus, DevicesEnv, IdentityEnv
+from doubles import CollectingBus, DevicesEnv, IdentityEnv, SupportEnv
 from karria.bootstrap.app import create_app
 from karria.modules.devices.api import dependencies as devices_deps
 from karria.modules.identity.api import dependencies as identity_deps
+from karria.modules.support.api import dependencies as support_deps
 from karria.shared.auth import AiConsentGate, Principal, get_ai_consent_gate, resolve_principal
 from karria.shared.config import (
     AppSettings,
@@ -36,6 +37,7 @@ from karria.shared.config import (
 )
 from karria.shared.database import NullUnitOfWork
 from karria.shared.http.dependencies import get_unit_of_work
+from karria.shared.realtime import InMemoryBroker
 from karria.shared.storage import InMemoryObjectStorage
 
 
@@ -96,6 +98,7 @@ def app(settings: Settings, events: CollectingBus, storage: InMemoryObjectStorag
     # ne tourne pas ici.
     application.state.event_bus = events
     application.state.object_storage = storage
+    application.state.broker = InMemoryBroker()
     return application
 
 
@@ -191,6 +194,30 @@ def devices_env(app: FastAPI) -> Iterator[DevicesEnv]:
         devices_deps.get_ticket_repository: lambda: env.tickets,
         devices_deps.get_push_gateway: lambda: env.gateway,
         devices_deps.get_clock: lambda: env.clock,
+        get_unit_of_work: NullUnitOfWork,
+    }
+    app.dependency_overrides.update(overrides)
+    yield env
+    for key in overrides:
+        app.dependency_overrides.pop(key, None)
+
+
+@pytest.fixture
+def support_env(app: FastAPI) -> Iterator[SupportEnv]:
+    """Installe les doublures de `support` sur l'application.
+
+    Le réveil des écrans passe par le vrai `InMemoryBroker` de l'application :
+    un test du flux WebSocket voit arriver ce qu'une route vient d'écrire.
+    """
+    env = SupportEnv.build(app.state.broker)
+    overrides = {
+        support_deps.get_conversation_repository: lambda: env.conversations,
+        support_deps.get_message_repository: lambda: env.messages,
+        support_deps.get_user_notifier: lambda: env.notifier,
+        support_deps.get_team_alerter: lambda: env.alerter,
+        support_deps.get_account_directory: lambda: env.directory,
+        support_deps.get_conversation_feed: lambda: env.feed,
+        support_deps.get_clock: lambda: env.clock,
         get_unit_of_work: NullUnitOfWork,
     }
     app.dependency_overrides.update(overrides)

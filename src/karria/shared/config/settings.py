@@ -547,6 +547,19 @@ class DocumentsSettings(BaseModel):
     admin_token: SecretStr = SecretStr("")
 
 
+class SupportSettings(BaseModel):
+    """« Parler à l'équipe » (module `support`).
+
+    `admin_token` ouvre les routes `/internal/support/*` et la console web de
+    l'équipe ; vide, elles répondent 401 à tout le monde. `team_email` est
+    l'adresse prévenue à chaque nouveau message d'une personne : un fait
+    d'exploitation (qui est de garde), pas une règle métier.
+    """
+
+    admin_token: SecretStr = SecretStr("")
+    team_email: str = "mtakoumba@gmail.com"
+
+
 class PaymentsSettings(BaseModel):
     """Encaissements Stripe (module `payments`).
 
@@ -623,6 +636,7 @@ class Settings(BaseSettings):
     collector: CollectorAccessSettings = Field(default_factory=CollectorAccessSettings)
     documents: DocumentsSettings = Field(default_factory=DocumentsSettings)
     payments: PaymentsSettings = Field(default_factory=PaymentsSettings)
+    support: SupportSettings = Field(default_factory=SupportSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:

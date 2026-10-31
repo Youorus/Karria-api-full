@@ -23,6 +23,7 @@ from karria.shared.database import TortoiseUnitOfWork, UnitOfWork
 from karria.shared.events import EventBus
 from karria.shared.llm import LanguageModel, build_language_model
 from karria.shared.queue import App as QueueApp
+from karria.shared.realtime import Broker
 from karria.shared.storage import ObjectStorage
 
 
@@ -48,6 +49,11 @@ def get_queue_app(request: Request) -> QueueApp:
     return cast(QueueApp, request.app.state.queue_app)
 
 
+def get_broker(request: Request) -> Broker:
+    """Retourne le bus de réveils temps réel ouvert par le `lifespan` (ADR-0026)."""
+    return cast(Broker, request.app.state.broker)
+
+
 def get_language_model(settings: Annotated[Settings, Depends(get_settings)]) -> LanguageModel:
     """Le routeur de modèles de langage, assemblé depuis la configuration (ADR-0018).
 
@@ -68,4 +74,5 @@ EventBusDep = Annotated[EventBus, Depends(get_event_bus)]
 UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
 ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
 QueueAppDep = Annotated[QueueApp, Depends(get_queue_app)]
+BrokerDep = Annotated[Broker, Depends(get_broker)]
 LanguageModelDep = Annotated[LanguageModel, Depends(get_language_model)]

@@ -59,10 +59,17 @@ from karria.modules.identity.domain import (
     VerifiedSocialProfile,
 )
 from karria.modules.identity.infrastructure import Sha256TokenFactory
+from karria.modules.support.application import (
+    ConversationListing as SupportConversationListing,
+)
+from karria.modules.support.domain import Conversation as SupportConversation
+from karria.modules.support.domain import Message as SupportMessage
 from karria.shared.database import NullUnitOfWork
 from karria.shared.events import DomainEvent, EventBus
 from karria.shared.i18n import Language
 from karria.shared.llm import Blob, LlmRequest, LlmResult, Provider
+from karria.shared.push import PushMessage
+from karria.shared.realtime import InMemoryBroker
 
 # ---------------------------------------------------------------------
 # Le temps
@@ -895,3 +902,171 @@ def complete_draft(user_id: UUID | None = None, *, image_id: UUID | None = None)
         now=CV_NOW,
     )
     return draft
+
+
+# ---------------------------------------------------------------------
+# Module `support`
+# ---------------------------------------------------------------------
+
+
+class InMemoryConversationRepository:
+    """Implémentation en mémoire du port `ConversationRepository`."""
+
+    def __init__(self) -> None:
+        self.rows: dict[UUID, SupportConversation] = {}
+
+    async def find_by_user(self, user_id: UUID) -> SupportConversation | None:
+        return next((c for c in self.rows.values() if c.user_id == user_id), None)
+
+    async def find(self, conversation_id: UUID) -> SupportConversation | None:
+        return self.rows.get(conversation_id)
+
+    async def add(self, conversation: SupportConversation) -> None:
+        self.rows[conversation.id] = conversation
+
+    async def save(self, conversation: SupportConversation) -> None:
+        self.rows[conversation.id] = conversation
+
+    def _filtered(self, awaiting_only: bool) -> list[SupportConversation]:
+        rows = [c for c in self.rows.values() if not awaiting_only or c.awaits_team]
+        return sorted(rows, key=lambda c: c.updated_at, reverse=True)
+
+    async def list_for_team(
+        self, *, limit: int, offset: int, awaiting_only: bool
+    ) -> list[SupportConversationListing]:
+        self.messages: InMemorySupportMessageRepository
+        listings = []
+        for c in self._filtered(awaiting_only)[offset : offset + limit]:
+            mine = [m for m in self.messages.rows if m.conversation_id == c.id]
+            listings.append(
+                SupportConversationListing(
+                    conversation=c,
+                    last_message=max(mine, key=lambda m: m.created_at, default=None),
+                    message_count=len(mine),
+                )
+            )
+        return listings
+
+    async def count_for_team(self, *, awaiting_only: bool) -> int:
+        return len(self._filtered(awaiting_only))
+
+    async def delete_by_user(self, user_id: UUID) -> int:
+        doomed = [c.id for c in self.rows.values() if c.user_id == user_id]
+        for cid in doomed:
+            del self.rows[cid]
+        return len(doomed)
+
+
+class InMemorySupportMessageRepository:
+    """Implémentation en mémoire du port `MessageRepository`."""
+
+    def __init__(self) -> None:
+        self.rows: list[SupportMessage] = []
+
+    async def add(self, message: SupportMessage) -> None:
+        self.rows.append(message)
+
+    async def list_recent(self, conversation_id: UUID, *, limit: int) -> list[SupportMessage]:
+        mine = sorted(
+            (m for m in self.rows if m.conversation_id == conversation_id),
+            key=lambda m: m.created_at,
+        )
+        return mine[-limit:]
+
+    async def list_after(self, conversation_id: UUID, *, after: datetime) -> list[SupportMessage]:
+        return sorted(
+            (m for m in self.rows if m.conversation_id == conversation_id and m.created_at > after),
+            key=lambda m: m.created_at,
+        )
+
+    async def attachment_keys(self, conversation_id: UUID) -> list[str]:
+        return [
+            m.attachment.key
+            for m in self.rows
+            if m.conversation_id == conversation_id and m.attachment is not None
+        ]
+
+
+class RecordingUserNotifier:
+    """Port `UserNotifier` : garde ce qui aurait été envoyé."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[UUID, PushMessage]] = []
+        self.fail_with: Exception | None = None
+
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.sent.append((user_id, message))
+        return 1
+
+
+class RecordingTeamAlerter:
+    """Port `TeamAlerter` : garde les alertes."""
+
+    def __init__(self) -> None:
+        self.alerts: list[dict[str, Any]] = []
+
+    async def alert(
+        self, *, conversation_id: UUID, user_email: str | None, preview: str, kind: Any
+    ) -> None:
+        self.alerts.append(
+            {
+                "conversation_id": conversation_id,
+                "user_email": user_email,
+                "preview": preview,
+                "kind": kind,
+            }
+        )
+
+
+class StaticAccountDirectory:
+    """Port `AccountDirectory` : la même adresse pour tout compte connu."""
+
+    def __init__(self, email: str | None = "awa@exemple.fr") -> None:
+        self.email = email
+
+    async def email_of(self, user_id: UUID) -> str | None:
+        _ = user_id
+        return self.email
+
+
+class RecordingFeed:
+    """Port `ConversationFeed` : garde les réveils, et réveille un vrai bus si on lui en donne un."""
+
+    def __init__(self, broker: InMemoryBroker | None = None) -> None:
+        self.woken: list[UUID] = []
+        self._broker = broker
+
+    async def wake(self, conversation_id: UUID) -> None:
+        self.woken.append(conversation_id)
+        if self._broker is not None:
+            await self._broker.publish(f"support:{conversation_id}")
+
+
+@dataclass(slots=True)
+class SupportEnv:
+    """Toutes les doublures du module `support`, câblées ensemble."""
+
+    conversations: InMemoryConversationRepository
+    messages: InMemorySupportMessageRepository
+    notifier: RecordingUserNotifier
+    alerter: RecordingTeamAlerter
+    directory: StaticAccountDirectory
+    feed: RecordingFeed
+    clock: FakeClock
+
+    @classmethod
+    def build(cls, broker: InMemoryBroker | None = None) -> SupportEnv:
+        conversations = InMemoryConversationRepository()
+        messages = InMemorySupportMessageRepository()
+        conversations.messages = messages
+        return cls(
+            conversations=conversations,
+            messages=messages,
+            notifier=RecordingUserNotifier(),
+            alerter=RecordingTeamAlerter(),
+            directory=StaticAccountDirectory(),
+            feed=RecordingFeed(broker),
+            clock=FakeClock(),
+        )

@@ -214,7 +214,7 @@ enable_error_code = [
 # l'imprécision à la frontière de la bibliothèque, JAMAIS dans notre propre
 # code : le client S3 est typé `Any` derrière le port `ObjectStorage`, et
 # aucun appelant ne voit jamais ce type.
-module = ["tortoise.*", "aerich.*", "aioboto3.*", "aiobotocore.*", "botocore.*", "jobspy.*", "pandas.*"]
+module = ["tortoise.*", "aerich.*", "asyncpg.*", "aioboto3.*", "aiobotocore.*", "botocore.*", "jobspy.*", "pandas.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -359,6 +359,7 @@ containers = [
     "karria.modules.offers",
     "karria.modules.documents",
     "karria.modules.payments",
+    "karria.modules.support",
 ]
 
 [[tool.importlinter.contracts]]
@@ -372,6 +373,7 @@ source_modules = [
     "karria.modules.offers.domain",
     "karria.modules.documents.domain",
     "karria.modules.payments.domain",
+    "karria.modules.support.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -402,6 +404,7 @@ modules = [
     "karria.modules.offers",
     "karria.modules.documents",
     "karria.modules.payments",
+    "karria.modules.support",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.

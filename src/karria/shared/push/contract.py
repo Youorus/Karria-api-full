@@ -67,6 +67,8 @@ class PushKind(StrEnum):
     TEMPLATE = "template"
     TEMPLATES = "templates"
     ACCOUNT = "account"
+    #: L'équipe Karria a répondu dans « Parler à l'équipe ».
+    SUPPORT = "support"
 
 
 class PushChannel(StrEnum):
@@ -91,6 +93,7 @@ _CHANNEL: Final[dict[PushKind, PushChannel]] = {
     PushKind.TEMPLATE: PushChannel.DOCUMENTS,
     PushKind.TEMPLATES: PushChannel.DOCUMENTS,
     PushKind.ACCOUNT: PushChannel.COMPTE,
+    PushKind.SUPPORT: PushChannel.COMPTE,
 }
 
 #: Les types qui désignent une chose précise : sans `id`, ils n'ouvrent rien.
@@ -113,6 +116,7 @@ _PATH: Final[dict[PushKind, str]] = {
     PushKind.CV_EXPORT: "cv",
     PushKind.TEMPLATES: "modeles",
     PushKind.ACCOUNT: "parametres",
+    PushKind.SUPPORT: "equipe",
 }
 
 

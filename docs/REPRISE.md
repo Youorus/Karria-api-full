@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-30**
+**Dernière mise à jour : 2026-10-31**
 
 ## Où on en est
 
@@ -24,7 +24,48 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `payments` | **en production, éteint** (ADR-0023 + **ADR-0024** « Proposées » ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
+| `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-10-31 (« Parler à l'équipe » — ADR-0026) — ÉCRIT PAR OPUS, À RELIRE PAR FABLE
+
+**Demande de Marc** : messagerie entre une personne et les **humains** de l'équipe (pas
+l'IA), comme `karria_api/app/support/` de la V1, mais en vrai temps réel (la V1 relisait
+toutes les 60 s), avec vocaux et captures, push à chaque réponse, courriel à l'équipe.
+
+**Livré** (module `support` + socle `shared/realtime`, fusionné sur `main` depuis la
+branche `wip/parler-a-l-equipe`, supprimée) :
+
+- `support_conversations` (une par compte) / `support_messages` (texte, ou clé d'un vocal
+  ou d'une image dans le bucket privé `support`) — **migration 14**.
+- Direct : WebSocket `/support/me/stream` (`Authorization: Bearer`, `?since=`), réveillé
+  par `LISTEN`/`NOTIFY` PostgreSQL (`shared/realtime`, canal `karria_wakeups`), relecture
+  de la base à chaque réveil et toutes les 20 s (un réveil perdu retarde, ne perd rien).
+- Push `support` (contrat v1, canal `compte`, `karria://equipe`) sauf lecture < 45 s ou
+  réponse non lue déjà en attente ; courriel `SUPPORT_NEW_MESSAGE` à
+  `SUPPORT__TEAM_EMAIL` (défaut `mtakoumba@gmail.com`) une fois par rafale de 10 min.
+- `shared/auth.TokenResolver` (jeton nu pour les WebSockets) branché sur `identity` ;
+  `support` oublie fil et fichiers à la suppression du compte.
+- Tests : `make check` vert (lint, mypy, frontières, 2 857 tests ; les dépôts PostgreSQL
+  du module ne sont couverts qu'en intégration, ignorée sans Docker).
+
+**Comment l'équipe répond** : ouvrir `https://api.karria.fr/api/v1/internal/support/console`,
+coller le jeton `SUPPORT__ADMIN_TOKEN` (dans `/root/karria-api.env` sur `papex-new` ; gardé
+dans l'onglet seulement). La liste montre les fils, « en attente » d'abord si on coche le
+filtre ; ouvrir un fil le marque lu côté équipe ; répondre par écrit (ou joindre une
+image). La personne voit la réponse en direct si l'écran est ouvert, sinon reçoit une
+notification. Le courriel d'alerte mène directement au fil (`…/console#<id>`). Sans
+console : `curl -H "Authorization: Bearer $JETON" https://api.karria.fr/api/v1/internal/support/conversations`
+puis `POST …/conversations/<id>/messages` avec `{"body": "…"}`.
+
+**Déploiement** : voir `DEPLOIEMENT.md` § « Parler à l'équipe » (migration 14 et bucket
+**avant** le code, puis `SUPPORT__ADMIN_TOKEN`). État réel en fin de session : voir
+ci-dessous « État de la mise en production ».
+
+**Reste** : relecture par Fable (surtout `shared/realtime/postgres.py` et la boucle
+`api/stream.py`) ; valider l'ADR-0026 (Marc) ; tests d'intégration des dépôts `support`
+contre PostgreSQL ; au-delà de quelques centaines d'écrans ouverts, mesurer le coût des
+relectures de 20 s.
 
 ### Session du 2026-10-30 (consentement à l'IA et lecture sans compte — ADR-0025) — en production
 
