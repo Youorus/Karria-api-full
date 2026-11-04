@@ -583,6 +583,11 @@ class PaymentsSettings(BaseModel):
     #: Stripe refuse d'ouvrir une session tant que Stripe Tax n'est pas activé
     #: dans le tableau de bord.
     automatic_tax: bool = False
+    #: Le compte Stripe est partagé avec Zoumani (même entité juridique) : cette
+    #: configuration du portail client (`bpc_…`, tableau Stripe → Portail client)
+    #: porte le nom et les règles de Karria. Vide : la configuration par défaut
+    #: du compte, celle de Zoumani.
+    portal_configuration: str = ""
 
 
 class CollectorAccessSettings(BaseModel):

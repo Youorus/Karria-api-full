@@ -75,9 +75,16 @@ class NoTemplateStore:
 
 
 @lru_cache(maxsize=2)
-def _gateway(secret_key: str, webhook_secret: str, automatic_tax: bool) -> StripeGateway:
+def _gateway(
+    secret_key: str, webhook_secret: str, automatic_tax: bool, portal_configuration: str
+) -> StripeGateway:
     """Un client Stripe par processus (connexions et prix résolus réutilisés)."""
-    return StripeGateway(secret_key, webhook_secret, automatic_tax=automatic_tax)
+    return StripeGateway(
+        secret_key,
+        webhook_secret,
+        automatic_tax=automatic_tax,
+        portal_configuration=portal_configuration,
+    )
 
 
 def build_gateway(settings: Settings) -> BillingGateway | None:
@@ -89,6 +96,7 @@ def build_gateway(settings: Settings) -> BillingGateway | None:
         secret,
         settings.payments.webhook_secret.get_secret_value(),
         settings.payments.automatic_tax,
+        settings.payments.portal_configuration,
     )
 
 

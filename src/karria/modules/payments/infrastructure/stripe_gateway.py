@@ -54,6 +54,14 @@ logger = get_logger(__name__)
 
 _NOT_FOUND = "resource_missing"
 
+#: Le compte Stripe est partagé avec Zoumani : sans cela, un prélèvement
+#: Karria s'afficherait « ZOUMANI » sur le relevé bancaire. Pour un paiement
+#: unique par carte, Stripe n'accepte qu'un **suffixe** (concaténé au libellé
+#: court du compte : « ZOUMANI* KARRIA ») ; pour un abonnement, c'est le
+#: `statement_descriptor` du **produit** qui est pris, à chaque renouvellement.
+#: 5 à 22 caractères latins, au moins une lettre.
+STATEMENT_DESCRIPTOR: Final = "KARRIA"
+
 #: Les notifications traitées. Tout le reste s'acquitte sans effet.
 _EVENT_KINDS: Final[dict[str, BillingEventKind]] = {
     "checkout.session.completed": BillingEventKind.CHECKOUT_COMPLETED,
@@ -121,6 +129,12 @@ def translate_event(event: Any) -> BillingEvent:
     event_id = str(_field(event, "id") or "")
     kind = _EVENT_KINDS.get(event_type, BillingEventKind.IGNORED)
     obj: Any = _field(_field(event, "data"), "object")
+    if kind is not BillingEventKind.IGNORED and obj is None:
+        # Une « destination d'événements » à charge utile mince (thin payload)
+        # ne porte pas l'objet : le point de terminaison doit être un webhook
+        # classique (snapshot). Acquitté, mais dit.
+        logger.warning("payments.event_without_object", event_type=event_type, event_id=event_id)
+        return BillingEvent(BillingEventKind.IGNORED, event_id, event_type)
     if kind is BillingEventKind.CHECKOUT_COMPLETED:
         return BillingEvent(kind, event_id, event_type, session_id=_identifier(obj))
     if kind is BillingEventKind.SUBSCRIPTION_CHANGED:
@@ -211,11 +225,15 @@ class StripeGateway:
         webhook_secret: str,
         *,
         automatic_tax: bool = False,
+        portal_configuration: str = "",
         client: Any | None = None,
     ) -> None:
         self._client: Any = client if client is not None else stripe.StripeClient(secret_key)
         self._webhook_secret = webhook_secret
         self._automatic_tax = automatic_tax
+        #: La configuration du portail client propre à Karria (`bpc_…`) sur le
+        #: compte partagé ; vide : celle par défaut du compte.
+        self._portal_configuration = portal_configuration
         #: Les identifiants de prix déjà résolus, par clé : un aller-retour par processus.
         self._prices: dict[str, str] = {}
 
@@ -270,7 +288,10 @@ class StripeGateway:
                 "lookup_key": spec.lookup_key,
                 "transfer_lookup_key": True,
                 "tax_behavior": "inclusive",
-                "product_data": {"name": spec.product_name},
+                "product_data": {
+                    "name": spec.product_name,
+                    "statement_descriptor": STATEMENT_DESCRIPTOR,
+                },
                 "metadata": {"lookup_key": spec.lookup_key},
             }
             if spec.interval is not None:
@@ -305,7 +326,10 @@ class StripeGateway:
         if request.mode == "subscription":
             params["subscription_data"] = {"metadata": request.metadata}
         else:
-            params["payment_intent_data"] = {"metadata": request.metadata}
+            params["payment_intent_data"] = {
+                "metadata": request.metadata,
+                "statement_descriptor_suffix": STATEMENT_DESCRIPTOR,
+            }
         if self._automatic_tax:
             # Stripe l'exige dès qu'un client existant est passé avec le calcul de la taxe.
             params["customer_update"] = {"address": "auto"}
@@ -337,11 +361,14 @@ class StripeGateway:
         return translate_checkout(session)
 
     async def open_portal(self, customer_id: str, return_url: str) -> str:
-        """`billing_portal.sessions.create`."""
+        """`billing_portal.sessions.create`, sur la configuration de Karria si elle est posée."""
+        params: dict[str, Any] = {"customer": customer_id, "return_url": return_url}
+        if self._portal_configuration:
+            params["configuration"] = self._portal_configuration
         session = await self._call(
             "open_portal",
             self._client.v1.billing_portal.sessions.create,
-            {"customer": customer_id, "return_url": return_url},
+            params,
         )
         return str(session.url)
 

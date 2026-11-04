@@ -156,7 +156,12 @@ class TestPrices:
             "lookup_key": "karria_coffee_2",
             "transfer_lookup_key": True,
             "tax_behavior": "inclusive",
-            "product_data": {"name": "2 cafés pour l'équipe Karria"},
+            # Compte partagé avec Zoumani : le produit porte le libellé de relevé,
+            # c'est lui que Stripe prend à chaque renouvellement d'abonnement.
+            "product_data": {
+                "name": "2 cafés pour l'équipe Karria",
+                "statement_descriptor": "KARRIA",
+            },
             "metadata": {"lookup_key": "karria_coffee_2"},
         }
         assert options == {"options": {"idempotency_key": "karria-price:karria_coffee_2:499"}}
@@ -207,7 +212,12 @@ class TestCheckout:
             "cancel_url": "https://api.karria.fr/r?status=cancelled",
             "metadata": {"user_id": "u", "kind": "coffee"},
             "automatic_tax": {"enabled": False},
-            "payment_intent_data": {"metadata": {"user_id": "u", "kind": "coffee"}},
+            # Carte : Stripe n'accepte qu'un suffixe, concaténé au libellé court
+            # du compte partagé (« ZOUMANI* KARRIA »).
+            "payment_intent_data": {
+                "metadata": {"user_id": "u", "kind": "coffee"},
+                "statement_descriptor_suffix": "KARRIA",
+            },
         }
         assert options == {"options": {"idempotency_key": "k"}}
 
@@ -267,6 +277,14 @@ class TestCheckout:
         assert url == "https://billing.stripe.test/p"
         (params,), _ = client.portal_create.calls[0]
         assert params == {"customer": "cus_1", "return_url": "https://api.karria.fr/r"}
+
+    async def test_le_portail_sur_la_configuration_de_karria(self) -> None:
+        """Compte partagé avec Zoumani : le portail de Karria est une configuration à part."""
+        client = FakeStripeClient()
+        g = StripeGateway("sk_test", "whsec", portal_configuration="bpc_karria", client=client)
+        await g.open_portal("cus_1", "https://api.karria.fr/r")
+        (params,), _ = client.portal_create.calls[0]
+        assert params["configuration"] == "bpc_karria"
 
 
 class TestEvents:
@@ -341,6 +359,92 @@ class TestEvents:
         event = translate_event({"id": "evt_6", "type": "charge.refunded", "data": {"object": {}}})
         assert event.kind is BillingEventKind.IGNORED
         assert event.type == "charge.refunded"
+
+    def test_une_charge_utile_mince_est_acquittee_sans_effet(self) -> None:
+        """Destination d'événements « thin » (sans `data.object`) : rien à désigner, on le dit."""
+        thin = translate_event(
+            {
+                "id": "evt_7",
+                "type": "checkout.session.completed",
+                "related_object": {"id": "cs_1", "type": "checkout.session"},
+            }
+        )
+        assert thin.kind is BillingEventKind.IGNORED
+        assert (thin.event_id, thin.session_id) == ("evt_7", None)
+
+    def test_la_version_2026_09_30_endive(self) -> None:
+        """Les formes des événements à la version épinglée du point de terminaison de Marc.
+
+        Le SDK `stripe` installé épingle la même version (`stripe.api_version`) :
+        ce que Stripe envoie est ce que le SDK décrit. Extraits réduits aux
+        champs lus.
+        """
+        assert stripe.api_version == "2026-09-30.endive"
+        session = translate_event(
+            {
+                "id": "evt_e1",
+                "object": "event",
+                "api_version": "2026-09-30.endive",
+                "type": "checkout.session.completed",
+                "data": {
+                    "object": {
+                        "id": "cs_e1",
+                        "object": "checkout.session",
+                        "mode": "subscription",
+                        "payment_status": "paid",
+                        "subscription": "sub_e1",
+                        "customer": "cus_e1",
+                    }
+                },
+            }
+        )
+        assert (session.kind, session.session_id) == (BillingEventKind.CHECKOUT_COMPLETED, "cs_e1")
+        changed = translate_event(
+            {
+                "id": "evt_e2",
+                "api_version": "2026-09-30.endive",
+                "type": "customer.subscription.updated",
+                "data": {
+                    "object": {
+                        "id": "sub_e1",
+                        "object": "subscription",
+                        "status": "active",
+                        "items": {
+                            "object": "list",
+                            "data": [{"current_period_end": 1_800_000_000}],
+                        },
+                    },
+                    "previous_attributes": {"status": "incomplete"},
+                },
+            }
+        )
+        assert (changed.kind, changed.subscription_id) == (
+            BillingEventKind.SUBSCRIPTION_CHANGED,
+            "sub_e1",
+        )
+        failed = translate_event(
+            {
+                "id": "evt_e3",
+                "api_version": "2026-09-30.endive",
+                "type": "invoice.payment_failed",
+                "data": {
+                    "object": {
+                        "id": "in_e1",
+                        "object": "invoice",
+                        "parent": {
+                            "type": "subscription_details",
+                            "quote_details": None,
+                            "subscription_details": {"metadata": {}, "subscription": "sub_e1"},
+                        },
+                    }
+                },
+            }
+        )
+        assert (failed.kind, failed.subscription_id, failed.invoice_id) == (
+            BillingEventKind.INVOICE_PAYMENT_FAILED,
+            "sub_e1",
+            "in_e1",
+        )
 
 
 class TestSubscriptionTranslation:

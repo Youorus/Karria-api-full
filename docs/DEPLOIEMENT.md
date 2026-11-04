@@ -193,10 +193,35 @@ sert `/opt/karria/models/e5-base-int8`, produit par
   `karria://paiement/retour`), `PAYMENTS__IOS_ENABLED` / `PAYMENTS__ANDROID_ENABLED`
   (`true` ; `false` cache tout paiement dans l'app sans livraison),
   `PAYMENTS__AUTOMATIC_TAX` (`false` tant que Stripe Tax n'est pas activé dans
-  le tableau de bord). `APP__PUBLIC_URL=https://api.karria.fr` compose la page
-  de retour (déjà posée).
+  le tableau de bord), `PAYMENTS__PORTAL_CONFIGURATION` (facultatif : la
+  configuration du portail client propre à Karria, `bpc_…`, voir ci-dessous).
+  `APP__PUBLIC_URL=https://api.karria.fr` compose la page de retour (déjà posée).
+- **Compte Stripe partagé avec Zoumani** (même entité juridique, décision de
+  Marc du 2026-11-04). Trois conséquences, toutes dans le code :
+  le **portail client** de Karria est une configuration à part
+  (`PAYMENTS__PORTAL_CONFIGURATION=bpc_1UY508RLc3H57Exq7MtO9HGj`, identifiant
+  public passé en `configuration` à chaque session de portail ; vide, c'est la
+  configuration par défaut du compte — celle de Zoumani — qui s'ouvre) ; le
+  **libellé de relevé bancaire** est `KARRIA` : en suffixe sur chaque paiement
+  unique par carte (Stripe n'admet pas d'autre forme pour la carte : le relevé
+  dit « <libellé court du compte>* KARRIA », soit `ZOUMANI* KARRIA` tant que
+  le libellé court du compte est celui de Zoumani) et en `statement_descriptor`
+  sur chaque **produit** créé par le code, ce que Stripe prend pour tous les
+  renouvellements d'abonnement ; les prix et produits de Karria se
+  reconnaissent à leurs `lookup_key` `karria_*`.
+- **Version d'API.** Le point de terminaison de Marc est épinglé à
+  `2026-09-30.endive` ; le SDK `stripe` 16.0.0 installé épingle **la même**
+  (`stripe.api_version`), et l'adaptateur lit les formes de cette version
+  (`invoice.parent.subscription_details.subscription`,
+  `subscription.items.data[].current_period_end`). Garder le point de
+  terminaison sur cette version ; en changer de concert avec la dépendance
+  `stripe`. Il doit être un **webhook classique** (charge utile complète) : une
+  « destination d'événements » à charge utile mince est acquittée sans effet
+  (journal `payments.event_without_object`).
 - **Chez Stripe** (Marc, tableau de bord) : le compte activé ; le **webhook**
-  `https://api.karria.fr/api/v1/payments/webhook` abonné à
+  `https://api.karria.fr/api/v1/payments/webhook` — **avec le préfixe
+  `/api/v1`** ; `https://api.karria.fr/payments/webhook` répond 404 et aucun
+  alias n'est prévu — abonné à
   `checkout.session.completed`, `customer.subscription.created`,
   `customer.subscription.updated`, `customer.subscription.deleted`,
   `invoice.payment_failed` ; le **portail client** activé (résiliation
