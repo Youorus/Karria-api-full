@@ -551,6 +551,45 @@ class DocumentsSettings(BaseModel):
     admin_token: SecretStr = SecretStr("")
 
 
+class PlatformRelease(BaseModel):
+    """Les seuils d'une plateforme : un fait d'exploitation (quel build est publié)."""
+
+    minimum_build: int = Field(default=0, ge=0)
+    latest_build: int = Field(default=0, ge=0)
+    store_url: str = ""
+
+
+class AppReleaseSettings(BaseModel):
+    """Version minimale de l'application (module `app`).
+
+    `APP_RELEASE__IOS_MINIMUM_BUILD`, `APP_RELEASE__IOS_LATEST_BUILD`,
+    `APP_RELEASE__IOS_STORE_URL`, et les mêmes pour `ANDROID`. Les valeurs
+    par défaut (`0`, `0`, vide) ne forcent ni ne proposent rien : la route
+    répond `ok`.
+    """
+
+    ios_minimum_build: int = Field(default=0, ge=0)
+    ios_latest_build: int = Field(default=0, ge=0)
+    ios_store_url: str = ""
+    android_minimum_build: int = Field(default=0, ge=0)
+    android_latest_build: int = Field(default=0, ge=0)
+    android_store_url: str = ""
+
+    def for_platform(self, platform: str) -> PlatformRelease:
+        """Les seuils d'une plateforme (`ios` ou `android`)."""
+        if platform == "android":
+            return PlatformRelease(
+                minimum_build=self.android_minimum_build,
+                latest_build=self.android_latest_build,
+                store_url=self.android_store_url,
+            )
+        return PlatformRelease(
+            minimum_build=self.ios_minimum_build,
+            latest_build=self.ios_latest_build,
+            store_url=self.ios_store_url,
+        )
+
+
 class SupportSettings(BaseModel):
     """« Parler à l'équipe » (module `support`).
 
@@ -646,6 +685,7 @@ class Settings(BaseSettings):
     documents: DocumentsSettings = Field(default_factory=DocumentsSettings)
     payments: PaymentsSettings = Field(default_factory=PaymentsSettings)
     support: SupportSettings = Field(default_factory=SupportSettings)
+    app_release: AppReleaseSettings = Field(default_factory=AppReleaseSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:

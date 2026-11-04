@@ -7,6 +7,7 @@ from karria.shared.config.providers import (
 )
 from karria.shared.config.settings import (
     LLM_PROVIDERS,
+    AppReleaseSettings,
     AppSettings,
     CollectorAccessSettings,
     DatabaseSettings,
@@ -35,6 +36,7 @@ from karria.shared.config.settings import (
 __all__ = [
     "LLM_PROVIDERS",
     "PROFILES",
+    "AppReleaseSettings",
     "AppSettings",
     "CollectorAccessSettings",
     "DatabaseSettings",
