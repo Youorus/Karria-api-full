@@ -46,6 +46,7 @@ from karria.modules.identity import (
     UserNotFoundError,
     get_main_device_lookup,
 )
+from karria.modules.identity.domain import EmailAddress
 from karria.modules.offers import get_user_notifier
 from karria.modules.payments import PremiumOffer, get_account_directory, get_template_store
 from karria.modules.support import get_account_directory as get_support_account_directory
@@ -161,7 +162,8 @@ class TestPaymentsPorts:
             async def execute(self, user_id: object) -> object:
                 if user_id != user:
                     raise UserNotFoundError
-                return SimpleNamespace(email="toi@exemple.fr")
+                # L'objet-valeur réel, pas une chaîne : c'est sa valeur qui doit sortir.
+                return SimpleNamespace(email=EmailAddress.parse("Toi@Exemple.fr"))
 
         directory = account_directory_from_identity(cast(GetCurrentUser, Reader()))
 

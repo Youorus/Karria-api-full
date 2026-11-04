@@ -321,9 +321,14 @@ class IdentityAccountDirectory:
         self._reader = reader
 
     async def email_of(self, user_id: UUID) -> str | None:
-        """L'adresse du compte, ou `None` s'il n'existe plus."""
+        """L'adresse du compte, ou `None` s'il n'existe plus.
+
+        `User.email` est un `EmailAddress` ; c'est sa **valeur** qui part chez
+        le prestataire — `str()` en donnerait la représentation, que Stripe
+        refuse (`email_invalid`, constaté en production le 2026-11-04).
+        """
         try:
-            return str((await self._reader.execute(user_id)).email)
+            return (await self._reader.execute(user_id)).email.value
         except UserNotFoundError:
             return None
 
