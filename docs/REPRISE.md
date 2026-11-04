@@ -23,20 +23,36 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `PUT /cv/me/chapters/{c}`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
-| `payments` | **en production, éteint** (ADR-0023 + **ADR-0024** « Proposées » ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false` ; **compte Stripe de Karria à ouvrir** — pas celui de Zoumani ; portail `PAYMENTS__PORTAL_CONFIGURATION` facultatif, libellé de relevé `KARRIA`, version d'API `2026-09-30.endive` alignée SDK/webhook) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
+| `payments` | **en production, ALLUMÉ en live depuis le 2026-11-04** (ADR-0023 + **ADR-0024** « Proposées » ; compte Stripe **partagé avec Zoumani**, objets étiquetés `app=karria`, `lookup_key` `karria_*`, libellé `KARRIA`, portail `PAYMENTS__PORTAL_CONFIGURATION` ; version d'API `2026-09-30.endive` alignée SDK/webhook ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
-### Session du 2026-11-04, suite (Stripe : essai sur le compte Zoumani, puis retour en arrière — Fable) — en production, éteint
+### Session du 2026-11-04, suite (Stripe **en live** sur le compte partagé avec Zoumani — Fable) — EN PRODUCTION, ALLUMÉ
 
-**Décisions de Marc, dans l'ordre** : partager le compte Stripe de Zoumani → allumer en live
-directement → **finalement non : Karria aura son propre compte Stripe**. Les clés de Zoumani
-ont été retirées du serveur et de Dokploy ; **rien n'a été créé chez Stripe** (la seule
-écriture tentée, `customers.create`, a été refusée en 400 avant tout prix, produit ou session ;
-vérifié en lecture : aucun prix `karria_*`, aucun client). Le module est **éteint** (sans
-`PAYMENTS__SECRET_KEY` → `enabled: false`).
+**Décision finale de Marc** (après un aller-retour dans la journée) : Karria encaisse sur le
+**compte Stripe de Zoumani** (même entité juridique), **en live directement**, et doit se
+distinguer dans le tableau de bord. Le module est **allumé** depuis 14:53 UTC.
 
-**Livré** (commits `736bb81`, puis celui-ci, sur `main`, déployés par le push) :
+**Comment Marc isole Karria dans Stripe** : filtre métadonnée **`app` = `karria`** (sur les
+paiements/PaymentIntents, sessions Checkout, abonnements, clients — ces derniers portent aussi
+`description: Karria`), produits et prix aux **`lookup_key` `karria_*`**, libellé de relevé
+**`KARRIA`** (« ZOUMANI* KARRIA » sur le relevé des paiements uniques par carte), portail
+client dédié `bpc_1UY508RLc3H57Exq7MtO9HGj`.
+
+**Créé chez Stripe par l'essai** (live) : le produit `prod_VZE1QFg` « 1 café pour l'équipe
+Karria » (descripteur `KARRIA`, `app=karria`) et son prix `price_1UY5ZI…` (`karria_coffee_1`,
+2,99 € TTC) — les autres prix naîtront au premier achat ; **une session Checkout ouverte,
+non payée** (2,99 €, `app=karria`), qui expire d'elle-même sous 24 h ; le client du compte de
+test a été **supprimé** avec le compte (`DELETE /auth/me` → `ForgetUser`). Aucun paiement
+réel.
+
+**Vérifié en production** : `/health/ready` 200 ; catalogue `enabled: {ios: true, android: true}` ;
+`POST /payments/checkout-session` (1 café) → **201**, adresse `checkout.stripe.com` ; webhook
+sans signature → **422 `signature_missing`** (signature fausse → 422 `signature_invalid` ; c'est
+le contrat, pas 400) ; journal : `payments.customer_created`, `payments.price_created`,
+`payments.checkout_opened`, `payments.customer_deleted`, `payments.user_forgotten`.
+
+**Livré** (commits `736bb81` → `main`, déployés par le push) :
 
 - `stripe_gateway.py` : `PAYMENTS__PORTAL_CONFIGURATION` (facultatif) passé en
   `configuration` du portail ; libellé de relevé `KARRIA` (`STATEMENT_DESCRIPTOR`) en
@@ -50,32 +66,36 @@ vérifié en lecture : aucun prix `karria_*`, aucun client). Le module est **ét
   épingle **la même** (`stripe.api_version`) et l'adaptateur lisait déjà ces formes. Rien à
   changer ; bouger la version du point de terminaison avec la dépendance seulement. Tests
   ajoutés sur les formes `endive` des trois familles d'événements.
-- **Bug réel trouvé par l'essai en production** : le pont `IdentityAccountDirectory`
-  (`bootstrap/wiring.py`) passait `str(EmailAddress)` — la **représentation** de
-  l'objet-valeur — comme adresse du client Stripe, refusée (`email_invalid`) : **tout
-  paiement aurait répondu 503**. Corrigé (`.email.value`) ; le test du pont utilise désormais
-  le vrai `EmailAddress`.
-
-**Vérifié en production, module allumé un court moment avec les clés Zoumani** : catalogue
-`enabled: true`, `/payments/me` 200, webhook sans signature → **422 `signature_missing`**
-(signature fausse → 422 `signature_invalid`, c'est le contrat, pas 400) ; checkout → 503 (le
-bug ci-dessus). Compte de test créé par le parcours e-mail : `mtakoumba+karria-smoke@gmail.com`
-(session révoquée ; le compte reste, à supprimer un jour).
+- **Étiquette `app=karria`** (`APP_TAG`, `_tagged`) sur tout objet créé : sessions Checkout
+  (session, `payment_intent_data`, `subscription_data`), clients (+ `description: Karria`),
+  produits et prix. Les métadonnées existantes (`user_id`, `kind`…) sont conservées.
+- **Deux bugs réels trouvés par l'essai en production** : (a) le pont
+  `IdentityAccountDirectory` (`bootstrap/wiring.py`) passait `str(EmailAddress)` — la
+  **représentation** de l'objet-valeur — comme adresse du client Stripe, refusée
+  (`email_invalid`) : tout paiement aurait répondu 503 ; corrigé (`.email.value`), le test du
+  pont utilise le vrai `EmailAddress`. (b) La clé d'idempotence **fixe** par personne
+  (`karria-customer:<user_id>`) : Stripe garde 24 h la première requête et refuse la même clé
+  avec d'autres paramètres (`idempotency_error`) — après (a), le client restait increable ;
+  les clés client et prix dépendent désormais **aussi des paramètres** (`idempotency_key`).
 
 **Serveur, état final** : Dokploy (env de l'API, via `application.saveEnvironment`, qui exige
-aussi `buildArgs` et `buildSecrets`) porte `PAYMENTS__IOS_ENABLED=true`,
-`PAYMENTS__ANDROID_ENABLED=true`, `PAYMENTS__AUTOMATIC_TAX=false`,
-`PAYMENTS__RETURN_URL=https://karria.fr/paiement` et **aucun secret** ;
-`/root/karria-api.env` n'a plus aucune variable `PAYMENTS__*`. Compte Dokploy :
-`contact@papiers-express.fr` (mot de passe chez Marc) ; le cookie `/root/.dokploy-cookie`
-expire, demander à Marc de le rafraîchir.
+aussi `buildArgs` et `buildSecrets`) porte les **sept** variables : `PAYMENTS__SECRET_KEY`
+(live), `PAYMENTS__WEBHOOK_SECRET`, `PAYMENTS__PORTAL_CONFIGURATION`,
+`PAYMENTS__IOS_ENABLED=true`, `PAYMENTS__ANDROID_ENABLED=true`, `PAYMENTS__AUTOMATIC_TAX=false`,
+`PAYMENTS__RETURN_URL=https://karria.fr/paiement` ; les trois secrets sont aussi dans
+`/root/karria-api.env`. Compte Dokploy : `contact@papiers-express.fr` (mot de passe chez
+Marc) ; le cookie `/root/.dokploy-cookie` expire, demander à Marc de le rafraîchir. Pour un
+compte de test par le parcours e-mail sans lire le courriel : poser le condensat
+`sha256(SECURITY__TOKEN_PEPPER + code)` dans `identity_login_challenges.code_hash` depuis un
+conteneur ponctuel (`--env-file /root/karria-api.env`), puis `/auth/email/verify`.
 
-**Pour Marc** : ouvrir le compte Stripe de Karria ; y créer le webhook
-`https://api.karria.fr/api/v1/payments/webhook` (version `2026-09-30.endive`, les **5**
-événements — celui du compte Zoumani n'en avait qu'un) et une configuration de portail avec
-résiliation, factures et moyen de paiement activés (celle de Zoumani n'avait rien d'activé) ;
-poser `PAYMENTS__SECRET_KEY` et `PAYMENTS__WEBHOOK_SECRET` (+ `PAYMENTS__PORTAL_CONFIGURATION`
-si plusieurs configurations) dans Dokploy ; tester en mode test d'abord ; valider ADR-0023/0024.
+**Pour Marc — chez Stripe, encore** : (1) le webhook Karria n'est abonné qu'à
+`checkout.session.completed` : ajouter `customer.subscription.created|updated|deleted` et
+`invoice.payment_failed` (sinon « sans pub » ne se synchronise pas et la grâce de 7 jours ne
+démarre jamais) ; (2) la configuration de portail `bpc_1UY508RLc3H57Exq7MtO9HGj` a **tout
+désactivé** (résiliation, factures, moyen de paiement) : activer les trois ; (3) e-mails de
+reçu ; (4) valider ADR-0023/0024. **Couper d'urgence** : `PAYMENTS__IOS_ENABLED=false` (ou
+retirer la clé) dans Dokploy et redéployer.
 
 ### Session du 2026-11-04 (import direct, édition d'une section, lecture par groupes — Fable) — en production
 
@@ -688,8 +708,9 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    l'image ; retrait des traits du texte plongé (ré-indexage) ; champs qui
    valent un appel au modèle. Puis la relecture du travail (Tâche 3) et la
    purge des offres inactives en production.
-3. **Paiements** : corriger l'URL du webhook, poser les variables `PAYMENTS__*` dans Dokploy
-   et tester (voir les sessions du 2026-10-29, suite, et du 2026-11-04, suite) ;
+3. **Paiements (en live)** : chez Stripe, compléter les 5 événements du webhook et activer
+   les fonctions du portail Karria (voir la session du 2026-11-04, suite) ; surveiller les
+   premiers vrais paiements (`payments.purchase_recorded`, `payments.subscription_synced`) ;
    modules suivants à décider par Marc un par un.
 4. **Points listés dans `docs/PLUS-TARD.md`** :
    - purge planifiée ;
