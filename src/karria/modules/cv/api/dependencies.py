@@ -31,6 +31,7 @@ from karria.modules.cv.application import (
     PhotoRepository,
     PortraitEnhancer,
     TranscribeVoice,
+    UpdateCvChapter,
     UploadInspector,
     UploadPhoto,
     ValidateChapter,
@@ -171,12 +172,30 @@ def get_upload_photo(
 
 
 def get_import_cv(
+    *,
     extractor: CvExtractorDep,
     inspector: UploadInspectorDep,
+    cvs: CvRepositoryDep,
     drafts: DraftRepositoryDep,
+    unit_of_work: UnitOfWorkDep,
+    events: EventBusDep,
     clock: ClockDep,
 ) -> ImportCv:
-    return ImportCv(extractor, inspector, drafts, clock)
+    return ImportCv(
+        extractor=extractor,
+        inspector=inspector,
+        cvs=cvs,
+        drafts=drafts,
+        unit_of_work=unit_of_work,
+        events=events,
+        clock=clock,
+    )
+
+
+def get_update_cv_chapter(
+    cvs: CvRepositoryDep, photos: PhotoRepositoryDep, storage: ObjectStorageDep, clock: ClockDep
+) -> UpdateCvChapter:
+    return UpdateCvChapter(cvs=cvs, photos=photos, storage=storage, clock=clock)
 
 
 def build_forget_user(storage: ObjectStorage) -> ForgetUser:
@@ -213,4 +232,5 @@ FinalizeDraftDep = Annotated[FinalizeDraft, Depends(get_finalize_draft)]
 TranscribeVoiceDep = Annotated[TranscribeVoice, Depends(get_transcribe_voice)]
 UploadPhotoDep = Annotated[UploadPhoto, Depends(get_upload_photo)]
 ImportCvDep = Annotated[ImportCv, Depends(get_import_cv)]
+UpdateCvChapterDep = Annotated[UpdateCvChapter, Depends(get_update_cv_chapter)]
 DraftPresenterDep = Annotated[DraftPresenter, Depends(get_draft_presenter)]

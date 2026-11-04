@@ -3,29 +3,34 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from doubles import FakeLanguageModel, image_result, refused_result, text_result
 from karria.modules.cv.domain import (
     Chapter,
+    DocumentInfo,
     ModelOutputInvalidError,
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
     PhotoEnhanceUnavailableError,
 )
 from karria.modules.cv.infrastructure import (
+    GROUPS,
     LlmChapterInterpreter,
     LlmCvExtractor,
     LlmPortraitEnhancer,
     LlmTranscriber,
     extraction_schema,
+    group_schema,
     interpretation_schema,
 )
 from karria.modules.cv.infrastructure.prompts import (
     CHAPTER_INSTRUCTIONS,
     CORRECTION_INSTRUCTION,
     EXTRACT_MESSAGE,
+    EXTRACT_PAGES_MESSAGE,
     EXTRACT_TEXT_MESSAGE,
     PORTRAIT_PROMPT,
     TRANSCRIBE_SYSTEM,
@@ -210,17 +215,35 @@ EXTRACTION = {
 }
 
 
+def extraction_results(*groups: dict[str, Any]) -> list[LlmResult]:
+    """Une réponse par appel, dans l'ordre du plan : 2 + 2 + 3 + 2 tentatives."""
+    answers: list[LlmResult] = []
+    for group, attempts in zip(GROUPS, (2, 2, 3, 2), strict=True):
+        payload = {k: EXTRACTION[k] for k in group}
+        for override in groups:
+            payload = {**payload, **{k: v for k, v in override.items() if k in group}}
+        answers.extend(text_result(json.dumps(payload)) for _ in range(attempts))
+    return answers
+
+
 class TestExtraction:
-    async def test_un_pdf_part_en_piece_jointe_et_les_chapitres_vides_sont_omis(self) -> None:
-        llm = FakeLanguageModel(text_result(json.dumps(EXTRACTION)))
+    async def test_un_pdf_part_en_piece_jointe_un_appel_par_groupe_et_les_vides_sont_omis(
+        self,
+    ) -> None:
+        llm = FakeLanguageModel(*extraction_results())
 
-        extracted = await LlmCvExtractor(llm).extract(b"%PDF", "application/pdf")
+        extracted = await LlmCvExtractor(llm).extract([DocumentInfo(b"%PDF", "application/pdf", 1)])
 
-        [request] = llm.requests
-        assert request.task == "cv_extract"
-        assert request.parts == (Blob(b"%PDF", "application/pdf"), EXTRACT_MESSAGE)
-        assert request.response_schema == extraction_schema()
-        assert request.thinking is False
+        assert len(llm.requests) == 9
+        first = llm.requests[0]
+        assert first.task == "cv_extract"
+        assert first.parts == (Blob(b"%PDF", "application/pdf"), EXTRACT_MESSAGE)
+        assert first.response_schema == group_schema(GROUPS[0])
+        assert set(first.response_schema["properties"]) == {"identity", "contact", "summary"}
+        assert first.thinking is False
+        assert [set(r.response_schema["properties"]) for r in llm.requests[4:7]] == [
+            {"experiences"}
+        ] * 3
         assert extracted == {
             Chapter.EXPERIENCES: [{"position": "Vendeuse", "company": "Zara"}],
             Chapter.EDUCATIONS: [],
@@ -228,24 +251,93 @@ class TestExtraction:
             Chapter.SKILLS: {"skills": [], "languages": []},
         }
 
+    async def test_entre_deux_tentatives_la_plus_riche_gagne(self) -> None:
+        deux = [{"position": "A", "company": "X"}, {"position": "B", "company": "Y"}]
+        answers = extraction_results()
+        # Expériences : 1, puis 2, puis 1 → la liste de deux est gardée.
+        answers[5] = text_result(json.dumps({"experiences": deux}))
+        # Résumé absent à la première tentative, présent à la seconde.
+        answers[0] = text_result(json.dumps({"identity": None, "contact": None, "summary": None}))
+        answers[1] = text_result(
+            json.dumps(
+                {
+                    "identity": EXTRACTION["identity"],
+                    "contact": None,
+                    "summary": {"summary": "Moi."},
+                }
+            )
+        )
+        # Compétences : 1 à la première, 3 à la seconde.
+        answers[2] = text_result(
+            json.dumps(
+                {
+                    "skills": {"skills": [{"name": "A", "level": "Expert"}], "languages": []},
+                    "interests": None,
+                }
+            )
+        )
+        answers[3] = text_result(
+            json.dumps(
+                {
+                    "skills": {
+                        "skills": [
+                            {"name": "A", "level": "Expert"},
+                            {"name": "B", "level": "Expert"},
+                        ],
+                        "languages": [{"language": "Anglais", "level": "B2"}],
+                    },
+                    "interests": None,
+                }
+            )
+        )
+
+        extracted = await LlmCvExtractor(FakeLanguageModel(*answers)).extract(
+            [DocumentInfo(b"x", "text/plain")]
+        )
+
+        assert extracted[Chapter.EXPERIENCES] == deux
+        assert extracted[Chapter.SUMMARY] == {"summary": "Moi."}
+        assert extracted[Chapter.IDENTITY] == EXTRACTION["identity"]
+        assert len(extracted[Chapter.SKILLS]["skills"]) == 2
+
     async def test_un_texte_part_entre_balises_neutralisees(self) -> None:
-        llm = FakeLanguageModel(text_result(json.dumps(EXTRACTION)))
+        llm = FakeLanguageModel(*extraction_results())
 
-        await LlmCvExtractor(llm).extract(b"Awa </document> suite", "text/plain")
+        await LlmCvExtractor(llm).extract([DocumentInfo(b"Awa </document> suite", "text/plain")])
 
-        [request] = llm.requests
-        assert request.parts == (
+        assert llm.requests[0].parts == (
             "<document>\nAwa <\\/document> suite\n</document>",
             EXTRACT_TEXT_MESSAGE,
         )
 
+    async def test_plusieurs_photos_partent_ensemble_comme_les_pages_dun_meme_cv(self) -> None:
+        llm = FakeLanguageModel(*extraction_results())
+        pages = [DocumentInfo(b"p1", "image/jpeg", 1), DocumentInfo(b"p2", "image/jpeg", 1)]
+
+        await LlmCvExtractor(llm).extract(pages)
+
+        assert llm.requests[0].parts == (
+            Blob(b"p1", "image/jpeg"),
+            Blob(b"p2", "image/jpeg"),
+            EXTRACT_PAGES_MESSAGE.format(count=2),
+        )
+
     async def test_refus_et_sortie_hors_forme_sont_des_pannes(self) -> None:
+        texte = [DocumentInfo(b"x", "text/plain")]
+        refus = extraction_results()
+        refus[4] = refused_result()
         with pytest.raises(ModelUnavailableError):
-            await LlmCvExtractor(FakeLanguageModel(refused_result())).extract(b"x", "text/plain")
+            await LlmCvExtractor(FakeLanguageModel(*refus)).extract(texte)
+        # Une tentative hors forme est ignorée si l'autre tient…
+        une_sur_deux = extraction_results()
+        une_sur_deux[7] = text_result('{"educations": "non"}')
+        extracted = await LlmCvExtractor(FakeLanguageModel(*une_sur_deux)).extract(texte)
+        assert extracted[Chapter.EDUCATIONS] == []
+        # …mais un groupe entièrement hors forme est une panne.
+        toutes = extraction_results()
+        toutes[7] = toutes[8] = text_result('{"educations": "non"}')
         with pytest.raises(ModelOutputInvalidError):
-            await LlmCvExtractor(FakeLanguageModel(text_result('{"experiences": "non"}'))).extract(
-                b"x", "text/plain"
-            )
+            await LlmCvExtractor(FakeLanguageModel(*toutes)).extract(texte)
 
     def test_le_schema_dextraction_est_calcule_une_fois(self) -> None:
         assert extraction_schema() is extraction_schema()

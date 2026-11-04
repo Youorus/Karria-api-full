@@ -31,6 +31,18 @@ class DraftNotFoundError(DomainError):
         super().__init__("Aucun brouillon de CV en cours.", details={"reason": "draft_not_found"})
 
 
+class CvNotFoundError(DomainError):
+    """La personne n'a pas encore de CV : rien à modifier directement."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.NOT_FOUND
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Aucun CV à modifier : crée-le ou importe-le d'abord.",
+            details={"reason": "cv_not_found"},
+        )
+
+
 class DraftIncompleteError(BusinessRuleViolationError):
     """La finalisation exige que chaque chapitre soit validé ou passé."""
 

@@ -8,6 +8,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from doubles import (
+    CV_CONTACT,
+    CV_EXPERIENCE,
     CV_IDENTITY,
     CV_NOW,
     CollectingBus,
@@ -33,10 +35,12 @@ from karria.modules.cv.application import (
     GetDraft,
     GetMyCv,
     ImportCv,
+    ImportSource,
     InterpretAnswer,
     Interpretation,
     OpenDraft,
     TranscribeVoice,
+    UpdateCvChapter,
     UploadPhoto,
     ValidateChapter,
 )
@@ -44,14 +48,20 @@ from karria.modules.cv.domain import (
     Chapter,
     ChapterStatus,
     ChapterSubmission,
+    ChapterSubmissionError,
     ChapterValidationError,
+    Contact,
     CurriculumVitae,
+    CvNotFoundError,
     CvPhoto,
     Draft,
     DraftIncompleteError,
     DraftNotFoundError,
+    Experience,
+    Identity,
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
+    ReceivedFile,
     UnsupportedUploadError,
 )
 from karria.shared.config import Environment, StorageSettings
@@ -514,67 +524,287 @@ EXTRACTED = {
 }
 
 
+def pdf(payload: bytes = b"%PDF-1.4 cv") -> list[ReceivedFile]:
+    return [ReceivedFile(payload, "application/pdf")]
+
+
+def importer(
+    extractor: FakeExtractor,
+    inspector: FakeInspector,
+    *,
+    cvs: InMemoryCvRepository | None = None,
+    drafts: InMemoryDraftRepository | None = None,
+    bus: CollectingBus | None = None,
+) -> ImportCv:
+    return ImportCv(
+        extractor=extractor,
+        inspector=inspector,
+        cvs=cvs or InMemoryCvRepository(),
+        drafts=drafts or InMemoryDraftRepository(),
+        unit_of_work=NullUnitOfWork(),
+        events=bus or CollectingBus(),
+        clock=FakeClock(),
+    )
+
+
 class TestImportCv:
-    async def test_remplit_un_brouillon_neuf_de_propositions(self) -> None:
-        drafts = InMemoryDraftRepository()
+    async def test_le_cv_lu_devient_le_cv_et_le_compte_rendu_dit_ce_qui_a_ete_garde(self) -> None:
+        cvs = InMemoryCvRepository()
+        bus = CollectingBus()
         extractor = FakeExtractor(EXTRACTED)
-        use_case = ImportCv(extractor, FakeInspector(pages=2), drafts, FakeClock())
+        use_case = importer(extractor, FakeInspector(pages=2), cvs=cvs, bus=bus)
 
-        draft = await use_case.execute(USER, b"%PDF-1.4 cv", "application/pdf")
+        result = await use_case.execute(USER, pdf())
 
-        assert drafts.drafts[USER] is draft
-        assert extractor.calls == [(b"%PDF-1.4 cv", "application/pdf")]
-        assert draft.chapters[Chapter.IDENTITY].status is ChapterStatus.IN_PROGRESS
-        assert draft.chapters[Chapter.IDENTITY].data == EXTRACTED[Chapter.IDENTITY]
-        assert len(draft.chapters[Chapter.EXPERIENCES].items) == 1
-        assert draft.chapters[Chapter.EDUCATIONS].status is ChapterStatus.PENDING
-        assert draft.chapters[Chapter.SKILLS].status is ChapterStatus.IN_PROGRESS
-        assert not draft.is_complete
+        assert cvs.cvs[USER] is result.cv
+        assert extractor.calls == [[(b"%PDF-1.4 cv", "application/pdf")]]
+        assert result.cv.identity is not None
+        assert result.cv.identity.first_name == "Awa"
+        assert [e.company for e in result.cv.experiences] == ["Zara"]
+        assert result.cv.educations == ()
+        assert [s.name for s in result.cv.skills] == ["Vente"]
+        assert result.source == ImportSource(content_type="application/pdf", files=1, pages=2)
+        assert result.kept["experiences"] == 1
+        assert result.kept["educations"] == 0
+        assert result.discarded == {"experiences": 1}
+        # Pas de contact lu : les coordonnées sont la première chose à vérifier.
+        assert result.missing[:3] == ("contact.phone", "contact.email", "contact.city")
+        assert "identity.headline" in result.missing
+        assert "educations" in result.missing
+        [event] = bus.published
+        assert isinstance(event, CvFinalized)
+        assert event.first_name == "Awa"
 
-    async def test_un_docx_part_en_texte_et_le_brouillon_existant_est_respecte(self) -> None:
+    async def test_le_cv_existant_garde_son_id_et_sa_photo_et_le_brouillon_disparait(self) -> None:
+        cvs = InMemoryCvRepository()
         drafts = InMemoryDraftRepository()
-        existing = Draft.new(USER, now=CV_NOW)
-        existing.submit(
-            Chapter.IDENTITY,
-            ChapterSubmission(data={**CV_IDENTITY, "first_name": "Aminata"}),
-            now=CV_NOW,
+        existing = CurriculumVitae(
+            id=uuid4(), user_id=USER, created_at=CV_NOW, updated_at=CV_NOW, image_key="k/photo.jpg"
         )
-        await drafts.save(existing)
+        await cvs.save(existing)
+        await drafts.save(Draft.new(USER, now=CV_NOW))
+        use_case = importer(
+            FakeExtractor(EXTRACTED), FakeInspector(pages=1), cvs=cvs, drafts=drafts
+        )
+
+        result = await use_case.execute(USER, pdf())
+
+        assert result.cv.id == existing.id
+        assert result.cv.created_at == CV_NOW
+        assert result.cv.image_key == "k/photo.jpg"
+        assert drafts.drafts == {}
+
+    async def test_un_docx_part_en_texte(self) -> None:
         extractor = FakeExtractor(EXTRACTED)
         docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        use_case = ImportCv(extractor, FakeInspector(pages=None, as_text=True), drafts, FakeClock())
+        use_case = importer(extractor, FakeInspector(pages=None, as_text=True))
 
-        draft = await use_case.execute(USER, b"texte du cv", docx)
+        result = await use_case.execute(USER, [ReceivedFile(b"texte du cv", docx)])
 
-        assert draft is existing
-        assert extractor.calls == [(b"texte du cv", "text/plain")]
-        assert draft.validated_data(Chapter.IDENTITY) == {**CV_IDENTITY, "first_name": "Aminata"}
+        assert extractor.calls == [[(b"texte du cv", "text/plain")]]
+        assert result.source.pages is None
+
+    async def test_plusieurs_photos_sont_lues_ensemble_dans_lordre(self) -> None:
+        extractor = FakeExtractor(EXTRACTED)
+        use_case = importer(extractor, FakeInspector(pages=1))
+        pages = [ReceivedFile(b"p1", "image/jpeg"), ReceivedFile(b"p2", "image/jpeg; charset=x")]
+
+        result = await use_case.execute(USER, pages)
+
+        assert extractor.calls == [[(b"p1", "image/jpeg"), (b"p2", "image/jpeg")]]
+        assert result.source == ImportSource(content_type="image/jpeg", files=2, pages=2)
+
+    async def test_plusieurs_fichiers_doivent_tous_etre_des_images(self) -> None:
+        extractor = FakeExtractor(EXTRACTED)
+        use_case = importer(extractor, FakeInspector(pages=1))
+
+        with pytest.raises(UnsupportedUploadError) as excinfo:
+            await use_case.execute(
+                USER, [ReceivedFile(b"%PDF", "application/pdf"), ReceivedFile(b"p", "image/png")]
+            )
+
+        assert excinfo.value.details["reason"] == "document_pages_must_be_images"
+        assert extractor.calls == []
 
     async def test_les_regles_sur_le_fichier_sappliquent_avant_lextraction(self) -> None:
         extractor = FakeExtractor(EXTRACTED)
-        use_case = ImportCv(
-            extractor, FakeInspector(pages=11), InMemoryDraftRepository(), FakeClock()
-        )
+        use_case = importer(extractor, FakeInspector(pages=11))
 
         with pytest.raises(UnsupportedUploadError):
-            await use_case.execute(USER, b"x", "application/zip")
+            await use_case.execute(USER, [ReceivedFile(b"x", "application/zip")])
         with pytest.raises(UnsupportedUploadError):
-            await use_case.execute(USER, b"", "application/pdf")
+            await use_case.execute(USER, pdf(b""))
         with pytest.raises(UnsupportedUploadError) as excinfo:
-            await use_case.execute(USER, b"%PDF", "application/pdf")
+            await use_case.execute(USER, pdf(b"%PDF"))
+        assert excinfo.value.details["reason"] == "document_too_many_pages"
+        with pytest.raises(UnsupportedUploadError) as excinfo:
+            await use_case.execute(USER, [])
+        assert excinfo.value.details["reason"] == "document_empty"
+        with pytest.raises(UnsupportedUploadError) as excinfo:
+            await use_case.execute(USER, [ReceivedFile(b"p", "image/png")] * 11)
+        assert excinfo.value.details["reason"] == "document_too_many_pages"
+        assert extractor.calls == []
+
+    async def test_les_pages_des_photos_se_cumulent(self) -> None:
+        extractor = FakeExtractor(EXTRACTED)
+        use_case = importer(extractor, FakeInspector(pages=6))
+
+        with pytest.raises(UnsupportedUploadError) as excinfo:
+            await use_case.execute(USER, [ReceivedFile(b"p", "image/png")] * 2)
+
         assert excinfo.value.details["reason"] == "document_too_many_pages"
         assert extractor.calls == []
 
     async def test_un_fichier_illisible_remonte_depuis_linspecteur(self) -> None:
         error = UnsupportedUploadError("illisible", reason="document_unreadable", field="file")
-        use_case = ImportCv(
-            FakeExtractor(), FakeInspector(error=error), InMemoryDraftRepository(), FakeClock()
+        use_case = importer(FakeExtractor(), FakeInspector(error=error))
+
+        with pytest.raises(UnsupportedUploadError) as excinfo:
+            await use_case.execute(USER, pdf(b"%PDF"))
+
+        assert excinfo.value is error
+
+    async def test_rien_nest_ecrit_si_le_document_nest_pas_un_cv(self) -> None:
+        cvs = InMemoryCvRepository()
+        drafts = InMemoryDraftRepository()
+        await drafts.save(Draft.new(USER, now=CV_NOW))
+        use_case = importer(
+            FakeExtractor({Chapter.EXPERIENCES: "rien", Chapter.IDENTITY: {"first_name": ""}}),
+            FakeInspector(pages=1),
+            cvs=cvs,
+            drafts=drafts,
         )
 
         with pytest.raises(UnsupportedUploadError) as excinfo:
-            await use_case.execute(USER, b"%PDF", "application/pdf")
+            await use_case.execute(USER, pdf())
 
-        assert excinfo.value is error
+        assert excinfo.value.details["reason"] == "document_not_a_cv"
+        assert cvs.cvs == {}
+        assert USER in drafts.drafts
+
+    async def test_une_panne_du_modele_necrit_rien(self) -> None:
+        cvs = InMemoryCvRepository()
+        use_case = importer(
+            FakeExtractor(error=ModelUnavailableError()), FakeInspector(pages=1), cvs=cvs
+        )
+
+        with pytest.raises(ModelUnavailableError):
+            await use_case.execute(USER, pdf())
+
+        assert cvs.cvs == {}
+
+
+def existing_cv(*, image_key: str | None = None) -> CurriculumVitae:
+    return CurriculumVitae(
+        id=uuid4(),
+        user_id=USER,
+        created_at=CV_NOW,
+        updated_at=CV_NOW,
+        identity=Identity.model_validate(CV_IDENTITY),
+        contact=Contact.model_validate(CV_CONTACT),
+        summary="Je suis souriante.",
+        image_key=image_key,
+        experiences=(Experience.model_validate(CV_EXPERIENCE),),
+    )
+
+
+class TestUpdateCvChapter:
+    def _use_case(
+        self,
+        cvs: InMemoryCvRepository,
+        photos: InMemoryPhotoRepository,
+        store: InMemoryObjectStorage,
+    ) -> UpdateCvChapter:
+        return UpdateCvChapter(cvs=cvs, photos=photos, storage=store, clock=FakeClock())
+
+    async def test_sans_cv_rien_a_modifier(self) -> None:
+        use_case = self._use_case(InMemoryCvRepository(), InMemoryPhotoRepository(), storage())
+
+        with pytest.raises(CvNotFoundError):
+            await use_case.execute(USER, Chapter.SUMMARY, ChapterSubmission(data={"summary": "x"}))
+
+    async def test_une_section_est_remplacee_et_persistee(self) -> None:
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv())
+        use_case = self._use_case(cvs, InMemoryPhotoRepository(), storage())
+
+        cv = await use_case.execute(
+            USER,
+            Chapter.EXPERIENCES,
+            ChapterSubmission(
+                items=[
+                    {"position": "Caissière", "company": "Lidl", "start_date": "2020-01"},
+                    CV_EXPERIENCE,
+                ]
+            ),
+        )
+
+        assert [e.company for e in cv.experiences] == ["Lidl", "Zara"]
+        assert cvs.cvs[USER] is cv
+        assert cv.updated_at == FakeClock().now()
+
+    async def test_une_photo_se_change_par_son_identifiant_et_lancienne_est_oubliee(self) -> None:
+        store = storage()
+        await store.put(Bucket.MEDIA, "old.jpg", b"old", content_type="image/jpeg")
+        await store.put(Bucket.MEDIA, "new.jpg", b"new", content_type="image/jpeg")
+        await store.put(Bucket.MEDIA, "other.jpg", b"other", content_type="image/jpeg")
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv(image_key="old.jpg"))
+        photos = InMemoryPhotoRepository()
+        chosen = CvPhoto(uuid4(), USER, "new.jpg", True, CV_NOW)
+        other = CvPhoto(uuid4(), USER, "other.jpg", False, CV_NOW)
+        await photos.add(chosen)
+        await photos.add(other)
+        use_case = self._use_case(cvs, photos, store)
+
+        cv = await use_case.execute(
+            USER, Chapter.PHOTO, ChapterSubmission(data={"image_id": str(chosen.id)})
+        )
+
+        assert cv.image_key == "new.jpg"
+        assert await photos.list_by_user(USER) == []
+        assert await store.exists(Bucket.MEDIA, "new.jpg")
+        assert not await store.exists(Bucket.MEDIA, "old.jpg")
+        assert not await store.exists(Bucket.MEDIA, "other.jpg")
+
+    async def test_la_photo_se_retire(self) -> None:
+        store = storage()
+        await store.put(Bucket.MEDIA, "old.jpg", b"old", content_type="image/jpeg")
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv(image_key="old.jpg"))
+        use_case = self._use_case(cvs, InMemoryPhotoRepository(), store)
+
+        cv = await use_case.execute(USER, Chapter.PHOTO, ChapterSubmission(data={"image_id": None}))
+        assert cv.image_key is None
+        assert not await store.exists(Bucket.MEDIA, "old.jpg")
+
+        again = await use_case.execute(USER, Chapter.PHOTO, ChapterSubmission(skipped=True))
+        assert again.image_key is None
+
+    async def test_une_photo_inconnue_ou_une_mauvaise_forme_sont_refusees(self) -> None:
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv())
+        use_case = self._use_case(cvs, InMemoryPhotoRepository(), storage())
+
+        with pytest.raises(ChapterValidationError):
+            await use_case.execute(
+                USER, Chapter.PHOTO, ChapterSubmission(data={"image_id": str(uuid4())})
+            )
+        with pytest.raises(ChapterSubmissionError) as excinfo:
+            await use_case.execute(USER, Chapter.PHOTO, ChapterSubmission(items=[]))
+        assert excinfo.value.details["reason"] == "chapter_data_expected"
+
+    async def test_un_bucket_qui_resiste_nannule_pas_la_modification(self) -> None:
+        store = FailingDeleteStorage(StorageSettings(), Environment.TEST.value)
+        await store.put(Bucket.MEDIA, "old.jpg", b"old", content_type="image/jpeg")
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv(image_key="old.jpg"))
+        use_case = self._use_case(cvs, InMemoryPhotoRepository(), store)
+
+        cv = await use_case.execute(USER, Chapter.PHOTO, ChapterSubmission(skipped=True))
+
+        assert cv.image_key is None
+        assert cvs.cvs[USER].image_key is None
 
 
 def test_les_identifiants_de_photo_sont_des_uuid() -> None:

@@ -186,9 +186,11 @@ class PortraitEnhancer(Protocol):
 class CvDocumentExtractor(Protocol):
     """Lit un CV existant (PDF, image, texte) et en tire les chapitres."""
 
-    async def extract(self, document: bytes, content_type: str) -> dict[Chapter, Any]:
+    async def extract(self, documents: Sequence[DocumentInfo]) -> dict[Chapter, Any]:
         """Rend, par chapitre, une valeur (chapitre simple) ou une liste (boucle).
 
+        `documents` : un seul fichier, ou les photos des pages d'un même CV,
+        dans l'ordre — le modèle les lit ensemble, en une requête.
         Brut, non validé : le cas d'usage revalide élément par élément.
 
         Raises:

@@ -8,11 +8,18 @@ from karria.modules.cv.domain.chapters import (
     Chapter,
     ChapterStatus,
 )
-from karria.modules.cv.domain.cv import CurriculumVitae
-from karria.modules.cv.domain.draft import ChapterState, ChapterSubmission, Draft
+from karria.modules.cv.domain.cv import CurriculumVitae, ImportAssembly
+from karria.modules.cv.domain.draft import (
+    ChapterState,
+    ChapterSubmission,
+    Draft,
+    validated_or_none,
+    validated_or_raise,
+)
 from karria.modules.cv.domain.errors import (
     ChapterSubmissionError,
     ChapterValidationError,
+    CvNotFoundError,
     DraftIncompleteError,
     DraftNotFoundError,
     ModelOutputInvalidError,
@@ -59,12 +66,14 @@ from karria.modules.cv.domain.uploads import (
     SUPPORTED_DOCUMENT_TYPES,
     AudioInfo,
     DocumentInfo,
+    ReceivedFile,
     check_audio,
     check_audio_size,
     check_audio_type,
     check_document,
     check_document_size,
     check_document_type,
+    check_documents,
     plain_content_type,
 )
 
@@ -91,6 +100,7 @@ __all__ = [
     "Contact",
     "CurriculumVitae",
     "CvModel",
+    "CvNotFoundError",
     "CvPhoto",
     "DocumentInfo",
     "Draft",
@@ -99,6 +109,7 @@ __all__ = [
     "Education",
     "Experience",
     "Identity",
+    "ImportAssembly",
     "Interest",
     "InterestsChapter",
     "Language",
@@ -110,6 +121,7 @@ __all__ = [
     "PhotoEnhanceRefusedError",
     "PhotoEnhanceUnavailableError",
     "Project",
+    "ReceivedFile",
     "Skill",
     "SkillLevel",
     "SkillsChapter",
@@ -121,6 +133,7 @@ __all__ = [
     "check_document",
     "check_document_size",
     "check_document_type",
+    "check_documents",
     "clean_bullets",
     "coerce_language_level",
     "coerce_skill_level",
@@ -128,4 +141,6 @@ __all__ = [
     "normalize_year_month",
     "plain_content_type",
     "validate_chapter_payload",
+    "validated_or_none",
+    "validated_or_raise",
 ]

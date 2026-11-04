@@ -761,10 +761,11 @@ class FakeExtractor:
     ) -> None:
         self._extracted = extracted or {}
         self._error = error
-        self.calls: list[tuple[bytes, str]] = []
+        #: Un appel = la liste des documents lus ensemble, `(octets, type)` chacun.
+        self.calls: list[list[tuple[bytes, str]]] = []
 
-    async def extract(self, document: bytes, content_type: str) -> dict[Chapter, Any]:
-        self.calls.append((document, content_type))
+    async def extract(self, documents: Sequence[DocumentInfo]) -> dict[Chapter, Any]:
+        self.calls.append([(d.payload, d.content_type) for d in documents])
         if self._error is not None:
             raise self._error
         return dict(self._extracted)

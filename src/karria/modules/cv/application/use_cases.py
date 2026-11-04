@@ -2,14 +2,17 @@
 
 Chaque classe est une intention du contrat (`docs/contrat-api-cv.md`) :
 lire son CV, ouvrir le brouillon, interpréter une réponse, valider un
-chapitre, finaliser, transcrire, envoyer une photo, importer un CV. Les
+chapitre, finaliser, transcrire, envoyer une photo, importer un CV,
+modifier une section du CV. Les
 dépendances arrivent par le constructeur ; aucune n'est un adaptateur
 concret, et la suite unitaire les remplace toutes par des doublures.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -30,21 +33,25 @@ from karria.modules.cv.application.ports import (
 from karria.modules.cv.domain import (
     CHAPTER_SCHEMAS,
     INTERPRETABLE_CHAPTERS,
-    LOOP_CHAPTERS,
+    MAX_DOCUMENT_PAGES,
     Chapter,
     ChapterSubmission,
+    ChapterSubmissionError,
     ChapterValidationError,
     CurriculumVitae,
+    CvNotFoundError,
     CvPhoto,
+    DocumentInfo,
     Draft,
     DraftIncompleteError,
     DraftNotFoundError,
+    ReceivedFile,
+    UnsupportedUploadError,
     check_audio,
     check_audio_size,
     check_audio_type,
     check_document,
-    check_document_size,
-    check_document_type,
+    check_documents,
     plain_content_type,
     validate_chapter_payload,
 )
@@ -399,59 +406,234 @@ class UploadPhoto:
         return photo
 
 
-class ImportCv:
-    """Un CV existant devient un brouillon prérempli — à valider chapitre par chapitre.
+@dataclass(frozen=True, slots=True)
+class ImportSource:
+    """Ce qui a été lu : le type, le nombre de fichiers et de pages."""
 
-    Rien n'est validé à la place de la personne : chaque chapitre extrait
-    est posé en **proposition** (`in_progress`), et un chapitre qu'elle a
-    déjà validé n'est pas touché. La V1 écrasait le CV à chaque import, y
-    compris quand l'extraction avait échoué : c'est le défaut qu'on ne
-    reproduit pas.
+    content_type: str
+    files: int
+    pages: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ImportResult:
+    """Le CV écrit par l'import, et le compte rendu honnête de la lecture.
+
+    Attributes:
+        kept: Par section, ce qui a été retenu (`experiences: 4`).
+        discarded: Par section, ce que le modèle a lu mais que le schéma a
+            refusé — l'application le dit plutôt que de le taire.
+        missing: Les champs à vérifier, dans l'ordre d'importance
+            (`CurriculumVitae.missing_fields`).
+    """
+
+    cv: CurriculumVitae
+    source: ImportSource
+    kept: dict[str, int] = field(default_factory=dict)
+    discarded: dict[str, int] = field(default_factory=dict)
+    missing: tuple[str, ...] = ()
+
+
+class ImportCv:
+    """Un CV existant devient **le CV** de la personne — à vérifier ensuite, pas à revalider.
+
+    Décision du 2026-11-04 (retour de Marc sur l'appareil) : répondre à
+    chaque question est long, et la plupart des gens ont déjà un CV. L'import
+    écrit donc directement le CV, et l'application mène la personne à ses
+    coordonnées, ses expériences et ses formations pour les **vérifier** —
+    avec ce qui manque mis en avant (`missing`). Le brouillon de la
+    conversation, s'il y en avait un, est supprimé : le CV existe désormais,
+    et une finalisation ultérieure l'aurait écrasé sans prévenir.
+
+    Ce qu'on garde de la version précédente : rien n'est écrit si la
+    lecture échoue (la V1 écrasait le CV par une structure vide) ; la
+    photo n'est pas lue dans le document, celle que la personne avait reste.
+    Plusieurs fichiers = les photos des pages d'un même CV, lues ensemble.
     """
 
     def __init__(
         self,
+        *,
         extractor: CvDocumentExtractor,
         inspector: UploadInspector,
+        cvs: CvRepository,
         drafts: DraftRepository,
+        unit_of_work: UnitOfWork,
+        events: EventBus,
         clock: Clock,
     ) -> None:
         self._extractor = extractor
         self._inspector = inspector
+        self._cvs = cvs
         self._drafts = drafts
+        self._uow = unit_of_work
+        self._events = events
         self._clock = clock
 
-    async def execute(
-        self, user_id: UUID, document: bytes, declared_content_type: str | None
-    ) -> Draft:
-        content_type = plain_content_type(declared_content_type)
-        check_document_type(content_type)
-        check_document_size(len(document))
-        info = self._inspector.document(document, content_type)
-        check_document(info)
+    async def execute(self, user_id: UUID, files: Sequence[ReceivedFile]) -> ImportResult:
+        received = [
+            ReceivedFile(payload=f.payload, content_type=plain_content_type(f.content_type))
+            for f in files
+        ]
+        check_documents(received)
+        documents: list[DocumentInfo] = []
+        for f in received:
+            info = self._inspector.document(f.payload, f.content_type)
+            check_document(info)
+            documents.append(info)
+        pages = _total_pages(documents)
+        if pages is not None and pages > MAX_DOCUMENT_PAGES_TOTAL:
+            raise UnsupportedUploadError(
+                f"Le document fait {pages} pages ; un CV en compte {MAX_DOCUMENT_PAGES_TOTAL} au plus.",
+                reason="document_too_many_pages",
+                field="file",
+            )
 
-        extracted = await self._extractor.extract(info.payload, info.content_type)
+        extracted = await self._extractor.extract(documents)
 
         now = self._clock.now()
-        draft = await self._drafts.find_by_user(user_id) or Draft.new(user_id, now=now)
-        proposed: list[str] = []
-        for chapter, value in extracted.items():
-            if chapter in LOOP_CHAPTERS:
-                items = value if isinstance(value, list) else []
-                placed = draft.propose(chapter, items=items, now=now)
-            else:
-                placed = draft.propose(chapter, data=value, now=now)
-            if placed:
-                proposed.append(chapter.value)
-        await self._drafts.save(draft)
+        existing = await self._cvs.find_by_user(user_id)
+        assembly = CurriculumVitae.from_extraction(
+            extracted,
+            user_id=user_id,
+            cv_id=existing.id if existing else uuid4(),
+            image_key=existing.image_key if existing else None,
+            created_at=existing.created_at if existing else now,
+            now=now,
+        )
+        if assembly.cv.is_blank:
+            raise UnsupportedUploadError(
+                "Je n'ai trouvé ni nom, ni expérience, ni formation dans ce document. "
+                "Vérifie que c'est bien ton CV, ou prends une photo plus nette.",
+                reason="document_not_a_cv",
+                field="file",
+            )
+        draft = await self._drafts.find_by_user(user_id)
+        async with self._uow.atomic():
+            await self._cvs.save(assembly.cv)
+            if draft is not None:
+                await self._drafts.delete(draft.id)
+
+        cv = assembly.cv
+        await self._events.publish(
+            CvFinalized(
+                user_id=user_id,
+                cv_id=cv.id,
+                first_name=cv.identity.first_name if cv.identity else None,
+                last_name=cv.identity.last_name if cv.identity else None,
+                headline=cv.identity.headline if cv.identity else None,
+                email=cv.contact.email if cv.contact else None,
+                phone=cv.contact.phone if cv.contact else None,
+                city=cv.contact.city if cv.contact else None,
+            )
+        )
+        source = ImportSource(
+            content_type=received[0].content_type, files=len(received), pages=pages
+        )
         logger.info(
             "cv.imported",
             user_id=str(user_id),
-            content_type=info.content_type,
-            pages=info.pages,
-            chapters=proposed,
+            content_type=source.content_type,
+            files=source.files,
+            pages=source.pages,
+            kept=assembly.kept,
+            discarded=assembly.discarded,
+            missing=list(cv.missing_fields),
+            replaced=existing is not None,
+            draft_dropped=draft is not None,
         )
-        return draft
+        return ImportResult(
+            cv=cv,
+            source=source,
+            kept=assembly.kept,
+            discarded=assembly.discarded,
+            missing=cv.missing_fields,
+        )
+
+
+#: Un CV de dix pages est déjà un portfolio ; les photos de pages comptent
+#: comme des pages. Même borne que `MAX_DOCUMENT_PAGES`, nommée pour le total.
+MAX_DOCUMENT_PAGES_TOTAL: Final = MAX_DOCUMENT_PAGES
+
+
+def _total_pages(documents: Sequence[DocumentInfo]) -> int | None:
+    pages = [d.pages for d in documents if d.pages is not None]
+    return sum(pages) if pages else None
+
+
+class UpdateCvChapter:
+    """Modifie une section du CV directement — l'édition manuelle de l'application.
+
+    Même schéma que le chapitre du brouillon : le client n'est jamais cru
+    sur parole. La photo est le seul cas qui sorte du domaine : son
+    identifiant (rendu par `POST /cv/photo`) se résout ici en clé d'objet,
+    après vérification qu'elle appartient à la personne ; l'ancienne photo
+    et les photos en attente sont oubliées **après** l'écriture, et un
+    échec du bucket se journalise sans annuler la modification.
+    """
+
+    def __init__(
+        self,
+        *,
+        cvs: CvRepository,
+        photos: PhotoRepository,
+        storage: ObjectStorage,
+        clock: Clock,
+    ) -> None:
+        self._cvs = cvs
+        self._photos = photos
+        self._storage = storage
+        self._clock = clock
+
+    async def execute(
+        self, user_id: UUID, chapter: Chapter, submission: ChapterSubmission
+    ) -> CurriculumVitae:
+        cv = await self._cvs.find_by_user(user_id)
+        if cv is None:
+            raise CvNotFoundError
+        now = self._clock.now()
+        if chapter is Chapter.PHOTO:
+            updated = await self._with_photo(cv, submission, now=now)
+        else:
+            updated = cv.with_chapter(chapter, submission, now=now)
+            await self._cvs.save(updated)
+        logger.info("cv.chapter_updated", user_id=str(user_id), chapter=chapter.value)
+        return updated
+
+    async def _with_photo(
+        self, cv: CurriculumVitae, submission: ChapterSubmission, *, now: datetime
+    ) -> CurriculumVitae:
+        if submission.skipped:
+            image_id = None
+        else:
+            if submission.data is None or submission.items is not None:
+                raise ChapterSubmissionError(
+                    Chapter.PHOTO.value,
+                    "La photo attend `data: { image_id }`.",
+                    reason="chapter_data_expected",
+                )
+            data = validate_chapter_payload(Chapter.PHOTO, submission.data)
+            image_id = data.get("image_id")
+        chosen: CvPhoto | None = None
+        if image_id is not None:
+            chosen = await self._photos.find(UUID(str(image_id)), user_id=cv.user_id)
+            if chosen is None:
+                raise ChapterValidationError(
+                    Chapter.PHOTO.value, [{"field": "image_id", "reason": "Photo inconnue."}]
+                )
+        updated = cv.with_image_key(chosen.image_key if chosen else None, now=now)
+        pending = await self._photos.list_by_user(cv.user_id)
+        await self._cvs.save(updated)
+        await self._photos.delete([photo.id for photo in pending])
+        obsolete = [p.image_key for p in pending if chosen is None or p.id != chosen.id]
+        if cv.image_key and cv.image_key != updated.image_key:
+            obsolete.append(cv.image_key)
+        for key in obsolete:
+            try:
+                await self._storage.delete(Bucket.MEDIA, key)
+            except StorageError as exc:
+                logger.warning("cv.photo_cleanup_failed", key=key, detail=exc.details)
+        return updated
 
 
 # ---------------------------------------------------------------------

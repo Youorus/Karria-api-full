@@ -1,18 +1,23 @@
 # Module `cv` — le CV créé en conversation
 
 Le contrat est `karria_app/docs/contrat-api-cv.md` ; ce module le sert sous
-`/api/v1` : `GET /cv/me`, `GET|POST /cv/draft`, `POST /cv/draft/interpret`,
-`PUT /cv/draft/chapters/{chapter}`, `POST /cv/draft/finalize`,
-`POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe`. Toutes
-exigent la session.
+`/api/v1` : `GET /cv/me`, `PUT /cv/me/chapters/{chapter}`, `GET|POST /cv/draft`,
+`POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{chapter}`,
+`POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`,
+`POST /voice/transcribe`. Toutes exigent la session.
+
+Trois façons d'avoir un CV, une seule forme : **l'import** d'un CV existant
+(la voie principale depuis le 2026-11-04 — il écrit le CV directement, à
+vérifier ensuite), **la conversation** chapitre par chapitre (pour qui n'a
+pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
 
 ## Ce qu'il possède
 
 - **Le brouillon** (`cv_drafts`) — un par personne, huit chapitres dans
   l'ordre du contrat, chacun `pending | in_progress | validated | skipped`.
-  Le chapitre courant se déduit, il ne se stocke pas. Un chapitre importé
-  est une **proposition** (`in_progress` avec son contenu) : il ne devient
-  jamais `validated` sans la personne.
+  Le chapitre courant se déduit, il ne se stocke pas. Il ne sert qu'à la
+  conversation ; l'import ne le remplit plus (il le supprime, puisque le CV
+  existe alors).
 - **Le CV** (`cv_curricula`) — un par personne, les sections de la V1 en
   JSONB (`experiences`, `educations`, `skills`, `languages`, `interests`,
   `projects`), plus `identity` et `contact`, `summary`, et `image_key`
@@ -46,6 +51,23 @@ exigent la session.
 
 ## Les choix qu'on ne devine pas en lisant le code
 
+- **L'import écrit le CV, pas le brouillon** (2026-11-04, retour de Marc
+  sur l'appareil : revalider chapitre par chapitre ce qu'on a déjà écrit
+  dans son CV est long et inutile). `POST /cv/import` remplace les
+  sections du CV par ce qui a été lu — la photo reste — et rend un
+  compte rendu **réel** : `kept` (retenu par section), `discarded` (lu
+  mais refusé par le schéma) et `missing` (à vérifier, coordonnées
+  d'abord ; `CurriculumVitae.missing_fields`). Rien n'est écrit si rien
+  d'un CV n'y est lu (`422 document_not_a_cv`). Plusieurs fichiers = les
+  photos des pages d'un même CV, lues ensemble (`document_pages_must_be_images`
+  sinon) ; chaque photo est réduite à 2 000 px avant d'être envoyée au
+  modèle.
+- **L'édition directe remplace une section d'un bloc** avec le schéma du
+  chapitre (`PUT /cv/me/chapters/{chapter}`, `CurriculumVitae.with_chapter`).
+  `skipped` **vide** la section (sauf `identity` et `contact`), une liste
+  vide est acceptée. La photo passe par `{ image_id }` de `POST /cv/photo`
+  ou `{ image_id: null }` ; l'ancienne et les photos en attente sont
+  oubliées après l'écriture. Sans CV : `404 cv_not_found`.
 - **La photo circule par `image_id`, pas par `image_url`** (ADR-0014). Le
   contrat écrivait `{ image_url }` ; une URL signée expire et ne se
   reparse pas. `POST /cv/photo` rend les deux, le chapitre `photo` reçoit
@@ -79,8 +101,10 @@ exigent la session.
 - **Les erreurs** portent leur raison fine dans `details.reason` :
   `draft_not_found` (404), `draft_incomplete` (409, avec `chapters`),
   `chapter_invalid` / `chapter_required` / `chapter_items_expected` /
-  `chapter_data_expected` / `chapter_items_empty` (422), `document_*` et
-  `audio_*` (422), `photo_enhance_refused` (422),
+  `chapter_data_expected` / `chapter_items_empty` (422), `cv_not_found`
+  (404), `document_*` (dont `document_not_a_cv`,
+  `document_pages_must_be_images`) et `audio_*` (422),
+  `photo_enhance_refused` (422),
   `photo_enhance_unavailable` / `ai_unavailable` / `ai_output_invalid`
   (503). Le `code` reste celui du socle (`not_found`, `rule_violation`,
   `invalid_input`, `dependency_failure`).

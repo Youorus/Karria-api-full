@@ -21,6 +21,7 @@ from karria.modules.cv.api.dependencies import (
     InterpretAnswerDep,
     OpenDraftDep,
     TranscribeVoiceDep,
+    UpdateCvChapterDep,
     UploadPhotoDep,
     ValidateChapterDep,
 )
@@ -28,6 +29,7 @@ from karria.modules.cv.api.schemas import (
     ChapterSubmissionRequest,
     CvRead,
     DraftRead,
+    ImportRead,
     InterpretationRead,
     InterpretRequest,
     PhotoRead,
@@ -38,6 +40,7 @@ from karria.modules.cv.domain import (
     MAX_DOCUMENT_BYTES,
     Chapter,
     ChapterSubmission,
+    ReceivedFile,
 )
 from karria.shared.auth import (
     AiConsentedPrincipalDep,
@@ -69,6 +72,38 @@ async def read_my_cv(
 ) -> CvRead:
     """Le CV au format V1, plus `identity` et `contact`. Sections vides s'il n'existe pas encore."""
     cv = await get_my_cv.execute(principal.subject_id)
+    return await CvRead.present(cv, storage)
+
+
+@cv_router.put(
+    "/me/chapters/{chapter}",
+    summary="Modifier une section de mon CV",
+    response_model=CvRead,
+    responses=error_responses(
+        ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND, ErrorCode.INVALID_INPUT
+    ),
+)
+async def update_cv_chapter(
+    chapter: Chapter,
+    body: ChapterSubmissionRequest,
+    principal: CurrentPrincipalDep,
+    update: UpdateCvChapterDep,
+    storage: ObjectStorageDep,
+) -> CvRead:
+    """L'édition manuelle : la section est remplacée d'un bloc, revalidée par le schéma du chapitre.
+
+    `data` pour `identity`, `contact`, `summary`, `skills` (compétences et
+    langues ensemble), `interests` et `photo` (`{ image_id }` rendu par
+    `POST /cv/photo`, ou `{ image_id: null }` pour la retirer) ; `items`
+    (éventuellement vide, dans l'ordre voulu) pour `experiences` et
+    `educations` ; `skipped: true` vide une section facultative.
+    `404 cv_not_found` sans CV ; `422 chapter_invalid` avec `fields`.
+    """
+    cv = await update.execute(
+        principal.subject_id,
+        chapter,
+        ChapterSubmission(data=body.data, items=body.items, skipped=body.skipped),
+    )
     return await CvRead.present(cv, storage)
 
 
@@ -205,8 +240,8 @@ async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
 
 @cv_router.post(
     "/import",
-    summary="Importer un CV existant dans le brouillon",
-    response_model=DraftRead,
+    summary="Importer un CV existant : il devient mon CV",
+    response_model=ImportRead,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(
         ErrorCode.UNAUTHENTICATED,
@@ -218,18 +253,32 @@ async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
 async def import_cv(
     principal: AiConsentedPrincipalDep,
     import_cv: ImportCvDep,
-    presenter: DraftPresenterDep,
+    storage: ObjectStorageDep,
     file: Annotated[
-        UploadFile, File(description="PDF, DOCX ou image du CV, 10 Mo et 10 pages au plus.")
+        list[UploadFile],
+        File(
+            description=(
+                "Le CV : un PDF, un DOCX ou une image (10 Mo, 10 pages au plus) — ou **plusieurs "
+                "images**, les photos des pages d'un même CV, dans l'ordre (même champ répété)."
+            )
+        ),
     ],
-) -> DraftRead:
-    """Les chapitres extraits sont posés en **propositions** (`in_progress`), à valider un à un.
+) -> ImportRead:
+    """Le CV lu remplace les sections du CV de la personne (la photo reste) ; le brouillon éventuel est supprimé.
 
-    `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
+    La réponse dit ce qui a **vraiment** été retenu (`kept`), écarté
+    (`discarded`) et ce qu'il reste à vérifier (`missing`). Rien n'est écrit
+    si la lecture échoue. `422 document_not_a_cv` si rien d'un CV n'y est
+    lu ; `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
-    payload = await file.read(MAX_DOCUMENT_BYTES + 1)
-    draft = await import_cv.execute(principal.subject_id, payload, file.content_type)
-    return await presenter.present(draft)
+    received = [
+        ReceivedFile(
+            payload=await part.read(MAX_DOCUMENT_BYTES + 1), content_type=part.content_type or ""
+        )
+        for part in file
+    ]
+    result = await import_cv.execute(principal.subject_id, received)
+    return await ImportRead.present(result, storage)
 
 
 @voice_router.post(

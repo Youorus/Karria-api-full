@@ -2,7 +2,12 @@
 
 from karria.modules.cv.infrastructure.documents import FileInspector
 from karria.modules.cv.infrastructure.enhancer import LlmPortraitEnhancer
-from karria.modules.cv.infrastructure.extractor import LlmCvExtractor, extraction_schema
+from karria.modules.cv.infrastructure.extractor import (
+    GROUPS,
+    LlmCvExtractor,
+    extraction_schema,
+    group_schema,
+)
 from karria.modules.cv.infrastructure.interpreter import (
     LlmChapterInterpreter,
     interpretation_schema,
@@ -15,6 +20,7 @@ from karria.modules.cv.infrastructure.repositories import (
 from karria.modules.cv.infrastructure.transcriber import LlmTranscriber
 
 __all__ = [
+    "GROUPS",
     "FileInspector",
     "LlmChapterInterpreter",
     "LlmCvExtractor",
@@ -24,5 +30,6 @@ __all__ = [
     "TortoiseDraftRepository",
     "TortoisePhotoRepository",
     "extraction_schema",
+    "group_schema",
     "interpretation_schema",
 ]

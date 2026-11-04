@@ -34,7 +34,7 @@ from karria.modules.cv.domain import (
     DocumentInfo,
     UnsupportedUploadError,
 )
-from karria.shared.images import sniff_content_type
+from karria.shared.images import ImageError, ImagePolicy, normalize_image, sniff_content_type
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -46,6 +46,11 @@ _MAX_DOCX_XML_BYTES: Final = 20 * 1024 * 1024
 #: En dessous, la couche texte d'un PDF est un titre ou du bruit : le
 #: document est un scan, et c'est l'image qu'il faut lire.
 MIN_TEXT_LAYER_CHARS: Final = 200
+#: Une photo de page de CV n'a pas besoin de 12 mégapixels pour être lue :
+#: 2 000 px de grand côté suffisent au modèle, et plusieurs pages doivent
+#: tenir ensemble sous la limite d'une requête (20 Mo en base64).
+_PAGE_IMAGE_POLICY: Final = ImagePolicy(max_edge=2_000, quality=85, min_quality=70)
+_PAGE_IMAGE_MAX_BYTES: Final = 1_500_000
 _MP4_TYPES: Final[frozenset[str]] = frozenset(
     {"audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac"}
 )
@@ -71,20 +76,31 @@ class FileInspector:
             text = _docx_text(payload)
             return DocumentInfo(payload=text.encode("utf-8"), content_type="text/plain")
         if content_type.startswith("image/"):
-            sniffed = sniff_content_type(payload)
-            if sniffed is None:
-                raise UnsupportedUploadError(
-                    "Ce fichier n'est pas une image lisible.",
-                    reason="document_unreadable",
-                    field="file",
-                )
-            return DocumentInfo(payload=payload, content_type=sniffed, pages=1)
+            return _page_image(payload)
         return DocumentInfo(payload=payload, content_type=content_type)
 
     def audio(self, payload: bytes, content_type: str) -> AudioInfo:
         """Inspecte un enregistrement : la durée quand le conteneur la donne."""
         duration = _mp4_duration(payload) if content_type in _MP4_TYPES else None
         return AudioInfo(content_type=content_type, duration_seconds=duration)
+
+
+def _page_image(payload: bytes) -> DocumentInfo:
+    """Une photo de CV, redressée et réduite pour le modèle (ADR-0009 : le type vient des octets)."""
+    if sniff_content_type(payload) is None:
+        raise UnsupportedUploadError(
+            "Ce fichier n'est pas une image lisible.", reason="document_unreadable", field="file"
+        )
+    try:
+        image = normalize_image(payload, _PAGE_IMAGE_POLICY, max_bytes=_PAGE_IMAGE_MAX_BYTES)
+    except ImageError as exc:
+        logger.info("cv.page_image_unreadable", error=type(exc).__name__)
+        raise UnsupportedUploadError(
+            "Cette photo ne se lit pas. Reprends-la, bien à plat et nette.",
+            reason="document_unreadable",
+            field="file",
+        ) from exc
+    return DocumentInfo(payload=image.payload, content_type=image.content_type, pages=1)
 
 
 def _pdf_pages_and_text(payload: bytes) -> tuple[int, str]:

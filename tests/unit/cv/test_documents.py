@@ -162,11 +162,20 @@ class TestDocx:
 
 
 class TestImagesEtTexte:
-    def test_une_image_est_reconnue_a_ses_octets(self) -> None:
+    def test_une_image_est_reconnue_a_ses_octets_et_normalisee_pour_le_modele(self) -> None:
         info = inspector.document(sample_image(fmt="PNG"), "image/jpeg")
 
-        assert info.content_type == "image/png"
+        # Le type vient des octets (PNG, pas JPEG annoncé) ; une photo part
+        # aplatie en JPEG, sans transparence inutile, et compte une page.
+        assert info.content_type == "image/jpeg"
         assert info.pages == 1
+        assert info.payload[:2] == b"\xff\xd8"
+
+    def test_une_photo_trop_grande_est_reduite(self) -> None:
+        info = inspector.document(sample_image(3_000, 4_000), "image/jpeg")
+
+        assert len(info.payload) < 1_500_000
+        assert info.content_type == "image/jpeg"
 
     def test_un_faux_fichier_image_est_refuse(self) -> None:
         with pytest.raises(UnsupportedUploadError) as excinfo:

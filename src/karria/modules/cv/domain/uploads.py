@@ -13,6 +13,7 @@ Gemini — le fichier y part encodé en base64, soit un tiers de plus.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -76,6 +77,45 @@ class DocumentInfo:
     payload: bytes
     content_type: str
     pages: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReceivedFile:
+    """Un fichier tel que reçu du client : ses octets et le type annoncé."""
+
+    payload: bytes
+    content_type: str
+
+
+def check_documents(files: Sequence[ReceivedFile]) -> None:
+    """Les règles sur **l'ensemble** des fichiers d'un import.
+
+    Un CV, c'est un document — ou les photos de ses pages. Plusieurs
+    fichiers ne sont donc acceptés que s'ils sont tous des images, une par
+    page, et pas plus de pages qu'un CV n'en compte. Chaque fichier est
+    ensuite jugé seul (`check_document_type`, `check_document_size`).
+
+    Raises:
+        UnsupportedUploadError: Aucun fichier, trop de fichiers, ou un
+            mélange de types quand il y en a plusieurs.
+    """
+    if not files:
+        raise UnsupportedUploadError("Aucun fichier reçu.", reason="document_empty", field="file")
+    if len(files) > MAX_DOCUMENT_PAGES:
+        raise UnsupportedUploadError(
+            f"{len(files)} fichiers reçus ; un CV compte {MAX_DOCUMENT_PAGES} pages au plus.",
+            reason="document_too_many_pages",
+            field="file",
+        )
+    if len(files) > 1 and not all(f.content_type.startswith("image/") for f in files):
+        raise UnsupportedUploadError(
+            "Plusieurs fichiers ne s'envoient qu'en photos, une par page.",
+            reason="document_pages_must_be_images",
+            field="file",
+        )
+    for received in files:
+        check_document_type(received.content_type)
+        check_document_size(len(received.payload))
 
 
 @dataclass(frozen=True, slots=True)

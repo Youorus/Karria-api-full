@@ -122,7 +122,7 @@ class Draft:
                     "La liste est vide : passe le chapitre avec `skipped` si tu n'as rien à y mettre.",
                     reason="chapter_items_empty",
                 )
-            state.items = [self._validated(chapter, item) for item in submission.items]
+            state.items = [validated_or_raise(chapter, item) for item in submission.items]
             state.data = None
             state.status = ChapterStatus.VALIDATED
         else:
@@ -130,7 +130,7 @@ class Draft:
                 raise ChapterSubmissionError(
                     chapter, "Ce chapitre attend une valeur `data`.", reason="chapter_data_expected"
                 )
-            state.data = self._validated(chapter, submission.data)
+            state.data = validated_or_raise(chapter, submission.data)
             state.items = []
             state.status = ChapterStatus.VALIDATED
 
@@ -182,22 +182,32 @@ class Draft:
                 return
 
     @staticmethod
-    def _validated(chapter: Chapter, payload: Any) -> dict[str, Any]:
-        try:
-            return validate_chapter_payload(chapter, payload)
-        except ValidationError as exc:
-            fields = [
-                {
-                    "field": ".".join(str(part) for part in error["loc"]) or "body",
-                    "reason": error["msg"],
-                }
-                for error in exc.errors()
-            ]
-            raise ChapterValidationError(chapter.value, fields) from exc
-
-    @staticmethod
     def _try_validate(chapter: Chapter, payload: Any) -> dict[str, Any] | None:
-        try:
-            return validate_chapter_payload(chapter, payload)
-        except ValidationError:
-            return None
+        return validated_or_none(chapter, payload)
+
+
+def validated_or_raise(chapter: Chapter, payload: Any) -> dict[str, Any]:
+    """Valide une valeur de chapitre, ou lève `ChapterValidationError` champ par champ.
+
+    Partagée par le brouillon et par l'édition directe du CV : ce qu'un
+    client envoie passe par le même schéma, d'où qu'il vienne.
+    """
+    try:
+        return validate_chapter_payload(chapter, payload)
+    except ValidationError as exc:
+        fields = [
+            {
+                "field": ".".join(str(part) for part in error["loc"]) or "body",
+                "reason": error["msg"],
+            }
+            for error in exc.errors()
+        ]
+        raise ChapterValidationError(chapter.value, fields) from exc
+
+
+def validated_or_none(chapter: Chapter, payload: Any) -> dict[str, Any] | None:
+    """Valide une valeur de chapitre, ou rend `None` : pour une proposition qu'on peut ignorer."""
+    try:
+        return validate_chapter_payload(chapter, payload)
+    except ValidationError:
+        return None

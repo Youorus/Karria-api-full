@@ -127,6 +127,7 @@ class TestAuthentification:
         [
             ("GET", "/cv/me"),
             ("GET", "/cv/draft"),
+            ("PUT", "/cv/me/chapters/summary"),
             ("POST", "/cv/draft"),
             ("POST", "/cv/draft/interpret"),
             ("PUT", "/cv/draft/chapters/identity"),
@@ -414,20 +415,42 @@ class TestPhoto:
 
 
 class TestImport:
-    async def test_un_cv_importe_prerempli_le_brouillon_sans_rien_valider(
+    async def test_un_cv_importe_devient_le_cv_et_le_compte_rendu_dit_ce_qui_manque(
         self, client: AsyncClient, fakes: Fakes, me: Principal
     ) -> None:
+        await client.post(f"{API}/cv/draft")
+
         response = await client.post(
             f"{API}/cv/import", files={"file": ("cv.pdf", b"%PDF-1.4 contenu", "application/pdf")}
         )
 
-        assert response.status_code == 201
+        assert response.status_code == 201, response.text
         body = response.json()
-        assert body["chapters"]["identity"]["status"] == "in_progress"
-        assert body["chapters"]["identity"]["data"]["first_name"] == "Awa"
-        assert body["chapters"]["experiences"]["items"][0]["company"] == "Zara"
-        assert body["current_chapter"] == "identity"
-        assert fakes.extractor.calls[0][1] == "application/pdf"
+        assert body["cv"]["identity"]["first_name"] == "Awa"
+        assert body["cv"]["experiences"][0]["company"] == "Zara"
+        assert body["source"] == {"content_type": "application/pdf", "files": 1, "pages": 1}
+        assert body["kept"]["experiences"] == 1
+        assert body["discarded"] == {}
+        assert body["missing"][:3] == ["contact.phone", "contact.email", "contact.city"]
+        assert fakes.extractor.calls == [[(b"%PDF-1.4 contenu", "application/pdf")]]
+        # Le CV est là, le brouillon n'est plus.
+        assert (await client.get(f"{API}/cv/me")).json()["identity"]["first_name"] == "Awa"
+        assert (await client.get(f"{API}/cv/draft")).status_code == 404
+
+    async def test_plusieurs_photos_de_pages_partent_dans_le_meme_champ(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.post(
+            f"{API}/cv/import",
+            files=[
+                ("file", ("p1.jpg", b"page1", "image/jpeg")),
+                ("file", ("p2.jpg", b"page2", "image/jpeg")),
+            ],
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["source"] == {"content_type": "image/jpeg", "files": 2, "pages": 2}
+        assert fakes.extractor.calls == [[(b"page1", "image/jpeg"), (b"page2", "image/jpeg")]]
 
     async def test_un_type_inconnu_est_un_422(
         self, client: AsyncClient, fakes: Fakes, me: Principal
@@ -438,6 +461,83 @@ class TestImport:
 
         assert response.status_code == 422
         assert response.json()["error"]["details"]["reason"] == "document_type_unsupported"
+
+
+class TestEditionDirecte:
+    async def test_sans_cv_la_modification_est_un_404(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.put(
+            f"{API}/cv/me/chapters/summary", json={"data": {"summary": "Moi."}}
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["details"]["reason"] == "cv_not_found"
+
+    async def test_une_section_se_modifie_puis_se_relit(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        await client.post(
+            f"{API}/cv/import", files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")}
+        )
+
+        response = await client.put(
+            f"{API}/cv/me/chapters/contact",
+            json={"data": {"email": None, "phone": "06 12 34 56 78", "city": "Lyon", "links": []}},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["contact"]["phone"] == "06 12 34 56 78"
+        relu = (await client.get(f"{API}/cv/me")).json()
+        assert relu["contact"]["city"] == "Lyon"
+
+        reorder = await client.put(
+            f"{API}/cv/me/chapters/experiences",
+            json={"items": [{"position": "Caissière", "company": "Lidl"}, CV_EXPERIENCE]},
+        )
+        assert [e["company"] for e in reorder.json()["experiences"]] == ["Lidl", "Zara"]
+
+        vide = await client.put(f"{API}/cv/me/chapters/educations", json={"items": []})
+        assert vide.status_code == 200
+        assert vide.json()["educations"] == []
+
+    async def test_un_contenu_invalide_est_un_422_detaille(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        await client.post(
+            f"{API}/cv/import", files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")}
+        )
+
+        response = await client.put(
+            f"{API}/cv/me/chapters/identity", json={"data": {"first_name": "", "last_name": "D"}}
+        )
+
+        assert response.status_code == 422
+        details = response.json()["error"]["details"]
+        assert details["reason"] == "chapter_invalid"
+        assert details["fields"][0]["field"] == "first_name"
+
+    async def test_la_photo_se_change_par_son_identifiant(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        await client.post(
+            f"{API}/cv/import", files={"file": ("cv.pdf", b"%PDF-1.4", "application/pdf")}
+        )
+        photo = await client.post(
+            f"{API}/cv/photo",
+            files={"image": ("moi.jpg", sample_image(400, 500), "image/jpeg")},
+            data={"enhance": "false"},
+        )
+        image_id = photo.json()["image_id"]
+
+        response = await client.put(
+            f"{API}/cv/me/chapters/photo", json={"data": {"image_id": image_id}}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["image_url"] is not None
+
+        retiree = await client.put(f"{API}/cv/me/chapters/photo", json={"data": {"image_id": None}})
+        assert retiree.json()["image_url"] is None
 
 
 class TestVoix:

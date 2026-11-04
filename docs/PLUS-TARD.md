@@ -114,17 +114,23 @@ qui promet une boîte que personne ne relève.
 
 ## Module `cv`
 
-### Les routes d'édition directe de la V1 ne sont pas servies
+### L'édition directe est servie par une seule route (fait le 2026-11-04)
 
-`PUT /cv/update`, `PUT /cv/image` et les sous-ressources (`/cv/experiences`,
-`/cv/skills`…) existent dans la V1 et sont citées par le contrat comme
-« restant ». Le module ne sert aujourd'hui que la création en conversation,
-l'import et la lecture : la seule façon de modifier un CV est de refaire un
-brouillon.
+`PUT /cv/me/chapters/{chapter}` remplace une section d'un bloc ; les routes
+V1 (`PUT /cv/update`, `PUT /cv/image`, `/cv/experiences/{id}`…) ne sont
+**pas** reprises nom pour nom : l'application v2 n'en a qu'une à appeler.
+Ce qui reste : un `CvUpdated` sur l'identité ou le contact (aucun module ne
+consomme `CvFinalized` aujourd'hui, l'événement n'est publié qu'à la
+finalisation et à l'import) ; l'e-mail du compte comme repli quand l'import
+ne lit aucun contact (cela demande un port vers `identity`).
 
-**Ce que ça coûte :** une faute de frappe dans un CV finalisé oblige à
-rouvrir le parcours. **Déclencheur :** l'écran d'édition du CV dans
-l'application. Les schémas et le dépôt sont prêts à les recevoir.
+### L'import ne diffuse pas sa progression
+
+L'extraction est **un** appel au modèle (10 à 30 s) ; l'application affiche
+une attente honnête puis révèle ce qui a **vraiment** été lu (`kept`,
+`discarded`, `missing`). Diffuser des lignes pendant l'appel demanderait un
+flux (SSE) et le décodage de JSON partiel côté modèle ; la V1 le faisait en
+SSE. **Déclencheur :** des imports jugés trop longs à l'écran.
 
 ### Les projets ne sont jamais alimentés
 

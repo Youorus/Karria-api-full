@@ -17,6 +17,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from karria.modules.cv.application import ImportResult
 from karria.modules.cv.domain import (
     Chapter,
     ChapterStatus,
@@ -80,6 +81,54 @@ class CvRead(BaseModel):
             projects=list(cv.projects),
             created_at=cv.created_at,
             updated_at=cv.updated_at,
+        )
+
+
+class ImportSourceRead(BaseModel):
+    """Ce qui a été lu."""
+
+    content_type: str = Field(
+        description="Type du premier fichier reçu (`application/pdf`, `image/jpeg`…)."
+    )
+    files: int = Field(description="Nombre de fichiers : 1, ou le nombre de pages photographiées.")
+    pages: int | None = Field(description="Pages lues, quand le format en compte.")
+
+
+class ImportRead(BaseModel):
+    """Le CV écrit par l'import, et le compte rendu **réel** de la lecture.
+
+    `kept`, `discarded` et `missing` sont ce que l'application raconte
+    pendant et après l'import : rien d'inventé, chaque ligne vient d'ici.
+    """
+
+    cv: CvRead
+    source: ImportSourceRead
+    kept: dict[str, int] = Field(
+        description="Par section, le nombre d'éléments retenus (0 ou 1 pour identity, contact, summary)."
+    )
+    discarded: dict[str, int] = Field(
+        description="Par section, les éléments lus mais refusés par le schéma. Absent si rien."
+    )
+    missing: list[str] = Field(
+        description=(
+            "Champs à vérifier, par ordre d'importance : `contact.phone`, `contact.email`, "
+            "`contact.city`, `identity`, `identity.headline`, `summary`, `experiences`, "
+            "`experiences.dates`, `educations`, `educations.dates`, `skills`."
+        )
+    )
+
+    @classmethod
+    async def present(cls, result: ImportResult, storage: ObjectStorage) -> ImportRead:
+        return cls(
+            cv=await CvRead.present(result.cv, storage),
+            source=ImportSourceRead(
+                content_type=result.source.content_type,
+                files=result.source.files,
+                pages=result.source.pages,
+            ),
+            kept=dict(result.kept),
+            discarded=dict(result.discarded),
+            missing=list(result.missing),
         )
 
 
@@ -158,7 +207,11 @@ class InterpretationRead(BaseModel):
 
 
 class ChapterSubmissionRequest(BaseModel):
-    """Clore un chapitre : `data`, `items` **ou** `skipped`, jamais deux à la fois."""
+    """Clore un chapitre — ou remplacer une section du CV : `data`, `items` **ou** `skipped`, un seul.
+
+    Sur le CV (`PUT /cv/me/chapters/{chapter}`), `skipped: true` vide la
+    section et `items` peut être vide ; sur le brouillon, ni l'un ni l'autre.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

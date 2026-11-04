@@ -181,6 +181,10 @@ EXTRACT_MESSAGE: Final = "Voici le CV à lire. Extrais-en les informations."
 EXTRACT_TEXT_MESSAGE: Final = (
     "Voici le texte du CV à lire, entre balises. Extrais-en les informations."
 )
+EXTRACT_PAGES_MESSAGE: Final = (
+    "Voici les {count} pages d'un même CV, photographiées dans l'ordre. "
+    "Lis-les comme un seul document et extrais-en les informations."
+)
 
 
 # ---------------------------------------------------------------------
