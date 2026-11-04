@@ -3,7 +3,7 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-10-31**
+**Dernière mise à jour : 2026-11-04**
 
 ## Où on en est
 
@@ -21,11 +21,44 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `health`   | fait | santé |
 | `identity` | fait | `POST /auth/email/start\|resend\|verify`, `POST /auth/social/google\|apple`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` (+ `ai_consent`), `DELETE /auth/me`, `GET/PUT/DELETE /auth/me/ai-consent` (ADR-0025) |
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
-| `cv`       | fait | `GET /cv/me`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
+| `cv`       | fait | `GET /cv/me`, `PUT /cv/me/chapters/{c}`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `payments` | **en production, éteint** (ADR-0023 + **ADR-0024** « Proposées » ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-11-04 (import direct, édition d'une section, lecture par groupes — Fable) — en production
+
+**Demande de Marc** : l'import d'un CV existant devient la voie principale et atterrit sur
+le CV (plus de validation chapitre par chapitre) ; tout se corrige à la main depuis le CV.
+
+**Livré** (commit `6a33a8f`, déployé par le webhook ; `/health/ready` 200, `PUT
+/cv/me/chapters/summary` → 401 sans jeton ; **aucune migration**, aucun bucket) :
+
+- `POST /cv/import` écrit le CV (sections remplacées, photo gardée, brouillon supprimé) et
+  rend `ImportRead` = `cv` + `source` + `kept` + `discarded` + `missing`
+  (`CurriculumVitae.missing_fields`, coordonnées d'abord). Plusieurs images = pages d'un même
+  CV (même champ `file`, `document_pages_must_be_images` sinon), réduites à 2 000 px.
+  `422 document_not_a_cv` si rien d'un CV n'est lu. Rien n'est écrit si la lecture échoue.
+- `PUT /cv/me/chapters/{chapter}` : édition directe avec le schéma du chapitre
+  (`CurriculumVitae.with_chapter`) ; `skipped` vide, liste vide acceptée, photo par
+  `image_id` ; `404 cv_not_found`.
+- **Extraction fiabilisée** (`infrastructure/extractor.py`) : mesuré sur deux vrais CV, un
+  seul appel laissait des listes vides une fois sur deux (3 expériences puis 1, 22
+  compétences puis 0, pour le même document — ni le modèle, ni la réflexion, ni « compte
+  d'abord » n'y changeaient rien). Désormais un appel par groupe de sections, 2 tentatives
+  (3 pour les expériences), la plus riche gardée : 7 extractions complètes sur 8, 5–9 s.
+  Domaine indulgent : `phone` à deux numéros réparé (le contact entier tombait), compétences
+  et intérêts jugés un par un.
+- Tests : `make check` vert (2 907 tests), nouveau code à 100 %. Essai réel (`uv run` sur le
+  cas d'usage, Gemini de prod) : PDF Flowt → 3 exp., 2 form., 27 comp., contact complet ;
+  PNG Technip → 4/2/29, `missing=[]` ; DOCX SCOR → 1/2/24. Puis import réel **depuis le
+  simulateur** contre une API locale (PostgreSQL Homebrew 55432 + `STORAGE__PROVIDER=memory`,
+  arrêtés ensuite) : `cv.imported kept={experiences: 4, educations: 2, skills: 29}`.
+
+**Reste** : un `CvUpdated` sur l'identité/contact modifiés (aucun consommateur aujourd'hui) ;
+l'e-mail du compte comme repli de contact ; un flux pendant l'extraction si les 5–10 s
+d'attente gênent (`PLUS-TARD.md`). Marc : prochaine étape, l'éditeur de CV par offre.
 
 ### Session du 2026-10-31 (« tri rapide et filtres par mode » — ADR-0027) — FAIT PAR OPUS, À RELIRE PAR FABLE
 
@@ -612,7 +645,6 @@ uv run uvicorn karria.main:app --reload --host 0.0.0.0 --port 8001
    - limiteur de débit et cache JWKS multi-réplicas (Redis) ;
    - livraison durable des événements ;
    - durée de conservation des raisons de départ ;
-   - routes d'édition directe du CV ;
    - chapitre `projects`.
 5. **Hébergement et déploiement** : `docs/DEPLOIEMENT.md` décrit la mise
    en service du moteur d'offres (trois processus) ; le reste est un squelette.
