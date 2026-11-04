@@ -14,11 +14,20 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from karria.modules.documents.application import Analysis, CvSnapshot, Previews, RenderedPdf
+from karria.modules.documents.application import (
+    Analysis,
+    CvSnapshot,
+    DocumentFile,
+    Previews,
+    RenderedHtml,
+    RenderedPdf,
+)
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.headline import ats_safe_spec
+from karria.modules.documents.domain.sends import DocumentSend
 from karria.modules.documents.domain.templates import (
+    DocumentKind,
     ExplanationStatus,
     Fit,
     GeneratedCv,
@@ -356,10 +365,22 @@ class InMemoryGeneratedCvRepository:
         return self.items.get(generated_id)
 
     async def history(
-        self, user_id: UUID, *, limit: int, offset: int
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        kind: DocumentKind | None = None,
+        dossier_id: UUID | None = None,
     ) -> tuple[list[GeneratedCv], int]:
         mine = sorted(
-            (g for g in self.items.values() if g.user_id == user_id),
+            (
+                g
+                for g in self.items.values()
+                if g.user_id == user_id
+                and (kind is None or g.kind is kind)
+                and (dossier_id is None or g.dossier_id == dossier_id)
+            ),
             key=lambda g: g.created_at,
             reverse=True,
         )
@@ -390,6 +411,10 @@ def make_generated(
     docx_key: str | None = None,
     status: ExplanationStatus = ExplanationStatus.PENDING,
     ats_docx: dict[str, Any] | None = None,
+    kind: DocumentKind = DocumentKind.CV,
+    dossier_id: UUID | None = None,
+    company_name: str = "",
+    full_name: str = "Awa Diallo",
 ) -> GeneratedCv:
     """Un export."""
     return GeneratedCv(
@@ -406,8 +431,72 @@ def make_generated(
         ats={"score": 88, "level": "good", "format": "pdf", "checks": []},
         ats_docx=ats_docx,
         explanation_status=status,
-        full_name="Awa Diallo",
+        full_name=full_name,
+        kind=kind,
+        dossier_id=dossier_id,
+        company_name=company_name,
     )
+
+
+class InMemorySendRepository:
+    """Implémente `SendRepository` dans un dictionnaire."""
+
+    def __init__(self) -> None:
+        self.items: dict[UUID, DocumentSend] = {}
+        self.forgotten: list[UUID] = []
+
+    async def add(self, send: DocumentSend) -> None:
+        self.items[send.id] = send
+
+    async def get(self, send_id: UUID) -> DocumentSend | None:
+        return self.items.get(send_id)
+
+    async def save(self, send: DocumentSend) -> None:
+        self.items[send.id] = send
+
+    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
+        return sum(
+            1 for s in self.items.values() if s.user_id == user_id and start <= s.created_at < end
+        )
+
+    async def forget(self, user_id: UUID) -> None:
+        self.forgotten.append(user_id)
+        self.items = {k: s for k, s in self.items.items() if s.user_id != user_id}
+
+
+class FakeAccountDirectory:
+    """Implémente `AccountDirectory` : les adresses programmées."""
+
+    def __init__(self) -> None:
+        self.emails: dict[UUID, str] = {}
+
+    async def email_of(self, user_id: UUID) -> str | None:
+        return self.emails.get(user_id)
+
+
+@dataclass
+class FakeDocumentMailer:
+    """Implémente `DocumentMailer` en notant les envois ; peut échouer sur commande."""
+
+    error: Exception | None = None
+    sent: list[tuple[str, str, list[DocumentFile]]] = field(default_factory=list)
+
+    async def send(self, *, to: str, sender_name: str, documents: list[DocumentFile]) -> None:
+        if self.error is not None:
+            raise self.error
+        self.sent.append((to, sender_name, documents))
+
+
+@dataclass
+class FakeLogoFetcher:
+    """Implémente `LogoFetcher` : des octets programmés par adresse."""
+
+    logos: dict[str, bytes] = field(default_factory=dict)
+    asked: list[str] = field(default_factory=list)
+
+    async def fetch(self, url: str) -> bytes | None:
+        self.asked.append(url)
+        return self.logos.get(url)
 
 
 # ---------------------------------------------------------------------- autres ports
@@ -449,6 +538,8 @@ class FakeEngine:
     #: Ce que lit l'ATS sur un rendu de la variante « optimisée » ; `None` : comme `texts`.
     texts_safe: dict[str, str] | None = None
     pages: int = 1
+    #: Le HTML que rend `render_html` ; vide : un document minimal.
+    html: str = ""
     calls: list[tuple[str, Any]] = field(default_factory=list)
 
     async def analyze(self, pdf: bytes) -> Analysis:
@@ -488,8 +579,33 @@ class FakeEngine:
         photo: bytes | None,
         fit: Fit,
     ) -> bytes:
-        self.calls.append(("render_docx", {"fit": fit, "photo": photo}))
+        self.calls.append(("render_docx", {"fit": fit, "photo": photo, "view": view}))
         return DOCX_BYTES
+
+    async def render_html(
+        self,
+        spec: dict[str, Any],
+        view: dict[str, Any],
+        *,
+        assets: dict[str, bytes],
+        photo_url: str | None,
+        anchored: bool,
+    ) -> RenderedHtml:
+        self.calls.append(
+            (
+                "render_html",
+                {
+                    "spec": spec,
+                    "view": view,
+                    "assets": assets,
+                    "photo_url": photo_url,
+                    "anchored": anchored,
+                },
+            )
+        )
+        if self.render_error is not None:
+            raise self.render_error
+        return RenderedHtml(html=self.html or "<!doctype html><html></html>", pages=self.pages)
 
     async def docx_to_pdf(self, docx: bytes) -> bytes:
         self.calls.append(("docx_to_pdf", docx))
@@ -561,12 +677,19 @@ class FakeTemplateJobs:
     def __init__(self) -> None:
         self.ingestions: list[UUID] = []
         self.explanations: list[UUID] = []
+        self.sends: list[UUID] = []
+        self.send_error: Exception | None = None
 
     async def defer_ingestion(self, version_id: UUID) -> None:
         self.ingestions.append(version_id)
 
     async def defer_explanation(self, generated_id: UUID) -> None:
         self.explanations.append(generated_id)
+
+    async def defer_send(self, send_id: UUID) -> None:
+        if self.send_error is not None:
+            raise self.send_error
+        self.sends.append(send_id)
 
 
 class FakeAtsExplainer:

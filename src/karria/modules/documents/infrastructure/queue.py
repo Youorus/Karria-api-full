@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 
 TASK_INGEST_TEMPLATE: Final = "documents.ingest_template"
 TASK_EXPLAIN_ATS: Final = "documents.explain_ats"
+TASK_SEND_DOCUMENTS: Final = "documents.send_documents"
 
 
 class ProcrastinateTemplateJobs:
@@ -34,6 +35,12 @@ class ProcrastinateTemplateJobs:
         """Explication du score d'un export."""
         await self._defer(
             TASK_EXPLAIN_ATS, f"{TASK_EXPLAIN_ATS}:{generated_id}", generated_id=str(generated_id)
+        )
+
+    async def defer_send(self, send_id: UUID) -> None:
+        """Remise d'un envoi par e-mail (ADR-0031), une seule fois par envoi."""
+        await self._defer(
+            TASK_SEND_DOCUMENTS, f"{TASK_SEND_DOCUMENTS}:{send_id}", send_id=str(send_id)
         )
 
     async def _defer(self, task: str, lock: str, **kwargs: str) -> None:

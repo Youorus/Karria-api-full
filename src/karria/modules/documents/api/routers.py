@@ -10,6 +10,10 @@ Toutes exigent la session, sauf :
 
 L'export (`POST /cv/me/generated-cvs`) exige en plus le consentement à l'IA :
 le score ATS est **expliqué** par un modèle tiers.
+
+Sous `/documents` (contrat `docs/contrat-api-documents.md`) : le rendu HTML
+ancré de l'atelier (ADR-0029, compté par compte), l'export d'une lettre
+(ADR-0030) et l'envoi des exports par e-mail (ADR-0031, `202` puis file).
 """
 
 from __future__ import annotations
@@ -21,35 +25,46 @@ from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile,
 
 from karria.modules.documents.api.dependencies import (
     GuestPrincipalDep,
+    RenderPrincipalDep,
     TemplatesDep,
     get_acquire,
     get_delete_generated,
     get_export,
+    get_export_letter,
     get_get_generated,
     get_get_selection,
+    get_get_send,
     get_get_template,
     get_list_generated,
     get_list_owned,
     get_list_templates,
     get_preview,
     get_record_view,
+    get_render_document,
     get_select,
+    get_send_documents,
     get_submit,
     require_admin,
 )
 from karria.modules.documents.api.schemas import (
     AcquireRequest,
+    BatchSendRequest,
     ExportRequest,
     FitRead,
     GeneratedCvListRead,
     GeneratedCvRead,
+    LetterExportRequest,
     OwnershipRead,
     PreviewPage,
     PreviewRead,
     PreviewRequest,
+    RenderRead,
+    RenderRequest,
     ReviewListRead,
     SelectionRead,
     SelectRequest,
+    SendRead,
+    SendRequest,
     TemplateRead,
     VersionAdminRead,
 )
@@ -57,18 +72,23 @@ from karria.modules.documents.application import (
     AcquireFreeTemplate,
     DeleteGeneratedCv,
     ExportCv,
+    ExportLetter,
     GetGeneratedCv,
     GetSelection,
+    GetSend,
     GetTemplate,
     ListGeneratedCvs,
     ListOwnedTemplates,
     ListTemplates,
     PreviewTemplate,
     RecordTemplateView,
+    RenderDocument,
     SelectTemplate,
+    SendDocuments,
     SubmitTemplate,
 )
 from karria.modules.documents.domain.errors import TemplateNotFoundError
+from karria.modules.documents.domain.templates import DocumentKind
 from karria.shared.auth import (
     AiConsentedPrincipalDep,
     CurrentPrincipalDep,
@@ -90,6 +110,9 @@ exports_router = APIRouter(
 )
 internal_router = APIRouter(
     prefix="/internal/templates", tags=["Interne"], dependencies=[Depends(require_admin)]
+)
+documents_router = APIRouter(
+    prefix="/documents", tags=["Documents"], dependencies=[Depends(require_authentication)]
 )
 
 #: Taille maximale d'un PDF de modèle déposé.
@@ -298,19 +321,30 @@ async def export_cv(
         formats=body.formats,
         ats_safe=body.ats_safe,
         offer_id=body.offer_id,
+        dossier_id=body.dossier_id,
     )
     return await GeneratedCvRead.present(generated, storage)
 
 
-@exports_router.get("", summary="Mes CV exportés", response_model=GeneratedCvListRead)
+@exports_router.get(
+    "",
+    summary="Mes documents exportés (CV et lettres)",
+    response_model=GeneratedCvListRead,
+    description="`kind=cv|letter` et `dossier_id=` filtrent ; sans filtre, tout, les plus récents d'abord.",
+)
 async def list_exports(
     principal: CurrentPrincipalDep,
     use_case: Annotated[ListGeneratedCvs, Depends(get_list_generated)],
     storage: ObjectStorageDep,
+    *,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    kind: DocumentKind | None = None,
+    dossier_id: UUID | None = None,
 ) -> GeneratedCvListRead:
-    items, total = await use_case.execute(principal.subject_id, limit=limit, offset=offset)
+    items, total = await use_case.execute(
+        principal.subject_id, limit=limit, offset=offset, kind=kind, dossier_id=dossier_id
+    )
     return GeneratedCvListRead(
         items=[await GeneratedCvRead.present(g, storage) for g in items], total=total
     )
@@ -346,6 +380,145 @@ async def delete_export(
 ) -> Response:
     await use_case.execute(principal.subject_id, generated_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------- atelier, lettres, envoi
+
+
+@documents_router.post(
+    "/{template_id}/render",
+    summary="Le HTML ancré de l'atelier (CV reçu, lettre, ou exemple du modèle)",
+    response_model=RenderRead,
+    description=(
+        "Le HTML que Gotenberg imprimera, avec `data-chemin` sur chaque texte du CV "
+        "(ADR-0029). `?sample=true` rend l'exemple du modèle, sans ancres. "
+        "`403 template_not_owned` sur un modèle Premium non possédé ; "
+        "`429 render_rate_limited` au-delà de 90 rendus par minute ; "
+        "`422 render_too_large` ou `nothing_to_render`."
+    ),
+    responses=error_responses(
+        ErrorCode.NOT_FOUND,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.RATE_LIMITED,
+    ),
+)
+async def render_document(
+    template_id: UUID,
+    principal: RenderPrincipalDep,
+    use_case: Annotated[RenderDocument, Depends(get_render_document)],
+    body: RenderRequest | None = None,
+    sample: bool = False,
+) -> RenderRead:
+    """Aucun fichier écrit : la réponse est le document, l'app l'affiche dans une WebView."""
+    rendered = await use_case.execute(
+        principal.subject_id,
+        template_id,
+        cv=body.cv.model_dump(mode="json") if body and body.cv else None,
+        letter=body.letter.model_dump(mode="json") if body and body.letter else None,
+        sample=sample,
+        ats_safe=bool(body and body.ats_safe),
+    )
+    return RenderRead(html=rendered.html, pages=rendered.pages, warnings=list(rendered.warnings))
+
+
+@documents_router.post(
+    "/letters/export",
+    status_code=status.HTTP_201_CREATED,
+    summary="Exporter une lettre de motivation (PDF, DOCX) dans le modèle",
+    response_model=GeneratedCvRead,
+    description=(
+        "Un export `kind: letter`, listé avec les CV (`GET /cv/me/generated-cvs?kind=letter`). "
+        "Sans `template_id`, le modèle choisi. Pas de score ATS sur une lettre (ADR-0030)."
+    ),
+    responses=error_responses(
+        ErrorCode.NOT_FOUND,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
+    ),
+)
+async def export_letter(
+    body: LetterExportRequest,
+    principal: CurrentPrincipalDep,
+    use_case: Annotated[ExportLetter, Depends(get_export_letter)],
+    storage: ObjectStorageDep,
+) -> GeneratedCvRead:
+    generated = await use_case.execute(
+        principal.subject_id,
+        template_id=body.template_id,
+        letter=body.letter.model_dump(mode="json"),
+        formats=body.formats,
+        dossier_id=body.dossier_id,
+    )
+    return await GeneratedCvRead.present(generated, storage)
+
+
+@documents_router.post(
+    "/exports/send",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Envoyer plusieurs documents dans un seul e-mail",
+    response_model=SendRead,
+    description=(
+        "`to: null` = l'adresse du compte. L'API répond tout de suite ; la remise est un travail "
+        "de file (`GET /documents/sends/{id}` pour l'état). `429 send_quota_exceeded` au sixième "
+        "envoi du jour, `422 recipient_invalid`, `404 generated_cv_not_found` (ADR-0031)."
+    ),
+    responses=error_responses(
+        ErrorCode.NOT_FOUND,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.RULE_VIOLATION,
+        ErrorCode.RATE_LIMITED,
+    ),
+)
+async def send_documents(
+    body: BatchSendRequest,
+    principal: CurrentPrincipalDep,
+    use_case: Annotated[SendDocuments, Depends(get_send_documents)],
+) -> SendRead:
+    send = await use_case.execute(
+        principal.subject_id, generated_ids=body.generated_ids, to=body.to
+    )
+    return SendRead.present(send)
+
+
+@documents_router.post(
+    "/exports/{generated_id}/send",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Envoyer un document par e-mail",
+    response_model=SendRead,
+    responses=error_responses(
+        ErrorCode.NOT_FOUND,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.RULE_VIOLATION,
+        ErrorCode.RATE_LIMITED,
+    ),
+)
+async def send_document(
+    generated_id: UUID,
+    principal: CurrentPrincipalDep,
+    use_case: Annotated[SendDocuments, Depends(get_send_documents)],
+    body: SendRequest | None = None,
+) -> SendRead:
+    """Même contrat que l'envoi groupé, pour un seul document."""
+    send = await use_case.execute(
+        principal.subject_id, generated_ids=[generated_id], to=body.to if body else None
+    )
+    return SendRead.present(send)
+
+
+@documents_router.get(
+    "/sends/{send_id}",
+    summary="L'état d'un envoi",
+    response_model=SendRead,
+    responses=error_responses(ErrorCode.NOT_FOUND),
+)
+async def read_send(
+    send_id: UUID,
+    principal: CurrentPrincipalDep,
+    use_case: Annotated[GetSend, Depends(get_get_send)],
+) -> SendRead:
+    return SendRead.present(await use_case.execute(principal.subject_id, send_id))
 
 
 # ---------------------------------------------------------------------- administration
@@ -407,4 +580,5 @@ async def review_templates(
 router.include_router(templates_router)
 router.include_router(user_router)
 router.include_router(exports_router)
+router.include_router(documents_router)
 router.include_router(internal_router)

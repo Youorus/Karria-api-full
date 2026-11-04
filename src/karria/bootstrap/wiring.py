@@ -42,6 +42,9 @@ Les branchements d'aujourd'hui
   (`offers.notifier_unwired`) : dégradé, pas cassé.
 - `documents.get_cv_source` ← `cv.GetMyCv`. Sans lui, aperçus et exports
   répondent `cv_missing` (le refus par défaut de `documents`).
+- `documents.get_account_directory` ← `identity.GetCurrentUser`. Sans lui,
+  envoyer ses documents « à mon adresse » (`to: null`) répond
+  `account_email_unknown` (ADR-0031) : refus, pas faille.
 - `payments.get_account_directory` ← `identity.GetCurrentUser`. Sans lui, le
   client Stripe naît sans adresse : les reçus ne partent pas (dégradé).
 - `payments.get_template_store` ← `documents.TemplateShop`. Sans lui, aucun
@@ -135,6 +138,9 @@ from karria.modules.devices import (
     get_send_push_to_user,
 )
 from karria.modules.documents import (
+    AccountDirectory as DocumentsAccountDirectory,
+)
+from karria.modules.documents import (
     CvSnapshot,
     CvSource,
     TemplateShop,
@@ -142,6 +148,9 @@ from karria.modules.documents import (
     get_template_shop,
 )
 from karria.modules.documents import build_forget_user as build_forget_user_documents
+from karria.modules.documents import (
+    get_account_directory as get_documents_account_directory,
+)
 from karria.modules.identity import (
     AccountDeleted,
     EnsureAiConsent,
@@ -443,6 +452,13 @@ def support_account_directory_from_identity(
     return IdentityAccountDirectory(reader)
 
 
+def documents_account_directory_from_identity(
+    reader: Annotated[GetCurrentUser, Depends(get_current_user_reader)],
+) -> DocumentsAccountDirectory:
+    """La réponse du module `identity` au besoin de `documents` (envoi à l'adresse du compte)."""
+    return IdentityAccountDirectory(reader)
+
+
 class OffersOfferReader:
     """Implémente le port `OfferReader` d'`applications` avec `offers.GetOfferForUser`.
 
@@ -671,6 +687,11 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_support_account_directory] = (
         support_account_directory_from_identity
     )
+    # Sans cette ligne : « m'envoyer mes documents » ne connaît pas l'adresse
+    # du compte et répond `account_email_unknown` (ADR-0031).
+    app.dependency_overrides[get_documents_account_directory] = (
+        documents_account_directory_from_identity
+    )
     # Sans ces lignes : aucun dossier de candidature ne s'ouvre (`offer_not_found`
     # ou `cv_missing`), les logos manquent, la retouche répond 503 et tout
     # modèle est verrouillé — les refus par défaut d'`applications`.
@@ -680,7 +701,7 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_cv_validator] = cv_validator_from_cv
     app.dependency_overrides[get_template_checker] = template_checker_from_documents
 
-    logger.debug("bootstrap.modules_wired", bindings=15)
+    logger.debug("bootstrap.modules_wired", bindings=16)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:

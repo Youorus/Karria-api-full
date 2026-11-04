@@ -7,11 +7,12 @@ base (ADR-0008) ; les noms de champs de la V1 sont gardés là où l'app les lit
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from karria.modules.documents.domain.sends import MAX_DOCUMENTS_PER_SEND, DocumentSend
 from karria.modules.documents.domain.templates import (
     FORMATS,
     GeneratedCv,
@@ -20,7 +21,6 @@ from karria.modules.documents.domain.templates import (
     Template,
     TemplateVersion,
     ats_safe_helps,
-    export_file_name,
     gallery_traits,
 )
 from karria.shared.storage import Bucket, ObjectStorage
@@ -232,12 +232,215 @@ class ExportRequest(BaseModel):
     formats: list[str] | None = None
     ats_safe: bool | None = None
     offer_id: UUID | None = None
+    dossier_id: UUID | None = Field(
+        default=None, description="Dossier de candidature (UUID libre) auquel rattacher l'export."
+    )
+
+
+# ---------------------------------------------------------------------- atelier (ADR-0029)
+
+
+class Loose(BaseModel):
+    """Un sous-objet du CV reçu : les champs utiles, le reste toléré (le brouillon de l'app évolue)."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class CvIdentityBody(Loose):
+    first_name: str = Field(default="", max_length=100)
+    last_name: str = Field(default="", max_length=100)
+    headline: str | None = Field(default=None, max_length=200)
+
+
+class CvLinkBody(Loose):
+    url: str = Field(default="", max_length=500)
+
+
+class CvContactBody(Loose):
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    city: str | None = Field(default=None, max_length=120)
+    links: list[CvLinkBody] = Field(default_factory=list, max_length=10)
+
+
+class CvExperienceBody(Loose):
+    position: str = Field(default="", max_length=200)
+    company: str = Field(default="", max_length=200)
+    location: str | None = Field(default=None, max_length=120)
+    start_date: str | None = Field(default=None, max_length=10)
+    end_date: str | None = Field(default=None, max_length=10)
+    is_current: bool = False
+    missions: list[str] = Field(default_factory=list, max_length=20)
+    description: str | None = Field(default=None, max_length=3000)
+
+
+class CvEducationBody(Loose):
+    degree: str = Field(default="", max_length=200)
+    school: str = Field(default="", max_length=200)
+    location: str | None = Field(default=None, max_length=120)
+    start_date: str | None = Field(default=None, max_length=10)
+    end_date: str | None = Field(default=None, max_length=10)
+    is_in_progress: bool = False
+    description: str | None = Field(default=None, max_length=3000)
+
+
+class CvSkillBody(Loose):
+    name: str = Field(default="", max_length=100)
+    category: str | None = Field(default=None, max_length=60)
+
+
+class CvLanguageBody(Loose):
+    language: str = Field(default="", max_length=100)
+    level: str | None = Field(default=None, max_length=40)
+
+
+class CvInterestBody(Loose):
+    name: str = Field(default="", max_length=100)
+
+
+class CvProjectBody(Loose):
+    title: str = Field(default="", max_length=200)
+    description: str | None = Field(default=None, max_length=3000)
+    technologies: list[str] = Field(default_factory=list, max_length=20)
+
+
+class CvBody(Loose):
+    """Le CV au format du module `cv` (`GET /cv/me`, le brouillon de l'app), borné."""
+
+    identity: CvIdentityBody | None = None
+    contact: CvContactBody | None = None
+    summary: str | None = Field(default=None, max_length=3000)
+    experiences: list[CvExperienceBody] = Field(default_factory=list, max_length=30)
+    educations: list[CvEducationBody] = Field(default_factory=list, max_length=20)
+    skills: list[CvSkillBody] = Field(default_factory=list, max_length=60)
+    languages: list[CvLanguageBody] = Field(default_factory=list, max_length=15)
+    interests: list[CvInterestBody] = Field(default_factory=list, max_length=20)
+    projects: list[CvProjectBody] = Field(default_factory=list, max_length=20)
+
+
+class LetterRecipientBody(BaseModel):
+    company: str = Field(default="", max_length=200)
+    logo_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Adresse publique du logo (celle du fil d'offres) ; ailleurs, ignorée.",
+    )
+    city: str | None = Field(default=None, max_length=120)
+
+
+class LetterParagraphBody(BaseModel):
+    kind: Literal["interet_entreprise", "interet_poste", "competences", "pourquoi_moi", "libre"] = (
+        "libre"
+    )
+    text: str = Field(default="", max_length=2500)
+
+
+class LetterSenderBody(BaseModel):
+    """L'identité du CV, telle que l'app la tient."""
+
+    first_name: str = Field(default="", max_length=100)
+    last_name: str = Field(default="", max_length=100)
+    headline: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=40)
+    city: str | None = Field(default=None, max_length=120)
+
+
+class LetterBody(BaseModel):
+    """Une lettre de motivation (ADR-0030) : structurée, jamais un texte libre."""
+
+    recipient: LetterRecipientBody = Field(default_factory=LetterRecipientBody)
+    subject: str = Field(default="", max_length=200)
+    greeting: str | None = Field(default=None, max_length=120)
+    paragraphs: list[LetterParagraphBody] = Field(default_factory=list, max_length=8)
+    closing: str | None = Field(default=None, max_length=300)
+    sender: LetterSenderBody = Field(default_factory=LetterSenderBody)
+
+
+class RenderRequest(BaseModel):
+    """`POST /documents/{template_id}/render` : un CV **ou** une lettre."""
+
+    cv: CvBody | None = None
+    letter: LetterBody | None = None
+    ats_safe: bool = False
+
+
+class RenderRead(BaseModel):
+    """Le HTML ancré de l'atelier."""
+
+    html: str = Field(
+        description="Le HTML que Gotenberg imprimera ; `data-chemin` sur chaque texte du CV."
+    )
+    pages: int = Field(
+        description="Pages estimées par mesure ; la vérité est dans `window.karriaFit`."
+    )
+    warnings: list[str] = Field(
+        description=(
+            "`headline_missing`, `photo_missing`, `more_than_one_page`, `logo_unavailable`, "
+            "`too_few_paragraphs`, `too_many_paragraphs`, `body_too_long`, "
+            "`subject_not_explicit`, `closing_missing`, `company_missing`."
+        )
+    )
+
+
+class LetterExportRequest(BaseModel):
+    """`POST /documents/letters/export`."""
+
+    template_id: UUID | None = Field(default=None, description="À défaut, le modèle choisi.")
+    letter: LetterBody
+    formats: list[str] | None = None
+    dossier_id: UUID | None = None
+
+
+# ---------------------------------------------------------------------- envoi (ADR-0031)
+
+
+class SendRequest(BaseModel):
+    """`POST /documents/exports/{id}/send`."""
+
+    to: str | None = Field(
+        default=None, max_length=254, description="`null` : l'adresse du compte."
+    )
+
+
+class BatchSendRequest(BaseModel):
+    """`POST /documents/exports/send` : plusieurs documents dans un seul e-mail."""
+
+    generated_ids: list[UUID] = Field(min_length=1, max_length=MAX_DOCUMENTS_PER_SEND)
+    to: str | None = Field(default=None, max_length=254)
+
+
+class SendRead(BaseModel):
+    """Un envoi et son état."""
+
+    id: UUID
+    status: str = Field(description="`queued`, `sent` ou `failed`.")
+    to: str
+    generated_ids: list[UUID]
+    created_at: datetime
+    sent_at: datetime | None
+
+    @classmethod
+    def present(cls, send: DocumentSend) -> SendRead:
+        return cls(
+            id=send.id,
+            status=send.status.value,
+            to=send.to,
+            generated_ids=list(send.generated_ids),
+            created_at=send.created_at,
+            sent_at=send.sent_at,
+        )
 
 
 class GeneratedCvRead(BaseModel):
-    """`GeneratedCv` : un export, ses URL signées et son score ATS."""
+    """`GeneratedCv` : un export (CV ou lettre), ses URL signées et son score ATS."""
 
     id: UUID
+    kind: str = Field(description="`cv` ou `letter` (ADR-0030).")
+    dossier_id: UUID | None = None
+    company_name: str | None = Field(
+        default=None, description="Lettre : l'entreprise destinataire."
+    )
     template: TemplateRef
     ats_safe: bool
     offer_id: UUID | None
@@ -250,13 +453,12 @@ class GeneratedCvRead(BaseModel):
     @classmethod
     async def present(cls, generated: GeneratedCv, storage: ObjectStorage) -> GeneratedCvRead:
         """Re-signe les fichiers à chaque lecture ; ajoute l'explication et son état."""
-        first, _, last = generated.full_name.partition(" ")
 
         async def sign(key: str | None, ext: str) -> str | None:
             if not key:
                 return None
             return await storage.presigned_get_url(
-                Bucket.DOCUMENTS, key, download_as=export_file_name(first, last, ext)
+                Bucket.DOCUMENTS, key, download_as=generated.file_name(ext)
             )
 
         ats = dict(generated.ats)
@@ -266,6 +468,9 @@ class GeneratedCvRead(BaseModel):
             ats["docx"] = {k: generated.ats_docx[k] for k in ("score", "level", "format", "checks")}
         return cls(
             id=generated.id,
+            kind=generated.kind.value,
+            dossier_id=generated.dossier_id,
+            company_name=generated.company_name or None,
             template=TemplateRef(
                 id=generated.template_id,
                 label=generated.template_label,

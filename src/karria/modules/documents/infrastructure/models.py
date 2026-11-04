@@ -5,7 +5,10 @@
   mesures, polices, clés des fichiers) — immuable une fois publiée.
 - `documents_user_templates` : ce que chaque personne possède.
 - `documents_selections` : le modèle choisi (un par personne).
-- `documents_generated_cvs` : les exports (clés des fichiers, score ATS).
+- `documents_generated_cvs` : les exports (clés des fichiers, score ATS),
+  CV **et** lettres (`kind`, ADR-0030), rattachés ou non à un dossier.
+- `documents_sends` : le journal des envois par e-mail (ADR-0031) — ce que
+  le quota compte, et l'état de chaque remise.
 
 Aucune URL en base : des clés d'objets (ADR-0008). Aucune clé étrangère vers
 les comptes : `user_id` seul, comme les autres modules (ADR-0015).
@@ -113,6 +116,27 @@ class GeneratedCvModel(BaseDBModel):
     explanation: dict[str, Any] | None = fields.JSONField(null=True)
     explanation_status = fields.CharField(max_length=16, default="pending")
     full_name = fields.CharField(max_length=210, default="")
+    kind = fields.CharField(max_length=8, default="cv", description="cv ou letter.")
+    dossier_id: UUID | None = fields.UUIDField(
+        null=True, db_index=True, description="Dossier de candidature (module applications)."
+    )
+    company_name = fields.CharField(
+        max_length=200, default="", description="Entreprise destinataire d'une lettre."
+    )
 
     class Meta:
         table = "documents_generated_cvs"
+
+
+class DocumentSendModel(BaseDBModel):
+    """Un envoi de documents par e-mail (journal)."""
+
+    user_id: UUID = fields.UUIDField(db_index=True)
+    generated_ids: list[str] = fields.JSONField(default=list, description="Exports joints.")
+    to_address = fields.CharField(max_length=254, description="Destinataire.")
+    status = fields.CharField(max_length=16, default="queued", description="queued, sent, failed.")
+    sent_at = fields.DatetimeField(null=True)
+    error = fields.CharField(max_length=200, null=True, description="Raison technique d'un échec.")
+
+    class Meta:
+        table = "documents_sends"

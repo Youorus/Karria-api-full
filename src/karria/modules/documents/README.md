@@ -1,7 +1,8 @@
-# Module `documents` — modèles de CV, exports PDF et DOCX, score ATS
+# Module `documents` — modèles de CV, exports PDF et DOCX, score ATS, atelier, lettres, envoi
 
-Décision : ADR-0020 (validée par Marc le 2026-10-24). Contrat :
-`karria_app/docs/contrat-api-modeles.md`.
+Décisions : ADR-0020 (validée par Marc le 2026-10-24), ADR-0029 (rendu HTML ancré),
+ADR-0030 (lettre), ADR-0031 (envoi par e-mail). Contrats :
+`karria_app/docs/contrat-api-modeles.md` et `docs/contrat-api-documents.md`.
 
 ## Ce qu'il possède
 
@@ -14,13 +15,26 @@ Décision : ADR-0020 (validée par Marc le 2026-10-24). Contrat :
   téléchargée une fois (Google Fonts, sinon Fontsource) et relue ensuite.
 - Ce que chaque personne **possède** (`documents_user_templates`) et a **choisi**
   (`documents_selections`), et ses **exports** (`documents_generated_cvs`,
-  fichiers dans le bucket `documents`).
+  fichiers dans le bucket `documents`) — des CV **et des lettres** (`kind`),
+  rattachés ou non à un dossier de candidature (`dossier_id`, UUID libre).
+- Le **journal des envois par e-mail** (`documents_sends`) : destinataire, documents,
+  état ; c'est sur lui que se compte le quota de cinq envois par jour.
+- La **lettre de motivation** comme donnée structurée (`domain/letter.py`) et ses
+  règles d'usage (une page, 3–4 paragraphes, objet explicite, politesse sobre).
+- Les **chemins** `data-chemin` de la vue (`view["paths"]`, `section["paths"]`), à
+  côté des éléments, jamais dedans.
 
 ## Ce qu'il ne possède pas
 
 - Le CV : lu par le port `CvSource`, branché sur `cv.GetMyCv` dans
   `bootstrap/wiring.py`. Sans branchement, tout rendu répond `cv_missing`.
-- Le compte (référencé par `user_id`), l'achat d'un modèle Pro.
+- Le compte (référencé par `user_id`), l'achat d'un modèle Pro. L'adresse du
+  compte, pour « m'envoyer mes documents », vient du port `AccountDirectory`
+  branché sur `identity` ; sans branchement, `account_email_unknown`.
+- Le dossier de candidature (module `applications`) : `documents` ne connaît que
+  son identifiant. L'autre sens passe par la façade `build_render_document` /
+  `get_render_document` (ADR-0029 § 6), branchée dans `bootstrap`.
+- Le transport des e-mails : `shared/mail` (gabarit `documents_sent`, pièces jointes).
 
 ## La chaîne
 
@@ -32,7 +46,21 @@ spécification + CV ──► domain/view ──► html_renderer ──► Gote
                                    └─► docx_renderer (python-docx, polices incorporées) ──► DOCX
 PDF / DOCX ──► ats_reader (comme un ATS) ──► domain/ats (score déterministe)
                                           └─► llm.LlmAtsExplainer (explication, en file)
+spécification + CV reçu ──► domain/view (+ chemins) ──► html_renderer (ancré, URL publiques) ──► l'app (WebView)
+spécification + lettre ──► domain/letter ──► letter_renderer (HTML / DOCX) ──► Gotenberg ──► PDF
+export(s) ──► SendDocuments (journal, quota) ──► file ──► DeliverDocuments ──► shared/mail (pièces jointes)
 ```
+
+- **Atelier** (ADR-0029) : `RenderDocument` rend le CV **reçu** (le brouillon de l'app),
+  pas celui de la personne — sauf sa photo. Polices copiées une fois dans le bucket
+  public `assets` (`fonts/<fichier>`) pour une adresse stable ; pictogrammes en `data:` ;
+  `pages` estimé par mesure, vérité dans `window.karriaFit`. 90 rendus / min / compte.
+- **Lettre** (ADR-0030) : vue `kind: "letter"`, moteurs `LetterHtmlRenderer` /
+  `LetterDocxRenderer` lus dans la même spécification (marges extérieures du modèle,
+  corps borné 10–11,5 pt, accent des titres pour l'objet). Logo téléchargé **seulement**
+  depuis l'hôte public du stockage (`infrastructure/logos.py`), converti en PNG.
+- **Envoi** (ADR-0031) : `202` puis travail `documents.send_documents` ; PDF sinon DOCX ;
+  signé du nom de la personne ; 5 envois par jour civil UTC, comptés sur les demandes.
 
 - **Porte de qualité** (`domain/gate.py`) : PDF ≥ 0,90 et planchers par
   composante ; sinon la version reste `review`.
@@ -49,7 +77,10 @@ PDF / DOCX ──► ats_reader (comme un ATS) ──► domain/ats (score déte
 - Déposer un modèle : `python -m scripts.templates submit F.pdf --name x --label X [--inline]`
   ou `POST /api/v1/internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`).
 - Revue : `python -m scripts.templates list` ou `GET /api/v1/internal/templates`.
-- Travaux de file : `documents.ingest_template`, `documents.explain_ats`.
+- Travaux de file : `documents.ingest_template`, `documents.explain_ats`,
+  `documents.send_documents`.
+- Ressources publiques : `python -m scripts.assets brand <dossier branding de l'app>`
+  (mot-logos des e-mails), bucket `assets` créé par `make storage-provision`.
 - Configuration : `DOCUMENTS__GOTENBERG_URL`, `DOCUMENTS__ADMIN_TOKEN`,
   `LLM__TASKS__TEMPLATE_EXTRACT`, `LLM__TASKS__ATS_EXPLAIN`,
   `STORAGE__PUBLIC_ENDPOINT_URL` (signature des URL pour l'hôte public).

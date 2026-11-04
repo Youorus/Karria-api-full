@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from tortoise.expressions import F
 
+from karria.modules.documents.domain.sends import DocumentSend, SendStatus
 from karria.modules.documents.domain.templates import (
+    DocumentKind,
     ExplanationStatus,
     Fit,
     GeneratedCv,
@@ -18,6 +21,7 @@ from karria.modules.documents.domain.templates import (
     VersionStatus,
 )
 from karria.modules.documents.infrastructure.models import (
+    DocumentSendModel,
     GeneratedCvModel,
     SelectionModel,
     TemplateModel,
@@ -235,6 +239,9 @@ def _generated(row: GeneratedCvModel) -> GeneratedCv:
         explanation_status=ExplanationStatus(row.explanation_status),
         offer_id=row.offer_id,
         full_name=row.full_name,
+        kind=DocumentKind(row.kind or "cv"),
+        dossier_id=row.dossier_id,
+        company_name=row.company_name or "",
     )
 
 
@@ -259,6 +266,9 @@ class TortoiseGeneratedCvRepository:
             explanation=generated.explanation,
             explanation_status=generated.explanation_status.value,
             full_name=generated.full_name,
+            kind=generated.kind.value,
+            dossier_id=generated.dossier_id,
+            company_name=generated.company_name,
         )
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:
@@ -266,9 +276,19 @@ class TortoiseGeneratedCvRepository:
         return None if row is None else _generated(row)
 
     async def history(
-        self, user_id: UUID, *, limit: int, offset: int
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        kind: DocumentKind | None = None,
+        dossier_id: UUID | None = None,
     ) -> tuple[list[GeneratedCv], int]:
         query = GeneratedCvModel.filter(user_id=user_id)
+        if kind is not None:
+            query = query.filter(kind=kind.value)
+        if dossier_id is not None:
+            query = query.filter(dossier_id=dossier_id)
         total = await query.count()
         rows = await query.order_by("-created_at").offset(offset).limit(limit)
         return [_generated(r) for r in rows], total
@@ -288,3 +308,48 @@ class TortoiseGeneratedCvRepository:
 
     async def forget(self, user_id: UUID) -> None:
         await GeneratedCvModel.filter(user_id=user_id).delete()
+
+
+def _send(row: DocumentSendModel) -> DocumentSend:
+    return DocumentSend(
+        id=row.id,
+        user_id=row.user_id,
+        generated_ids=tuple(UUID(g) for g in row.generated_ids or ()),
+        to=row.to_address,
+        status=SendStatus(row.status),
+        created_at=row.created_at,
+        sent_at=row.sent_at,
+        error=row.error,
+    )
+
+
+class TortoiseSendRepository:
+    """Implémente `SendRepository`."""
+
+    async def add(self, send: DocumentSend) -> None:
+        await DocumentSendModel.create(
+            id=send.id,
+            user_id=send.user_id,
+            generated_ids=[str(g) for g in send.generated_ids],
+            to_address=send.to,
+            status=send.status.value,
+            sent_at=send.sent_at,
+            error=send.error,
+        )
+
+    async def get(self, send_id: UUID) -> DocumentSend | None:
+        row = await DocumentSendModel.get_or_none(id=send_id)
+        return None if row is None else _send(row)
+
+    async def save(self, send: DocumentSend) -> None:
+        await DocumentSendModel.filter(id=send.id).update(
+            status=send.status.value, sent_at=send.sent_at, error=send.error
+        )
+
+    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
+        return await DocumentSendModel.filter(
+            user_id=user_id, created_at__gte=start, created_at__lt=end
+        ).count()
+
+    async def forget(self, user_id: UUID) -> None:
+        await DocumentSendModel.filter(user_id=user_id).delete()

@@ -12,6 +12,13 @@ Contrat
   l'explication est différée dans la file.
 - Un modèle Pro ne se rend que pour qui le possède ; un CV non finalisé ne
   se rend pas (`cv_missing`) ; `offer_id` est réservé (`tailoring_not_available`).
+- **Atelier** (`RenderDocument`, ADR-0029) : le CV **reçu** (le brouillon de
+  l'app) ou une lettre (ADR-0030), rendus en HTML ancré par le même moteur
+  que le PDF ; l'exemple du modèle pour la galerie. Aucun fichier écrit.
+- **Lettre** (`ExportLetter`) : PDF et DOCX dans la grammaire du modèle,
+  export `kind: letter`, sans score ATS.
+- **Envoi** (`SendDocuments` puis `DeliverDocuments` dans le worker,
+  ADR-0031) : journal, quota, pièces jointes par le centre d'e-mails.
 """
 
 from __future__ import annotations
@@ -20,33 +27,56 @@ import asyncio
 import hashlib
 import json
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 from uuid import UUID, uuid4
 
 from karria.modules.documents.application.ports import (
+    AccountDirectory,
     AtsExplainer,
     CvSource,
     DocumentEngine,
+    DocumentFile,
+    DocumentMailer,
     GeneratedCvRepository,
+    LogoFetcher,
+    RenderedHtml,
+    SendRepository,
     TemplateJobs,
     TemplateRepository,
     UserTemplateRepository,
 )
 from karria.modules.documents.domain.ats import analyse
 from karria.modules.documents.domain.errors import (
+    AccountEmailUnknownError,
     CvMissingError,
+    DocumentFileMissingError,
     GeneratedCvNotFoundError,
     RenderingUnavailableError,
+    RenderTooLargeError,
+    SendNotFoundError,
     TailoringNotAvailableError,
     TemplateIngestionError,
     TemplateNotFoundError,
     TemplateNotFreeError,
+    TemplateNotOwnedError,
 )
 from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
+from karria.modules.documents.domain.letter import from_letter, letter_warnings
+from karria.modules.documents.domain.sends import (
+    MAX_DOCUMENTS_PER_SEND,
+    DocumentSend,
+    SendStatus,
+    day_bounds,
+    ensure_quota,
+    normalize_address,
+)
 from karria.modules.documents.domain.templates import (
+    RENDER_MAX_HTML_BYTES,
+    DocumentKind,
     ExplanationStatus,
     Fit,
     GeneratedCv,
@@ -64,7 +94,10 @@ from karria.modules.documents.domain.templates import (
 from karria.modules.documents.domain.view import from_cv, from_sample
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
+from karria.shared.errors.exceptions import InvalidInputError
+from karria.shared.images import resize_to_png
 from karria.shared.logging import get_logger
+from karria.shared.mail import MailDeliveryError
 from karria.shared.storage import Bucket, ObjectNotFoundError, ObjectStorage
 
 logger = get_logger(__name__)
@@ -75,6 +108,16 @@ PREVIEW_CACHE_VERSION = 2
 
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+#: Le fichier joint qui porte le logo d'une lettre (ADR-0030 § 3).
+LOGO_FILE: Final = "logo.png"
+#: Côté maximal du logo d'une lettre converti en PNG (px) : un en-tête à 14 mm.
+LOGO_MAX_EDGE: Final = 256
+#: Les URL signées de photos, gardées stables le temps de leur validité
+#: (ADR-0029 § 3) : la WebView met l'image en cache au lieu de la retélécharger
+#: à chaque rendu. Par processus, bornée.
+PHOTO_URL_TTL_SECONDS: Final = 45 * 60
+PHOTO_URL_CACHE_SIZE: Final = 2_000
+_photo_urls: OrderedDict[str, tuple[str, float]] = OrderedDict()
 
 
 def version_prefix(template_id: UUID, version: int) -> str:
@@ -396,6 +439,7 @@ class ExportCv:
         formats: list[str] | None,
         ats_safe: bool | None,
         offer_id: UUID | None,
+        dossier_id: UUID | None = None,
     ) -> GeneratedCv:
         if offer_id is not None:
             raise TailoringNotAvailableError()
@@ -477,6 +521,7 @@ class ExportCv:
             explanation=None,
             explanation_status=ExplanationStatus.PENDING,
             full_name=" ".join(p for p in (ident.get("first_name"), ident.get("last_name")) if p),
+            dossier_id=dossier_id,
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)
@@ -537,9 +582,17 @@ class ListGeneratedCvs:
         self._generated = generated
 
     async def execute(
-        self, user_id: UUID, *, limit: int, offset: int
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        kind: DocumentKind | None = None,
+        dossier_id: UUID | None = None,
     ) -> tuple[list[GeneratedCv], int]:
-        return await self._generated.history(user_id, limit=limit, offset=offset)
+        return await self._generated.history(
+            user_id, limit=limit, offset=offset, kind=kind, dossier_id=dossier_id
+        )
 
 
 class GetGeneratedCv:
@@ -593,8 +646,10 @@ class ForgetUser:
         generated: GeneratedCvRepository,
         owned: UserTemplateRepository,
         storage: ObjectStorage,
+        sends: SendRepository | None = None,
     ) -> None:
         self._generated, self._owned, self._storage = generated, owned, storage
+        self._sends = sends
 
     async def execute(self, user_id: UUID) -> int:
         exports = await self._generated.of_user(user_id)
@@ -604,6 +659,9 @@ class ForgetUser:
                     await self._storage.delete(Bucket.DOCUMENTS, key)
         await self._generated.forget(user_id)
         await self._owned.forget(user_id)
+        if self._sends is not None:
+            # Le journal des envois porte des adresses : une donnée personnelle.
+            await self._sends.forget(user_id)
         return len(exports)
 
 
@@ -851,3 +909,415 @@ class IngestTemplateVersion:
             failures=len(failures),
         )
         return done
+
+
+# ---------------------------------------------------------------------- atelier (ADR-0029)
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedDocument:
+    """Ce que l'atelier affiche : le HTML ancré, les pages estimées, les avertissements."""
+
+    html: str
+    pages: int
+    warnings: tuple[str, ...]
+
+
+async def stable_photo_url(storage: ObjectStorage, key: str) -> str:
+    """L'URL signée d'une photo, la même d'un rendu à l'autre tant qu'elle vaut."""
+    now = time.monotonic()
+    cached = _photo_urls.get(key)
+    if cached is not None and cached[1] > now:
+        _photo_urls.move_to_end(key)
+        return cached[0]
+    url = await storage.presigned_get_url(Bucket.MEDIA, key)
+    _photo_urls[key] = (url, now + PHOTO_URL_TTL_SECONDS)
+    while len(_photo_urls) > PHOTO_URL_CACHE_SIZE:
+        _photo_urls.popitem(last=False)
+    return url
+
+
+async def fetch_logo(logos: LogoFetcher, url: str | None) -> bytes | None:
+    """Le logo d'une lettre en PNG, ou `None` (absent, refusé, injoignable, illisible)."""
+    if not url:
+        return None
+    data = await logos.fetch(url)
+    if data is None:
+        return None
+    try:
+        return await asyncio.to_thread(resize_to_png, data, max_edge=LOGO_MAX_EDGE)
+    except Exception:
+        logger.warning("documents.logo_unreadable")
+        return None
+
+
+class RenderDocument:
+    """Le CV reçu (ou une lettre, ou l'exemple du modèle) dans un modèle, en HTML ancré.
+
+    Réutilisable par un autre module (façade `documents.build_render_document`) :
+    il reçoit le CV **en données**, il ne lit pas celui de la personne — sauf
+    pour retrouver sa photo quand le modèle en a l'emplacement.
+    """
+
+    def __init__(
+        self,
+        *,
+        templates: TemplateRepository,
+        owned: UserTemplateRepository,
+        cvs: CvSource,
+        engine: DocumentEngine,
+        storage: ObjectStorage,
+        logos: LogoFetcher,
+        clock: Clock,
+    ) -> None:
+        self._templates, self._owned, self._cvs = templates, owned, cvs
+        self._engine, self._storage, self._logos, self._clock = engine, storage, logos, clock
+
+    async def execute(
+        self,
+        user_id: UUID,
+        template_id: UUID,
+        *,
+        cv: dict[str, Any] | None = None,
+        letter: dict[str, Any] | None = None,
+        sample: bool = False,
+        ats_safe: bool = False,
+    ) -> RenderedDocument:
+        """
+        Raises:
+            TemplateNotFoundError: Modèle inconnu ou non publié.
+            TemplateNotOwnedError: Modèle Premium non possédé (l'exemple reste visible).
+            RenderTooLargeError: Le HTML dépasse la taille admise.
+            InvalidInputError: Ni CV, ni lettre, ni exemple demandé.
+        """
+        started = time.monotonic()
+        template, version = await _published(self._templates, template_id)
+        spec = ats_safe_spec(version.spec or {}) if ats_safe else (version.spec or {})
+        if sample:
+            kind = "sample"
+            rendered, warnings = await self._sample(spec, version)
+        else:
+            if template.is_premium and not await self._owned.owns(user_id, template_id):
+                raise TemplateNotOwnedError()
+            if letter is not None:
+                kind = "letter"
+                rendered, warnings = await self._letter(spec, letter)
+            elif cv is not None:
+                kind = "cv"
+                rendered, warnings = await self._cv(spec, version, user_id, cv)
+            else:
+                raise InvalidInputError(
+                    "Il faut un CV, une lettre ou l'exemple du modèle.",
+                    details={"reason": "nothing_to_render"},
+                )
+        size = len(rendered.html.encode("utf-8"))
+        if size > RENDER_MAX_HTML_BYTES:
+            raise RenderTooLargeError(size, RENDER_MAX_HTML_BYTES)
+        if rendered.pages > 1:
+            warnings.append("more_than_one_page")
+        logger.info(
+            "documents.rendered_html",
+            template=template.name,
+            kind=kind,
+            pages=rendered.pages,
+            bytes=size,
+            ms=round((time.monotonic() - started) * 1000),
+        )
+        return RenderedDocument(html=rendered.html, pages=rendered.pages, warnings=tuple(warnings))
+
+    async def _sample(
+        self, spec: dict[str, Any], version: TemplateVersion
+    ) -> tuple[RenderedHtml, list[str]]:
+        """L'exemple du modèle, sans ancres, photo d'exemple comprise."""
+        view = from_sample(spec, version.sample or {})
+        assets = await _assets(self._storage, version, sample=True)
+        photo_name = (spec["header"].get("photo") or {}).get("sample_file")
+        photo = assets.pop(photo_name, None) if photo_name else None
+        if photo is not None:
+            assets["photo"] = photo
+        rendered = await self._engine.render_html(
+            spec, view, assets=assets, photo_url="photo" if photo else None, anchored=False
+        )
+        return rendered, []
+
+    async def _letter(
+        self, spec: dict[str, Any], letter: dict[str, Any]
+    ) -> tuple[RenderedHtml, list[str]]:
+        """Une lettre, ancrée, avec le logo s'il est joignable."""
+        view = from_letter(spec, letter, today=self._clock.now().date())
+        warnings = letter_warnings(letter)
+        logo_url = (letter.get("recipient") or {}).get("logo_url")
+        assets: dict[str, bytes] = {}
+        logo = await fetch_logo(self._logos, logo_url)
+        if logo is not None:
+            assets[LOGO_FILE] = logo
+        elif logo_url:
+            warnings.append("logo_unavailable")
+        rendered = await self._engine.render_html(
+            spec, view, assets=assets, photo_url=None, anchored=True
+        )
+        return rendered, warnings
+
+    async def _cv(
+        self, spec: dict[str, Any], version: TemplateVersion, user_id: UUID, cv: dict[str, Any]
+    ) -> tuple[RenderedHtml, list[str]]:
+        """Le CV reçu, ancré, avec la photo de la personne si le modèle en a la place."""
+        view = from_cv(spec, cv)
+        warnings: list[str] = []
+        if not view["header"]["headline"]:
+            warnings.append("headline_missing")
+        photo_url: str | None = None
+        if spec["header"].get("photo"):
+            snapshot = await self._cvs.snapshot(user_id)
+            if snapshot is not None and snapshot.image_key:
+                photo_url = await stable_photo_url(self._storage, snapshot.image_key)
+            else:
+                warnings.append("photo_missing")
+        assets = await _assets(self._storage, version, sample=False)
+        rendered = await self._engine.render_html(
+            spec, view, assets=assets, photo_url=photo_url, anchored=True
+        )
+        return rendered, warnings
+
+
+# ---------------------------------------------------------------------- lettre (ADR-0030)
+
+
+class ExportLetter:
+    """Exporte une lettre en PDF et/ou DOCX, dans la grammaire du modèle, sans score ATS."""
+
+    def __init__(
+        self,
+        *,
+        templates: TemplateRepository,
+        owned: UserTemplateRepository,
+        generated: GeneratedCvRepository,
+        engine: DocumentEngine,
+        storage: ObjectStorage,
+        logos: LogoFetcher,
+        clock: Clock,
+    ) -> None:
+        self._templates, self._owned, self._generated = templates, owned, generated
+        self._engine, self._storage, self._logos, self._clock = engine, storage, logos, clock
+
+    async def execute(
+        self,
+        user_id: UUID,
+        *,
+        template_id: UUID | None,
+        letter: dict[str, Any],
+        formats: list[str] | None,
+        dossier_id: UUID | None,
+    ) -> GeneratedCv:
+        wanted = check_formats(formats)
+        if template_id is None:
+            selection = await self._owned.selection(user_id)
+            if selection is None:
+                raise TemplateNotFoundError()
+            template_id = selection.template_id
+        template, version = await _published(self._templates, template_id)
+        ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
+        spec = version.spec or {}
+        view = from_letter(spec, letter, today=self._clock.now().date())
+        assets: dict[str, bytes] = {}
+        logo = await fetch_logo(self._logos, (letter.get("recipient") or {}).get("logo_url"))
+        if logo is not None:
+            assets[LOGO_FILE] = logo
+        started = time.monotonic()
+        rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=None)
+        docx = (
+            await self._engine.render_docx(spec, view, assets=assets, photo=None, fit=rendered.fit)
+            if "docx" in wanted
+            else None
+        )
+        generated_id = uuid4()
+        prefix = f"generated-letters/{user_id}/{generated_id}"
+        pdf_key = docx_key = None
+        if "pdf" in wanted:
+            pdf_key = f"{prefix}/lettre.pdf"
+            await self._storage.put(Bucket.DOCUMENTS, pdf_key, rendered.data, content_type=PDF)
+        if docx is not None:
+            docx_key = f"{prefix}/lettre.docx"
+            await self._storage.put(Bucket.DOCUMENTS, docx_key, docx, content_type=DOCX)
+        generated = GeneratedCv(
+            id=generated_id,
+            user_id=user_id,
+            template_id=template.id,
+            template_version_id=version.id,
+            template_label=template.label,
+            template_version=version.version,
+            ats_safe=False,
+            created_at=self._clock.now(),
+            pdf_key=pdf_key,
+            docx_key=docx_key,
+            fit=rendered.fit,
+            ats={},
+            ats_docx=None,
+            explanation=None,
+            explanation_status=ExplanationStatus.UNAVAILABLE,
+            full_name=view["header"]["full_name"],
+            kind=DocumentKind.LETTER,
+            dossier_id=dossier_id,
+            company_name=view["recipient"]["company"],
+        )
+        await self._generated.add(generated)
+        await self._templates.increment_uses(template.id)
+        logger.info(
+            "documents.letter_exported",
+            template=template.name,
+            formats=",".join(wanted),
+            pages=rendered.fit.pages,
+            logo=logo is not None,
+            ms=round((time.monotonic() - started) * 1000),
+        )
+        return generated
+
+
+# ---------------------------------------------------------------------- envoi (ADR-0031)
+
+
+class SendDocuments:
+    """Demande l'envoi d'un ou plusieurs exports à une adresse : journal, quota, file."""
+
+    def __init__(
+        self,
+        *,
+        generated: GeneratedCvRepository,
+        sends: SendRepository,
+        accounts: AccountDirectory,
+        jobs: TemplateJobs,
+        clock: Clock,
+    ) -> None:
+        self._generated, self._sends, self._accounts = generated, sends, accounts
+        self._jobs, self._clock = jobs, clock
+
+    async def execute(
+        self, user_id: UUID, *, generated_ids: list[UUID], to: str | None
+    ) -> DocumentSend:
+        """
+        Raises:
+            InvalidInputError: Aucun document, trop de documents, ou un doublon.
+            GeneratedCvNotFoundError: Un export inconnu ou d'une autre personne.
+            DocumentFileMissingError: Un export sans fichier.
+            RecipientInvalidError: Adresse mal formée.
+            AccountEmailUnknownError: `to` absent et adresse du compte introuvable.
+            SendQuotaExceededError: Cinq envois déjà demandés aujourd'hui.
+        """
+        unique = list(dict.fromkeys(generated_ids))
+        if not unique or len(unique) > MAX_DOCUMENTS_PER_SEND:
+            raise InvalidInputError(
+                f"Entre 1 et {MAX_DOCUMENTS_PER_SEND} documents par envoi.",
+                details={"reason": "documents_count_invalid", "field": "generated_ids"},
+            )
+        for generated_id in unique:
+            found = await self._generated.get(generated_id)
+            if found is None or found.user_id != user_id:
+                raise GeneratedCvNotFoundError()
+            if not (found.pdf_key or found.docx_key):
+                raise DocumentFileMissingError(generated_id)
+        if to is None:
+            account = await self._accounts.email_of(user_id)
+            if not account:
+                raise AccountEmailUnknownError()
+            to = account
+        address = normalize_address(to)
+        now = self._clock.now()
+        start, end = day_bounds(now)
+        ensure_quota(await self._sends.count_between(user_id, start, end), now)
+        send = DocumentSend(
+            id=uuid4(),
+            user_id=user_id,
+            generated_ids=tuple(unique),
+            to=address,
+            status=SendStatus.QUEUED,
+            created_at=now,
+        )
+        await self._sends.add(send)
+        try:
+            await self._jobs.defer_send(send.id)
+        except Exception as exc:
+            # La file est en panne : l'envoi ne partira pas, autant le dire tout
+            # de suite plutôt que de laisser un « en attente » éternel.
+            logger.exception("documents.send_not_deferred", send_id=str(send.id))
+            send = send.failed(f"file indisponible : {type(exc).__name__}")
+            await self._sends.save(send)
+        logger.info("documents.send_requested", send_id=str(send.id), documents=len(unique))
+        return send
+
+
+class GetSend:
+    """L'état d'un envoi de la personne."""
+
+    def __init__(self, sends: SendRepository) -> None:
+        self._sends = sends
+
+    async def execute(self, user_id: UUID, send_id: UUID) -> DocumentSend:
+        found = await self._sends.get(send_id)
+        if found is None or found.user_id != user_id:
+            raise SendNotFoundError()
+        return found
+
+
+class DeliverDocuments:
+    """Remet un envoi : lit les fichiers, compose, envoie, consigne (travail de file)."""
+
+    def __init__(
+        self,
+        *,
+        sends: SendRepository,
+        generated: GeneratedCvRepository,
+        storage: ObjectStorage,
+        mailer: DocumentMailer,
+        clock: Clock,
+    ) -> None:
+        self._sends, self._generated, self._storage = sends, generated, storage
+        self._mailer, self._clock = mailer, clock
+
+    async def execute(self, send_id: UUID) -> SendStatus | None:
+        send = await self._sends.get(send_id)
+        if send is None or send.status is not SendStatus.QUEUED:
+            return None if send is None else send.status
+        try:
+            documents = await self._files(send)
+            await self._mailer.send(
+                to=send.to, sender_name=await self._sender_name(send), documents=documents
+            )
+        except (MailDeliveryError, ObjectNotFoundError, DocumentFileMissingError) as exc:
+            done = send.failed(type(exc).__name__)
+            await self._sends.save(done)
+            logger.warning("documents.send_failed", send_id=str(send_id), error=type(exc).__name__)
+            return done.status
+        done = send.succeeded(self._clock.now())
+        await self._sends.save(done)
+        logger.info("documents.send_delivered", send_id=str(send_id), documents=len(documents))
+        return done.status
+
+    async def _files(self, send: DocumentSend) -> list[DocumentFile]:
+        """Les pièces : le PDF quand il existe, sinon le DOCX, nommées comme au téléchargement."""
+        out: list[DocumentFile] = []
+        for generated_id in send.generated_ids:
+            found = await self._generated.get(generated_id)
+            if found is None or found.user_id != send.user_id:
+                raise DocumentFileMissingError(generated_id)
+            if found.pdf_key:
+                key, extension, content_type = found.pdf_key, "pdf", PDF
+            elif found.docx_key:
+                key, extension, content_type = found.docx_key, "docx", DOCX
+            else:
+                raise DocumentFileMissingError(generated_id)
+            out.append(
+                DocumentFile(
+                    file_name=found.file_name(extension),
+                    content_type=content_type,
+                    data=await self._storage.get(Bucket.DOCUMENTS, key),
+                )
+            )
+        return out
+
+    async def _sender_name(self, send: DocumentSend) -> str:
+        """Le nom qui signe : celui du premier document qui en porte un."""
+        for generated_id in send.generated_ids:
+            found = await self._generated.get(generated_id)
+            if found is not None and found.full_name.strip():
+                return found.full_name.strip()
+        return "Une personne"

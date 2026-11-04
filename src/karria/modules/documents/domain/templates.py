@@ -28,6 +28,7 @@ from typing import Any, Final
 from uuid import UUID, uuid4
 
 from karria.modules.documents.domain.errors import InvalidFormatError, TemplateLockedError
+from karria.modules.documents.domain.letter import letter_file_name
 
 FORMATS: Final = ("pdf", "docx")
 #: Lectures anonymes de la galerie permises par origine sur la fenêtre
@@ -37,6 +38,13 @@ GUEST_RATE_LIMIT: Final = 120
 GUEST_RATE_WINDOW_SECONDS: Final = 600
 #: Interlettrage au-delà duquel un intitulé du dessin se lit lettre à lettre (em).
 SPACED_TITLE_EM: Final = 0.1
+#: Rendus HTML de l'atelier par compte et par minute (ADR-0029 § 5) : l'app
+#: ne rend qu'au repos (400 ms), 90 laisse de la marge à une frappe nerveuse.
+RENDER_RATE_LIMIT: Final = 90
+RENDER_RATE_WINDOW_SECONDS: Final = 60
+#: Taille maximale du HTML rendu pour l'atelier (octets) : au-delà, le CV
+#: n'est plus un CV, et la WebView d'un téléphone peine.
+RENDER_MAX_HTML_BYTES: Final = 1_500_000
 
 
 class VersionStatus(StrEnum):
@@ -46,6 +54,13 @@ class VersionStatus(StrEnum):
     PUBLISHED = "published"
     REVIEW = "review"
     FAILED = "failed"
+
+
+class DocumentKind(StrEnum):
+    """Ce qu'un export est : un CV ou une lettre de motivation (ADR-0030)."""
+
+    CV = "cv"
+    LETTER = "letter"
 
 
 class ExplanationStatus(StrEnum):
@@ -170,11 +185,24 @@ class GeneratedCv:
     explanation_status: ExplanationStatus = ExplanationStatus.PENDING
     offer_id: UUID | None = None
     full_name: str = ""
+    kind: DocumentKind = DocumentKind.CV
+    #: Le dossier de candidature auquel l'export appartient (UUID libre, posé
+    #: par le module `applications`) ; `None` hors dossier.
+    dossier_id: UUID | None = None
+    #: L'entreprise destinataire d'une lettre (nom du fichier) ; vide pour un CV.
+    company_name: str = ""
 
     @staticmethod
     def new_id() -> UUID:
         """Un identifiant d'export."""
         return uuid4()
+
+    def file_name(self, extension: str) -> str:
+        """Le nom proposé au téléchargement et à la pièce jointe, selon le genre."""
+        if self.kind is DocumentKind.LETTER:
+            return letter_file_name(self.company_name, extension)
+        first, _, last = self.full_name.partition(" ")
+        return export_file_name(first, last, extension)
 
 
 def check_formats(formats: list[str] | None) -> tuple[str, ...]:

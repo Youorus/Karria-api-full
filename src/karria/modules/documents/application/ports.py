@@ -8,8 +8,13 @@ Contrat
 - `DocumentEngine` réunit le travail lourd (analyse d'un PDF, rendu PDF par
   Gotenberg, DOCX, mesure de fidélité, aperçus, lecture « comme un ATS ») ;
   un test le remplace par une doublure en mémoire.
-- `TemplateJobs` diffère l'ingestion et l'explication dans la file durable :
-  jamais de travail lourd sur le chemin d'une requête qui n'en a pas besoin.
+- `TemplateJobs` diffère l'ingestion, l'explication et l'envoi dans la file
+  durable : jamais de travail lourd sur le chemin d'une requête qui n'en a
+  pas besoin.
+- `AccountDirectory` (l'adresse du compte, branchée sur `identity`),
+  `DocumentMailer` (le centre d'e-mails du socle, avec pièces jointes) et
+  `LogoFetcher` (le logo d'une entreprise, depuis notre stockage public)
+  servent la lettre et l'envoi (ADR-0030, ADR-0031).
 """
 
 from __future__ import annotations
@@ -21,7 +26,9 @@ from uuid import UUID
 
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
+from karria.modules.documents.domain.sends import DocumentSend
 from karria.modules.documents.domain.templates import (
+    DocumentKind,
     ExplanationStatus,
     Fit,
     GeneratedCv,
@@ -60,6 +67,23 @@ class RenderedPdf:
 
     data: bytes
     fit: Fit
+
+
+@dataclass(frozen=True, slots=True)
+class RenderedHtml:
+    """Le HTML de l'atelier et son nombre de pages estimé (ADR-0029)."""
+
+    html: str
+    pages: int
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentFile:
+    """Une pièce jointe : son nom, son type et ses octets."""
+
+    file_name: str
+    content_type: str
+    data: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +149,13 @@ class GeneratedCvRepository(Protocol):
     async def get(self, generated_id: UUID) -> GeneratedCv | None: ...
 
     async def history(
-        self, user_id: UUID, *, limit: int, offset: int
+        self,
+        user_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+        kind: DocumentKind | None = None,
+        dossier_id: UUID | None = None,
     ) -> tuple[list[GeneratedCv], int]: ...
 
     async def delete(self, generated_id: UUID) -> None: ...
@@ -145,6 +175,38 @@ class CvSource(Protocol):
     async def snapshot(self, user_id: UUID) -> CvSnapshot | None: ...
 
 
+class SendRepository(Protocol):
+    """Le journal des envois par e-mail (ADR-0031)."""
+
+    async def add(self, send: DocumentSend) -> None: ...
+
+    async def get(self, send_id: UUID) -> DocumentSend | None: ...
+
+    async def save(self, send: DocumentSend) -> None: ...
+
+    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int: ...
+
+    async def forget(self, user_id: UUID) -> None: ...
+
+
+class AccountDirectory(Protocol):
+    """Port : l'adresse d'un compte, pour `to: null`. Branché sur `identity` par `bootstrap`."""
+
+    async def email_of(self, user_id: UUID) -> str | None: ...
+
+
+class DocumentMailer(Protocol):
+    """Port : remettre des documents en pièces jointes, signés du nom de la personne."""
+
+    async def send(self, *, to: str, sender_name: str, documents: list[DocumentFile]) -> None: ...
+
+
+class LogoFetcher(Protocol):
+    """Port : le logo d'une entreprise (octets PNG/WebP), ou `None` s'il est injoignable."""
+
+    async def fetch(self, url: str) -> bytes | None: ...
+
+
 class DocumentEngine(Protocol):
     """Analyse, rendus, mesures : le travail lourd, derrière un seul port."""
 
@@ -158,6 +220,16 @@ class DocumentEngine(Protocol):
         assets: dict[str, bytes],
         photo: bytes | None,
     ) -> RenderedPdf: ...
+
+    async def render_html(
+        self,
+        spec: dict[str, Any],
+        view: dict[str, Any],
+        *,
+        assets: dict[str, bytes],
+        photo_url: str | None,
+        anchored: bool,
+    ) -> RenderedHtml: ...
 
     async def render_docx(
         self,
@@ -192,3 +264,5 @@ class TemplateJobs(Protocol):
     async def defer_ingestion(self, version_id: UUID) -> None: ...
 
     async def defer_explanation(self, generated_id: UUID) -> None: ...
+
+    async def defer_send(self, send_id: UUID) -> None: ...

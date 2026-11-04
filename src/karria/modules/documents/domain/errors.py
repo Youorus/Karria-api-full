@@ -9,6 +9,7 @@ existant pour le statut HTTP.
 from __future__ import annotations
 
 from typing import Any, ClassVar
+from uuid import UUID
 
 # Le sous-module, et non le paquet : son `__init__` tire Starlette.
 from karria.shared.errors.exceptions import (
@@ -108,3 +109,73 @@ class TemplateIngestionError(InvalidInputError):
             "Ce PDF ne donne pas de modèle exploitable.",
             details={"reason": "template_unreadable", "detail": detail},
         )
+
+
+class TemplateNotOwnedError(AuthorizationError):
+    """L'atelier demande un modèle Premium que la personne ne possède pas (ADR-0029)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Ce modèle fait partie de Karria Pro.", details={"reason": "template_not_owned"}
+        )
+
+
+class RenderTooLargeError(InvalidInputError):
+    """Le HTML rendu dépasse la taille admise : le CV est trop long pour l'atelier."""
+
+    def __init__(self, size: int, limit: int) -> None:
+        super().__init__(
+            "Ce CV est trop long pour être affiché.",
+            details={"reason": "render_too_large", "bytes": size, "max_bytes": limit},
+        )
+
+
+class RecipientInvalidError(InvalidInputError):
+    """L'adresse de destination n'a pas la forme d'une adresse e-mail (ADR-0031)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Cette adresse e-mail n'est pas valide.",
+            details={"reason": "recipient_invalid", "field": "to"},
+        )
+
+
+class SendQuotaExceededError(DomainError):
+    """Cinq envois par jour et par compte, pas un de plus (ADR-0031)."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
+
+    def __init__(self, *, retry_after: int) -> None:
+        super().__init__(
+            "Tu as atteint le nombre d'envois du jour. Réessaie demain.",
+            details={"reason": "send_quota_exceeded", "retry_after": retry_after},
+        )
+
+
+class AccountEmailUnknownError(BusinessRuleViolationError):
+    """`to: null` demande l'adresse du compte, et personne ne la fournit."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "L'adresse de ton compte est introuvable : indique une adresse.",
+            details={"reason": "account_email_unknown", "field": "to"},
+        )
+
+
+class DocumentFileMissingError(BusinessRuleViolationError):
+    """Un export sans fichier (ni PDF ni DOCX) ne s'envoie pas."""
+
+    def __init__(self, generated_id: UUID) -> None:
+        super().__init__(
+            "Ce document n'a pas de fichier à envoyer.",
+            details={"reason": "document_file_missing", "generated_id": str(generated_id)},
+        )
+
+
+class SendNotFoundError(DomainError):
+    """L'envoi n'existe pas, ou n'appartient pas à l'appelant."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.NOT_FOUND
+
+    def __init__(self) -> None:
+        super().__init__("Cet envoi n'existe pas.", details={"reason": "send_not_found"})

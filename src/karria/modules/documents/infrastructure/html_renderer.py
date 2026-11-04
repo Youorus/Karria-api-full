@@ -10,16 +10,26 @@ Contrat
   extrait ne suit plus l'ordre de lecture (ADR-0020 § 2).
 - La mise en page tient sur une page de façon **déterministe** : après
   chargement des polices, espacements ×1 → ×0,6 puis corps ×1 → ×0,88 ; au-delà,
-  une seconde page assumée. L'état retenu part dans le titre du document
+  les pages suivantes sont assumées (la feuille prend `n × hauteur`, Chromium
+  coupe aux pages). L'état retenu part dans le titre du document
   (`fit k=… f=… pages=…`), relu après conversion pour que le DOCX applique les
-  mêmes facteurs. Aucun mot n'est réécrit.
+  mêmes facteurs, et dans `window.karriaFit` pour l'app. Aucun mot n'est réécrit.
+- **Deux usages, un moteur** (ADR-0029) : pour Gotenberg, polices et images
+  sont jointes et référencées par leur nom de fichier ; pour l'atelier de
+  l'app, `url_for` traduit chaque nom en adresse (police publique, `data:`,
+  URL signée) et `anchored=True` écrit sur chaque texte du CV l'attribut
+  `data-chemin` que la vue a fourni. Le rendu imprimé n'a pas d'ancres et
+  n'a pas de filet de coupure entre les pages ; le rendu de l'atelier a les deux.
 """
 
 from __future__ import annotations
 
 import html
+import math
+from collections.abc import Callable
 from typing import Any, Final
 
+from karria.modules.documents.domain.view import header_path, item_path
 from karria.modules.documents.infrastructure.fonts import FontSet
 
 Json = dict[str, Any]
@@ -41,6 +51,92 @@ SIBLINGS: Final[dict[str, list[str]]] = {
 }
 SPACING_STEPS: Final = (1, 0.9, 0.8, 0.7, 0.6)
 FONT_STEPS: Final = (1, 0.96, 0.92, 0.88)
+#: Ce que l'ajustement sait absorber avant d'ouvrir une page (espacements
+#: ×0,6, corps ×0,88) : la part de la hauteur estimée qui peut disparaître.
+FIT_SLACK: Final = 0.78
+#: Couleur du filet qui marque une coupure de page dans l'atelier.
+PAGE_BREAK_COLOR: Final = "#cbd5e1"
+
+
+def identity_url(name: str) -> str:
+    """Le résolveur par défaut : un fichier joint se référence par son nom."""
+    return name
+
+
+def anchor(path: str | None) -> str:
+    """L'attribut `data-chemin` d'un texte, ou rien."""
+    return f' data-chemin="{esc(path)}"' if path else ""
+
+
+def page_limit_mm(spec: Json) -> float:
+    """Jusqu'où le texte peut descendre sur la première page (mm)."""
+    ph = float(spec["page"]["height_mm"])
+    return ph - max((ph - float(spec["content_bottom_mm"])) * 0.6, 6.0)
+
+
+def fit_script(spec: Json, *, live: bool) -> str:
+    """Le script d'ajustement : espacements, corps, puis pages assumées.
+
+    `live` (l'atelier) ajoute un filet à chaque coupure de page ; l'impression
+    n'en a pas. Dans les deux cas, le titre porte l'état et `window.karriaFit`
+    le répète pour l'app (ADR-0029).
+    """
+    ph = float(spec["page"]["height_mm"])
+    k_steps = ",".join(str(k) for k in SPACING_STEPS)
+    f_steps = ",".join(str(f) for f in FONT_STEPS)
+    guides = (
+        "for(var g=1;g<n;g++){var d=document.createElement('div');"
+        f"d.className='pb';d.style.cssText='position:absolute;left:0;width:100%;height:0;top:'+(g*{ph})+'mm;"
+        f"border-top:1px dashed {PAGE_BREAK_COLOR};pointer-events:none';p.appendChild(d)}}"
+        if live
+        else ""
+    )
+    return (
+        "<script>document.fonts.ready.then(function(){var r=document.documentElement,"
+        "p=document.querySelector('.page'),mm=96/25.4;"
+        f"var lim={page_limit_mm(spec):.2f}*mm,ph={ph}*mm;"
+        "function b(){var t=p.getBoundingClientRect().top,m=0;document.querySelectorAll('.t').forEach("
+        "function(e){m=Math.max(m,e.getBoundingClientRect().bottom-t)});return m}"
+        f"var K=[{k_steps}],F=[{f_steps}],k=1,f=1,ok=false,n=1;"
+        "for(var i=0;i<K.length&&!ok;i++){k=K[i];r.style.setProperty('--k',k);ok=b()<=lim}"
+        "for(var j=1;j<F.length&&!ok;j++){f=F[j];r.style.setProperty('--f',f);ok=b()<=lim}"
+        # Rien ne tient sur une page : les pages suivantes sont assumées, à
+        # l'espacement et au corps naturels, plutôt qu'un CV comprimé **et**
+        # débordant. La feuille prend n hauteurs de page : Chromium coupe là.
+        "if(!ok){k=1;f=1;r.style.setProperty('--k',1);r.style.setProperty('--f',1);"
+        f"n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*{ph})+'mm';{guides}}}"
+        "document.title='fit k='+k+' f='+f+' pages='+n;"
+        "window.karriaFit={k:k,f:f,pages:n};window.fitDone=true});</script>"
+    )
+
+
+def estimate_pages(spec: Json, view: Json, fonts: FontSet) -> int:
+    """Le nombre de pages **estimé** sans navigateur (ADR-0029 § 4).
+
+    Même placement et mêmes métriques que la pré-mise en page des colonnes ;
+    l'ajustement (espacements, corps) est compté comme une marge de 22 %. La
+    vérité vient du script d'ajustement dans la WebView (`window.karriaFit`).
+    """
+    styles = spec["styles"]
+    total = float(spec["first_band_top_mm"])
+    for bi, band in enumerate(placement(spec, view, fonts)):
+        if not any(band["columns"]):
+            continue
+        heights = [
+            sum(
+                estimate(styles, s, sec, band["spec"]["columns"][ci]["w_mm"], fonts)
+                for s, sec, _ in col
+            )
+            for ci, col in enumerate(band["columns"])
+        ]
+        total += max(heights, default=0.0)
+        if bi:
+            total += float(spec["bands"][bi - 1].get("gap_after_mm", 8.0))
+    limit = page_limit_mm(spec)
+    if total * FIT_SLACK <= limit:
+        return 1
+    usable = max(limit - float(spec["first_band_top_mm"]), 1.0)
+    return max(2, math.ceil((total - float(spec["first_band_top_mm"])) / usable))
 
 
 def esc(text: str | None) -> str:
@@ -229,12 +325,25 @@ def extra_contact_slots(s: Json, sec: Json) -> tuple[dict[str, Json], list[str]]
 class HtmlRenderer:
     """Rend une vue dans un modèle, en HTML imprimable."""
 
-    def __init__(self, spec: Json, view: Json, fonts: FontSet, *, photo: str | None) -> None:
+    def __init__(
+        self,
+        spec: Json,
+        view: Json,
+        fonts: FontSet,
+        *,
+        photo: str | None,
+        url_for: Callable[[str], str] = identity_url,
+        anchored: bool = False,
+    ) -> None:
         """
         Args:
             photo: Nom du fichier de la photo joint à la requête, ou `None`.
+            url_for: Traduit un nom de fichier (police, pictogramme, photo) en
+                adresse ; par défaut le nom lui-même, pour les fichiers joints.
+            anchored: Écrit `data-chemin` sur chaque texte du CV (atelier).
         """
         self.spec, self.view, self.fonts, self.photo = spec, view, fonts, photo
+        self.url, self.anchored = url_for, anchored
         self.styles: dict[str, Json] = spec["styles"]
         counts: dict[str, int] = {}
         for v in self.styles.values():
@@ -255,7 +364,7 @@ class HtmlRenderer:
     def font_faces(self) -> str:
         """`@font-face` des instances statiques servies (une variable sortirait en Type3)."""
         rules = [
-            f"@font-face{{font-family:'{f.family}';src:url('{f.file_name}');"
+            f"@font-face{{font-family:'{f.family}';src:url('{self.url(f.file_name)}');"
             f"font-weight:{f.weight};font-style:{'italic' if f.italic else 'normal'}}}"
             for f in self.fonts.files
         ]
@@ -271,12 +380,17 @@ class HtmlRenderer:
         width: float,
         align: str = "left",
         extra: str = "",
+        path: str | None = None,
     ) -> str:
         """Un bloc de texte positionné (ouvert : l'appelant ajoute puces et ornements puis ferme)."""
         return (
-            f'<div class="t s-{key.replace(".", "-")}" style="margin-top:calc({margin:.2f}mm*var(--k));'
+            f'<div class="t s-{key.replace(".", "-")}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
             f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}">{esc(value)}'
         )
+
+    def anchor(self, path: str | None) -> str:
+        """`data-chemin` en mode ancré, rien sinon."""
+        return anchor(path) if self.anchored else ""
 
     def section(  # noqa: PLR0912, PLR0915 - le gabarit d'une rubrique, dans l'ordre du modèle
         self, s: Json, sec: Json, col_w: float
@@ -307,7 +421,7 @@ class HtmlRenderer:
             gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
             if i and kind in LIST_KINDS and gap < 1.0:
                 gap = s["first_gap_mm"]  # deux catégories de liste : l'écart titre → liste
-            rows: list[tuple[Json, list[tuple[str, str]], float]] = []
+            rows: list[tuple[Json, list[tuple[str, str, str | None]], float]] = []
             for key in order:
                 sl = slots[key]
                 roles = sl["roles"]
@@ -321,10 +435,18 @@ class HtmlRenderer:
                             else sl["margin_top_mm"]
                         )
                         rows.append(
-                            (sl, [(roles[0], v)], sl["margin_top_mm"] if j == 0 else repeat)
+                            (
+                                sl,
+                                [(roles[0], v, item_path(sec, i, roles[0], j))],
+                                sl["margin_top_mm"] if j == 0 else repeat,
+                            )
                         )
                 else:
-                    pairs = [(r, v) for r in roles if isinstance(v := item.get(r), str) and v]
+                    pairs = [
+                        (r, v, item_path(sec, i, r))
+                        for r in roles
+                        if isinstance(v := item.get(r), str) and v
+                    ]
                     if pairs:
                         rows.append((sl, pairs, sl["margin_top_mm"]))
             if not rows:
@@ -357,7 +479,7 @@ class HtmlRenderer:
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
                 width = col_w - sl["dx_mm"]
                 if len(vals) == 1:
-                    role, v = vals[0]
+                    role, v, path = vals[0]
                     out.append(
                         self.text(
                             key0,
@@ -367,6 +489,7 @@ class HtmlRenderer:
                             width=width,
                             align=sl["align"],
                             extra=";white-space:nowrap" if role == "item_dates" else "",
+                            path=path,
                         )
                         + self.marker(s, role, st0)
                         + self.icon(s, kind, role, st0)
@@ -377,7 +500,7 @@ class HtmlRenderer:
                     # Une pastille de frise peut marquer un champ d'une ligne
                     # composée (« Poste | 2016 ») : elle se pose dans cette ligne.
                     ornament = "".join(
-                        self.row_ornament(row_decor, done_roles, role, sl) for role, _ in vals
+                        self.row_ornament(row_decor, done_roles, role, sl) for role, _, _ in vals
                     )
                     row = self.joined_row(kind, sl, vals, margin=margin_row, width=width, st0=st0)
                     out.append(row[: -len("</div>")] + ornament + "</div>")
@@ -421,7 +544,7 @@ class HtmlRenderer:
             return ""
         ic = s["icons"][role]
         return (
-            f'<img src="{ic["file"]}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
+            f'<img src="{esc(self.url(ic["file"]))}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
             f'top:{ic["dy_mm"] + half(st):.2f}mm;width:{ic["w_mm"]}mm;height:{ic["h_mm"]}mm">'
         )
 
@@ -443,7 +566,7 @@ class HtmlRenderer:
         self,
         kind: str,
         sl: Json,
-        vals: list[tuple[str, str]],
+        vals: list[tuple[str, str, str | None]],
         *,
         margin: float,
         width: float,
@@ -453,7 +576,7 @@ class HtmlRenderer:
         gapx = sl["gap_mm"] or 3.0
         sep = sl.get("separator")
         parts = []
-        for n, (role, v) in enumerate(vals):
+        for n, (role, v, path) in enumerate(vals):
             if n:
                 if sep:
                     parts.append(
@@ -464,7 +587,7 @@ class HtmlRenderer:
                 else:
                     parts.append(f'<span style="display:inline-block;width:{gapx:.2f}mm"></span>')
             parts.append(
-                f'<span class="s-{style_key(self.styles, kind, role).replace(".", "-")}">{esc(v)}</span>'
+                f'<span class="s-{style_key(self.styles, kind, role).replace(".", "-")}"{self.anchor(path)}>{esc(v)}</span>'
             )
         return (
             f'<div class="t" style="margin-top:calc({margin:.2f}mm*var(--k));margin-left:{sl["dx_mm"]:.2f}mm;'
@@ -523,14 +646,14 @@ class HtmlRenderer:
             if e.get("icon"):
                 ic = e["icon"]
                 icon = (
-                    f'<img src="{ic["file"]}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
+                    f'<img src="{esc(self.url(ic["file"]))}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
                     f'top:{ic["dy_mm"] + half(st):.2f}mm;width:{ic["w_mm"]}mm;height:{ic["h_mm"]}mm">'
                 )
             left = f"left:{e['x_mm']}mm"
             if e.get("align") == "center":
                 left = f"left:{e['cx_mm']}mm;transform:translateX(-50%)"
             out.append(
-                f'<div class="s-{e["style"].replace(".", "-")}" style="position:absolute;{left};'
+                f'<div class="s-{e["style"].replace(".", "-")}"{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
                 f'top:{e["y_mm"] - half(st):.2f}mm;white-space:nowrap{fit_css}">{esc(val)}{icon}</div>'
             )
         p = h.get("photo")
@@ -540,7 +663,7 @@ class HtmlRenderer:
             out.append(
                 f'<div style="position:absolute;left:{p["x_mm"]}mm;top:{p["y_mm"]}mm;width:{p["w_mm"]}mm;'
                 f'height:{p["h_mm"]}mm;border-radius:{radius};overflow:hidden">'
-                f'<img src="{self.photo}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:{pos}"></div>'
+                f'<img src="{esc(self.url(self.photo))}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:{pos}"></div>'
             )
         return "".join(out)
 
@@ -590,25 +713,7 @@ class HtmlRenderer:
             else 0.0
         )
         top = self.spec["first_band_top_mm"] - half(tst) - (first_margin - half(tst))
-        ph = page["height_mm"]
-        limit = ph - max((ph - self.spec["content_bottom_mm"]) * 0.6, 6.0)
-        k_steps = ",".join(str(k) for k in SPACING_STEPS)
-        f_steps = ",".join(str(f) for f in FONT_STEPS)
-        fit = (
-            "<script>document.fonts.ready.then(function(){var r=document.documentElement,"
-            "p=document.querySelector('.page'),mm=96/25.4;"
-            f"var lim={limit:.2f}*mm;"
-            "function b(){var t=p.getBoundingClientRect().top,m=0;document.querySelectorAll('.t').forEach("
-            "function(e){m=Math.max(m,e.getBoundingClientRect().bottom-t)});return m}"
-            f"var K=[{k_steps}],F=[{f_steps}],k=1,f=1,ok=false;"
-            "for(var i=0;i<K.length&&!ok;i++){k=K[i];r.style.setProperty('--k',k);ok=b()<=lim}"
-            "for(var j=1;j<F.length&&!ok;j++){f=F[j];r.style.setProperty('--f',f);ok=b()<=lim}"
-            # Rien ne tient sur une page : la seconde page est assumée, à l'espacement
-            # et au corps naturels, plutôt qu'un CV comprimé **et** débordant.
-            "if(!ok){k=1;f=1;r.style.setProperty('--k',1);r.style.setProperty('--f',1);"
-            "p.style.overflow='visible';p.style.height='auto'}"
-            "document.title='fit k='+k+' f='+f+' pages='+(ok?1:2);window.fitDone=true});</script>"
-        )
+        fit = fit_script(self.spec, live=self.anchored)
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'

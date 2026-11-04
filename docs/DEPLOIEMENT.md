@@ -331,3 +331,33 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
   `adaptation: faite` (journal `applications.cv_adapted`) ou `en_cours` puis
   `applications.adapt_deferred` et, côté worker, `applications.cv_adapted`.
 
+
+## Atelier CV, lettres, envoi par e-mail, gabarits (ADR-0029 à 0032 — 2026-11-05)
+
+- **Migration 17** (`lettres_et_envois` : colonnes `kind`, `dossier_id`, `company_name`
+  sur `documents_generated_cvs`, table `documents_sends`) : `aerich upgrade` dans un
+  conteneur ponctuel, **avant** le code (sans les colonnes, tout export répond 500).
+- **Bucket public `assets`** (`karria-production-assets`) : `python -m scripts.storage_provision`
+  (idempotent). Y vont les copies publiques des polices libres (posées à la première
+  demande de rendu) et la marque des e-mails.
+- **Mot-logos des e-mails** : depuis un conteneur ponctuel avec le dossier monté,
+  `python -m scripts.assets brand /in` (attend `karria-mot-logo-clair.png` et
+  `karria-mot-logo-sombre.png`, ceux de `karria_app/src/assets/branding`). Tant qu'ils
+  n'y sont pas, l'en-tête des e-mails n'affiche que le mot « Karria ».
+- **Worker** : le travail `documents.send_documents` est inscrit par `register_tasks` ;
+  aucune variable nouvelle. Il lit le bucket `documents` et parle SMTP (`MAIL__*`).
+- **Vérifier** : `/health/ready` 200 ; `POST /api/v1/documents/{id}/render?sample=true`
+  avec une session → 200 et un `html` dont les polices pointent
+  `https://storage.karria.fr/karria-production-assets/fonts/…`.
+
+## Version minimale de l'app (module `app` — 2026-11-05)
+
+- Variables (API seulement), toutes facultatives, **neutres par défaut** :
+  `APP_RELEASE__IOS_MINIMUM_BUILD=0`, `APP_RELEASE__IOS_LATEST_BUILD=0`,
+  `APP_RELEASE__IOS_STORE_URL=`, `APP_RELEASE__ANDROID_MINIMUM_BUILD=0`,
+  `APP_RELEASE__ANDROID_LATEST_BUILD=0`, `APP_RELEASE__ANDROID_STORE_URL=`.
+  `MINIMUM_BUILD` force la mise à jour (`update_required`) en dessous ; `LATEST_BUILD`
+  la propose (`update_available`). Ne poser un minimum qu'avec une fiche de magasin
+  (`STORE_URL`) : sinon l'app bloque sans issue.
+- **Vérifier** : `GET https://api.karria.fr/api/v1/app/release?platform=ios&build=1` →
+  `{"status":"ok",…}` sans session.

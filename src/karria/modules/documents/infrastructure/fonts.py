@@ -494,6 +494,8 @@ class FontCatalogue:
 #: n'est pas gardé, pour qu'une ingestion ultérieure soit vue.
 _SHARED_RECORDS: dict[str, FamilyRecord | None] = {}
 _SHARED_FILES: dict[str, bytes] = {}
+#: Les polices déjà copiées dans le bucket public (clés), par processus.
+_SHARED_PUBLISHED: set[str] = set()
 
 
 class FontLibrary:
@@ -512,6 +514,7 @@ class FontLibrary:
         self._catalogue = catalogue or FontCatalogue()
         self._records: dict[str, FamilyRecord | None] = _SHARED_RECORDS if shared_cache else {}
         self._files: dict[str, bytes] = _SHARED_FILES if shared_cache else {}
+        self._published: set[str] = _SHARED_PUBLISHED if shared_cache else set()
 
     def _record_key(self, key: str) -> str:
         return f"{self.PREFIX}/{key}/family.json"
@@ -597,6 +600,24 @@ class FontLibrary:
         return FontFile(
             family=record.family, weight=weight_served, italic=wanted_italic, data=self._files[key]
         )
+
+    async def public_url(self, file: FontFile) -> str:
+        """L'adresse publique et stable d'une police servie (ADR-0029 § 3).
+
+        La bibliothèque vit dans le bucket privé `templates` ; l'atelier de
+        l'app a besoin d'une adresse que la WebView met en cache, donc qui ne
+        change pas à chaque rendu — une URL signée change. L'instance est
+        copiée **une fois** dans le bucket public `assets`
+        (`fonts/<fichier>`) ; les polices servies sont libres (OFL, Apache,
+        CC0), et une copie publique n'en dévoile rien.
+        """
+        key = f"fonts/{file.file_name}"
+        if key not in self._published:
+            if not await self._storage.exists(Bucket.ASSETS, key):
+                await self._storage.put(Bucket.ASSETS, key, file.data, content_type="font/ttf")
+                logger.info("documents.font_published", key=key)
+            self._published.add(key)
+        return self._storage.public_url(Bucket.ASSETS, key)
 
     async def candidates(self) -> list[LibraryFamily]:
         """Les familles de substitution, avec leurs métriques."""

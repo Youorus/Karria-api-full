@@ -83,6 +83,7 @@ TABLES_TO_TRUNCATE: Final[tuple[str, ...]] = (
     "documents_user_templates",
     "documents_selections",
     "documents_generated_cvs",
+    "documents_sends",
     "payments_accounts",
     "payments_purchases",
     "payments_webhook_events",

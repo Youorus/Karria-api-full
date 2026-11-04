@@ -4,36 +4,48 @@ Chaque port a sa fonction fournisseur : un test la remplace par
 `app.dependency_overrides` (dépôts en mémoire, moteur factice). `get_cv_source`
 **refuse** par défaut : `bootstrap/wiring.py` le branche sur le module `cv`
 (règle 4) ; oublié, tout rendu répond `cv_missing` plutôt que de lire ailleurs.
+De même `get_account_directory` (l'adresse du compte pour `to: null`,
+ADR-0031) ne connaît personne tant qu'`identity` n'est pas branché.
 """
 
 from __future__ import annotations
 
 import hmac
+from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Header
 
 from karria.modules.documents.application import (
+    AccountDirectory,
     AcquireFreeTemplate,
     AtsExplainer,
     CvSnapshot,
     CvSource,
     DeleteGeneratedCv,
+    DeliverDocuments,
     DocumentEngine,
+    DocumentMailer,
     ExplainAts,
     ExportCv,
+    ExportLetter,
     GeneratedCvRepository,
     GetGeneratedCv,
     GetSelection,
+    GetSend,
     GetTemplate,
     IngestTemplateVersion,
     ListGeneratedCvs,
     ListOwnedTemplates,
     ListTemplates,
+    LogoFetcher,
     PreviewTemplate,
     RecordTemplateView,
+    RenderDocument,
     SelectTemplate,
+    SendDocuments,
+    SendRepository,
     SubmitTemplate,
     TemplateJobs,
     TemplateRepository,
@@ -42,23 +54,31 @@ from karria.modules.documents.application import (
 )
 from karria.modules.documents.application.use_cases import CvRenderer
 from karria.modules.documents.application.use_cases import ForgetUser as ForgetDocuments
-from karria.modules.documents.domain import GUEST_RATE_LIMIT, GUEST_RATE_WINDOW_SECONDS
+from karria.modules.documents.domain import (
+    GUEST_RATE_LIMIT,
+    GUEST_RATE_WINDOW_SECONDS,
+    RENDER_RATE_LIMIT,
+    RENDER_RATE_WINDOW_SECONDS,
+)
 from karria.modules.documents.infrastructure import (
     FontLibrary,
     GotenbergClient,
     KarriaDocumentEngine,
     LlmAtsExplainer,
+    MailDocumentMailer,
     ProcrastinateTemplateJobs,
+    StorageLogoFetcher,
     TortoiseGeneratedCvRepository,
+    TortoiseSendRepository,
     TortoiseTemplateRepository,
     TortoiseUserTemplateRepository,
     VisionLineLabeler,
 )
-from karria.shared.auth import Principal, allow_anonymous
+from karria.shared.auth import CurrentPrincipalDep, Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import Settings, get_settings
 from karria.shared.database import TortoiseUnitOfWork
-from karria.shared.errors.exceptions import AuthenticationError
+from karria.shared.errors.exceptions import AuthenticationError, RateLimitedError
 from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import (
     LanguageModelDep,
@@ -67,8 +87,12 @@ from karria.shared.http.dependencies import (
     get_queue_app,
 )
 from karria.shared.llm import build_language_model
+from karria.shared.logging import get_logger
+from karria.shared.mail import Mailer, build_mailer
 from karria.shared.queue import App as QueueApp
 from karria.shared.storage import ObjectStorage
+
+logger = get_logger(__name__)
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
@@ -78,6 +102,15 @@ class NoCvSource:
 
     async def snapshot(self, user_id: UUID) -> CvSnapshot | None:
         del user_id
+        return None
+
+
+class NoAccountDirectory:
+    """Le refus par défaut : sans branchement, aucune adresse de compte (`account_email_unknown`)."""
+
+    async def email_of(self, user_id: UUID) -> str | None:
+        del user_id
+        logger.warning("documents.account_directory_unwired")
         return None
 
 
@@ -98,6 +131,26 @@ GuestPrincipalDep = Annotated[
     Principal | None, Depends(allow_anonymous(_guest_limiter, scope="documents"))
 ]
 
+#: Le compteur des rendus de l'atelier, par compte (ADR-0029 § 5).
+_render_limiter = SlidingWindowLimiter(
+    max_hits=RENDER_RATE_LIMIT, window_seconds=RENDER_RATE_WINDOW_SECONDS
+)
+
+
+def throttle_render(principal: CurrentPrincipalDep) -> Principal:
+    """Un rendu de plus pour ce compte, ou `429 render_rate_limited`."""
+    retry_after = _render_limiter.hit(f"render|{principal.subject_id}")
+    if retry_after is not None:
+        raise RateLimitedError(
+            "Trop de rendus d'affilée. Réessaie dans un instant.",
+            retry_after=retry_after,
+            details={"reason": "render_rate_limited"},
+        )
+    return principal
+
+
+RenderPrincipalDep = Annotated[Principal, Depends(throttle_render)]
+
 
 def get_template_repository() -> TemplateRepository:
     return TortoiseTemplateRepository()
@@ -113,6 +166,32 @@ def get_generated_cv_repository() -> GeneratedCvRepository:
 
 def get_cv_source() -> CvSource:
     return NoCvSource()
+
+
+def get_account_directory() -> AccountDirectory:
+    return NoAccountDirectory()
+
+
+def get_send_repository() -> SendRepository:
+    return TortoiseSendRepository()
+
+
+def get_logo_fetcher(settings: SettingsDep) -> LogoFetcher:
+    """Les logos ne se lisent que sur l'hôte public du stockage (ADR-0030 § 3)."""
+    return StorageLogoFetcher(settings.storage.public_endpoint_url)
+
+
+@lru_cache(maxsize=1)
+def _mailer_for(provider: str, host: str, sender: str) -> Mailer:
+    """Mémorise l'adaptateur d'envoi ; les arguments ne servent qu'à la clé."""
+    _ = (provider, host, sender)
+    return build_mailer(get_settings().mail)
+
+
+def get_document_mailer(settings: SettingsDep) -> DocumentMailer:
+    return MailDocumentMailer(
+        _mailer_for(settings.mail.provider.value, settings.mail.host, settings.mail.sender)
+    )
 
 
 def build_engine(settings: Settings, storage: ObjectStorage) -> DocumentEngine:
@@ -140,6 +219,9 @@ GeneratedDep = Annotated[GeneratedCvRepository, Depends(get_generated_cv_reposit
 CvSourceDep = Annotated[CvSource, Depends(get_cv_source)]
 EngineDep = Annotated[DocumentEngine, Depends(get_engine)]
 JobsDep = Annotated[TemplateJobs, Depends(get_jobs)]
+SendsDep = Annotated[SendRepository, Depends(get_send_repository)]
+AccountsDep = Annotated[AccountDirectory, Depends(get_account_directory)]
+LogosDep = Annotated[LogoFetcher, Depends(get_logo_fetcher)]
 
 
 def require_admin(
@@ -236,6 +318,66 @@ def get_list_generated(generated: GeneratedDep) -> ListGeneratedCvs:
     return ListGeneratedCvs(generated)
 
 
+def get_render_document(
+    *,
+    templates: TemplatesDep,
+    owned: OwnedDep,
+    cvs: CvSourceDep,
+    engine: EngineDep,
+    storage: ObjectStorageDep,
+    logos: LogosDep,
+    clock: ClockDep,
+) -> RenderDocument:
+    """Le rendu HTML de l'atelier (ADR-0029) — aussi la façade d'un autre module."""
+    return RenderDocument(
+        templates=templates,
+        owned=owned,
+        cvs=cvs,
+        engine=engine,
+        storage=storage,
+        logos=logos,
+        clock=clock,
+    )
+
+
+def get_export_letter(
+    *,
+    templates: TemplatesDep,
+    owned: OwnedDep,
+    generated: GeneratedDep,
+    engine: EngineDep,
+    storage: ObjectStorageDep,
+    logos: LogosDep,
+    clock: ClockDep,
+) -> ExportLetter:
+    return ExportLetter(
+        templates=templates,
+        owned=owned,
+        generated=generated,
+        engine=engine,
+        storage=storage,
+        logos=logos,
+        clock=clock,
+    )
+
+
+def get_send_documents(
+    *,
+    generated: GeneratedDep,
+    sends: SendsDep,
+    accounts: AccountsDep,
+    jobs: JobsDep,
+    clock: ClockDep,
+) -> SendDocuments:
+    return SendDocuments(
+        generated=generated, sends=sends, accounts=accounts, jobs=jobs, clock=clock
+    )
+
+
+def get_get_send(sends: SendsDep) -> GetSend:
+    return GetSend(sends)
+
+
 def get_get_generated(generated: GeneratedDep) -> GetGeneratedCv:
     return GetGeneratedCv(generated)
 
@@ -284,4 +426,40 @@ def build_explain_ats(settings: Settings) -> ExplainAts:
 
 def build_forget_user(storage: ObjectStorage) -> ForgetDocuments:
     """L'oubli d'un compte supprimé, branché sur `AccountDeleted` par `bootstrap/wiring.py`."""
-    return ForgetDocuments(get_generated_cv_repository(), get_user_template_repository(), storage)
+    return ForgetDocuments(
+        get_generated_cv_repository(),
+        get_user_template_repository(),
+        storage,
+        get_send_repository(),
+    )
+
+
+def build_deliver_documents(settings: Settings, storage: ObjectStorage) -> DeliverDocuments:
+    """La remise d'un envoi, pour le travail `documents.send_documents` (ADR-0031)."""
+    return DeliverDocuments(
+        sends=get_send_repository(),
+        generated=get_generated_cv_repository(),
+        storage=storage,
+        mailer=MailDocumentMailer(build_mailer(settings.mail)),
+        clock=get_clock(),
+    )
+
+
+def build_render_document(
+    settings: Settings, storage: ObjectStorage, *, cvs: CvSource | None = None
+) -> RenderDocument:
+    """Le rendu HTML de l'atelier, hors requête — la façade pour un autre module (règle 4).
+
+    `cvs` est la source de CV que `bootstrap` fournit (celle de `cv`) ; sans
+    elle, la photo de la personne n'est jamais posée (`photo_missing`), rien
+    d'autre ne change : le CV à rendre arrive **en données**.
+    """
+    return RenderDocument(
+        templates=get_template_repository(),
+        owned=get_user_template_repository(),
+        cvs=cvs or NoCvSource(),
+        engine=build_engine(settings, storage),
+        storage=storage,
+        logos=StorageLogoFetcher(settings.storage.public_endpoint_url),
+        clock=get_clock(),
+    )
