@@ -196,16 +196,22 @@ sert `/opt/karria/models/e5-base-int8`, produit par
   le tableau de bord), `PAYMENTS__PORTAL_CONFIGURATION` (facultatif : la
   configuration du portail client propre à Karria, `bpc_…`, voir ci-dessous).
   `APP__PUBLIC_URL=https://api.karria.fr` compose la page de retour (déjà posée).
-- **Compte Stripe : celui de Karria, pas celui de Zoumani** (Marc, 2026-11-04 :
-  partage envisagé puis écarté le même jour ; les clés de Zoumani ont été
-  retirées du serveur, rien n'a été créé chez Stripe). Le code reste prêt pour
-  l'un ou l'autre : `PAYMENTS__PORTAL_CONFIGURATION` (facultatif) désigne une
-  configuration du portail client si le compte en a plusieurs ; le **libellé
-  de relevé bancaire** `KARRIA` part en suffixe sur chaque paiement unique par
-  carte (le relevé dit « <libellé court du compte>* KARRIA ») et en
+- **Compte Stripe partagé avec Zoumani** (même entité juridique ; décision
+  finale de Marc du 2026-11-04, après un aller-retour). Ce qui sépare Karria
+  de Zoumani dans le tableau de bord, tout dans le code : chaque objet créé
+  par Karria porte la métadonnée **`app=karria`** (sessions Checkout,
+  PaymentIntents, abonnements, clients — avec `description: Karria` —,
+  produits et prix) : dans Stripe, filtrer Paiements / Clients / Abonnements
+  par métadonnée `app` = `karria` ; les produits et prix de Karria portent les
+  **`lookup_key` `karria_*`** ; le **portail client** de Karria est une
+  configuration à part (`PAYMENTS__PORTAL_CONFIGURATION=bpc_1UY508RLc3H57Exq7MtO9HGj`,
+  identifiant public passé en `configuration` à chaque session de portail ;
+  vide, c'est la configuration par défaut du compte — celle de Zoumani — qui
+  s'ouvre) ; le **libellé de relevé bancaire** est `KARRIA` : en suffixe sur
+  chaque paiement unique par carte (Stripe n'admet pas d'autre forme pour la
+  carte : le relevé dit « <libellé court du compte>* KARRIA ») et en
   `statement_descriptor` sur chaque **produit** créé par le code, ce que Stripe
-  prend pour tous les renouvellements d'abonnement ; les prix et produits se
-  reconnaissent à leurs `lookup_key` `karria_*`.
+  prend pour tous les renouvellements d'abonnement.
 - **Version d'API.** Le point de terminaison de Marc est épinglé à
   `2026-09-30.endive` ; le SDK `stripe` 16.0.0 installé épingle **la même**
   (`stripe.api_version`), et l'adaptateur lit les formes de cette version

@@ -27,6 +27,8 @@ Aucun type `stripe.*` : les méthodes rendent des objets du domaine ou de
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any, Final
 from uuid import UUID
@@ -70,6 +72,19 @@ APP_TAG: Final[dict[str, str]] = {"app": "karria"}
 def _tagged(metadata: dict[str, str] | None = None) -> dict[str, str]:
     """Les métadonnées données, plus l'étiquette de l'application."""
     return {**(metadata or {}), **APP_TAG}
+
+
+def idempotency_key(prefix: str, params: dict[str, Any]) -> str:
+    """Une clé d'idempotence qui dépend **aussi** des paramètres.
+
+    Stripe garde 24 h la première requête faite sous une clé et refuse la même
+    clé avec d'autres paramètres (`idempotency_error`). Une clé fixe par
+    personne bloquait donc toute correction pendant un jour (constaté en
+    production le 2026-11-04 : l'adresse corrigée, le client restait
+    increable). Deux appuis identiques partagent toujours la même clé.
+    """
+    digest = hashlib.sha256(json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()
+    return f"{prefix}:{digest[:16]}"
 
 
 #: Les notifications traitées. Tout le reste s'acquitte sans effet.
@@ -276,7 +291,7 @@ class StripeGateway:
             "create_customer",
             self._client.v1.customers.create,
             params,
-            options={"idempotency_key": f"karria-customer:{user_id}"},
+            options={"idempotency_key": idempotency_key(f"karria-customer:{user_id}", params)},
         )
         logger.info("payments.customer_created", user_id=str(user_id))
         return str(customer.id)
@@ -314,7 +329,9 @@ class StripeGateway:
                 "create_price",
                 self._client.v1.prices.create,
                 params,
-                options={"idempotency_key": f"karria-price:{spec.lookup_key}:{spec.amount_cents}"},
+                options={
+                    "idempotency_key": idempotency_key(f"karria-price:{spec.lookup_key}", params)
+                },
             )
             price_id = str(created.id)
             logger.info(

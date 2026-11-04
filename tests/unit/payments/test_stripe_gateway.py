@@ -24,6 +24,7 @@ from karria.modules.payments.domain import (
 )
 from karria.modules.payments.infrastructure.stripe_gateway import (
     StripeGateway,
+    idempotency_key,
     translate_checkout,
     translate_event,
     translate_subscription,
@@ -106,7 +107,10 @@ class TestClient:
             "description": "Karria",
             "email": "toi@exemple.fr",
         }
-        assert options == {"options": {"idempotency_key": f"karria-customer:{user}"}}
+        # La clé dépend des paramètres : une correction n'est pas bloquée 24 h par Stripe.
+        key = options["options"]["idempotency_key"]
+        assert key == idempotency_key(f"karria-customer:{user}", params)
+        assert key != idempotency_key(f"karria-customer:{user}", {**params, "email": "autre@x.fr"})
 
     async def test_sans_adresse_le_client_nait_quand_meme(self) -> None:
         client = FakeStripeClient()
@@ -170,7 +174,9 @@ class TestPrices:
             },
             "metadata": {"lookup_key": "karria_coffee_2", "app": "karria"},
         }
-        assert options == {"options": {"idempotency_key": "karria-price:karria_coffee_2:499"}}
+        assert options["options"]["idempotency_key"] == idempotency_key(
+            "karria-price:karria_coffee_2", params
+        )
 
     async def test_un_prix_au_mauvais_montant_est_remplace(self) -> None:
         client = FakeStripeClient()
