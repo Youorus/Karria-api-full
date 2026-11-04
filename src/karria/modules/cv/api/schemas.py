@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from karria.modules.cv.application import ImportResult
 from karria.modules.cv.domain import (
+    SUGGESTION_LIMIT,
     Chapter,
     ChapterStatus,
     Contact,
@@ -248,3 +249,14 @@ class PhotoRead(BaseModel):
             image_url=await storage.presigned_get_url(Bucket.MEDIA, photo.image_key),
             enhanced=photo.enhanced,
         )
+
+
+class SuggestionsRead(BaseModel):
+    """Les valeurs proposées pour une saisie, dans l'ordre à afficher."""
+
+    items: list[str] = Field(
+        description=(
+            f"Au plus {SUGGESTION_LIMIT} libellés, du plus pertinent au moins pertinent. "
+            "Vide si rien ne correspond : la saisie libre reste possible."
+        )
+    )

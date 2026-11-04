@@ -90,6 +90,7 @@ from karria.modules.offers.infrastructure import (
     TortoiseKarriaMemoryRepository,
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
+    TortoiseOfferVocabulary,
     TortoiseScrapeTargetRepository,
     build_transport,
     collection_name,
@@ -617,6 +618,15 @@ def build_sync_index(settings: Settings, notifier: UserNotifier | None) -> SyncI
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
     )
+
+
+def build_offer_vocabulary() -> TortoiseOfferVocabulary:
+    """Les intitulés, entreprises et villes distincts, pour les suggestions du CV.
+
+    Rendu à `bootstrap/worker.py`, qui le passe au module `cv` comme son
+    port `OfferVocabulary` (règle 4) : `cv` ne lit jamais `offers_offers`.
+    """
+    return TortoiseOfferVocabulary()
 
 
 def build_expire_offers() -> ExpireOffers:

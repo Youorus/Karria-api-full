@@ -27,9 +27,13 @@ from karria.modules.cv.application import (
     GetMyCv,
     ImportCv,
     InterpretAnswer,
+    OfferVocabulary,
     OpenDraft,
     PhotoRepository,
     PortraitEnhancer,
+    RefreshSuggestions,
+    SuggestCompletions,
+    SuggestionIndex,
     TranscribeVoice,
     UpdateCvChapter,
     UploadInspector,
@@ -45,6 +49,7 @@ from karria.modules.cv.infrastructure import (
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
+    TortoiseSuggestionIndex,
 )
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.http.dependencies import (
@@ -234,3 +239,30 @@ UploadPhotoDep = Annotated[UploadPhoto, Depends(get_upload_photo)]
 ImportCvDep = Annotated[ImportCv, Depends(get_import_cv)]
 UpdateCvChapterDep = Annotated[UpdateCvChapter, Depends(get_update_cv_chapter)]
 DraftPresenterDep = Annotated[DraftPresenter, Depends(get_draft_presenter)]
+
+
+# --- Suggestions à la saisie ---------------------------------------------
+
+
+def get_suggestion_index() -> SuggestionIndex:
+    """Le vocabulaire matérialisé, dans PostgreSQL."""
+    return TortoiseSuggestionIndex()
+
+
+SuggestionIndexDep = Annotated[SuggestionIndex, Depends(get_suggestion_index)]
+
+
+def get_suggest_completions(index: SuggestionIndexDep) -> SuggestCompletions:
+    return SuggestCompletions(index)
+
+
+SuggestCompletionsDep = Annotated[SuggestCompletions, Depends(get_suggest_completions)]
+
+
+def build_refresh_suggestions(vocabulary: OfferVocabulary) -> RefreshSuggestions:
+    """Assemble la matérialisation **hors requête**, pour le worker et la commande.
+
+    Le vocabulaire est celui d'un autre module : `bootstrap/worker.py` le
+    passe (règle 4), le module ne sait pas d'où il vient.
+    """
+    return RefreshSuggestions(vocabulary, get_suggestion_index())

@@ -9,6 +9,9 @@ Deux familles :
   pour quatre besoins, même si un seul fournisseur les sert aujourd'hui :
   remplacer l'un n'oblige pas à toucher les autres, et chaque doublure de
   test tient en quelques lignes.
+- **Suggestions à la saisie** — le vocabulaire matérialisé (`SuggestionIndex`)
+  et ce que l'index d'offres connaît (`OfferVocabulary`, rempli par un
+  autre module, branché par `bootstrap`).
 
 Ce que les ports d'IA **rendent** est une donnée brute, pas une décision :
 le cas d'usage la valide contre le schéma du chapitre avant d'en faire
@@ -29,6 +32,8 @@ from karria.modules.cv.domain import (
     CvPhoto,
     DocumentInfo,
     Draft,
+    SuggestionKind,
+    VocabularyEntry,
 )
 
 # ---------------------------------------------------------------------
@@ -197,4 +202,40 @@ class CvDocumentExtractor(Protocol):
             ModelUnavailableError: Le modèle est injoignable ou refuse.
             ModelOutputInvalidError: La réponse ne respecte pas le schéma imposé.
         """
+        ...
+
+
+# ---------------------------------------------------------------------
+# Suggestions à la saisie
+# ---------------------------------------------------------------------
+
+
+class SuggestionIndex(Protocol):
+    """Le vocabulaire matérialisé (intitulés, entreprises, villes), prêt à être cherché.
+
+    Une table remplie par le worker, lue par la route : `replace` remplace
+    tout le vocabulaire d'une famille d'un bloc, `search` rend les libellés
+    dont la clé pliée commence par la saisie, ou dont un mot commence par
+    elle, classés comme `domain/suggestions.py` le définit.
+    """
+
+    async def search(self, kind: SuggestionKind, folded_query: str, *, limit: int) -> list[str]:
+        """Les libellés à proposer, dans l'ordre, `limit` au plus."""
+        ...
+
+    async def replace(self, kind: SuggestionKind, entries: Sequence[VocabularyEntry]) -> int:
+        """Remplace le vocabulaire de la famille ; rend le nombre d'entrées écrites."""
+        ...
+
+
+class OfferVocabulary(Protocol):
+    """Ce que l'index d'offres connaît : les intitulés, entreprises et villes distincts.
+
+    **Branché par `bootstrap`** sur le module `offers` (règle 4) : `cv` ne
+    lit jamais ses tables. Rend des paires brutes (libellé, occurrences),
+    que le domaine nettoie — l'index n'a pas à connaître les règles d'un CV.
+    """
+
+    async def distinct(self, kind: SuggestionKind) -> list[tuple[str, int]]:
+        """Les libellés distincts des offres actives, avec leur nombre d'occurrences."""
         ...

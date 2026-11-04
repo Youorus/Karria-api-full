@@ -1,0 +1,340 @@
+# Diplômes et formations courants en France — une valeur par ligne, du plus
+# courant au plus rare. L'ordre fait le poids. `#` commente.
+Baccalauréat
+Baccalauréat général
+Baccalauréat professionnel
+Baccalauréat technologique
+Bac général
+Bac professionnel
+Bac technologique
+Bac pro Commerce
+Bac pro Vente
+Bac pro Métiers du commerce et de la vente
+Bac pro Accueil
+Bac pro Gestion-Administration
+Bac pro Logistique
+Bac pro Cuisine
+Bac pro Maintenance des véhicules
+Bac pro Électrotechnique
+Bac pro ASSP (Accompagnement, soins et services à la personne)
+Bac pro Systèmes numériques
+Bac STMG
+Bac STI2D
+Bac ST2S
+Bac STL
+Bac ES
+Bac L
+Bac S
+Brevet des collèges
+Brevet professionnel
+CAP
+CAP Cuisine
+CAP Pâtissier
+CAP Boulanger
+CAP Coiffure
+CAP Esthétique
+CAP Petite enfance
+CAP Accompagnant éducatif petite enfance
+CAP Vente
+CAP Équipier polyvalent du commerce
+CAP Électricien
+CAP Maintenance des véhicules
+CAP Menuisier
+CAP Maçon
+CAP Peintre
+CAP Plombier
+CAP Agent de sécurité
+BEP
+BTS
+BTS MCO (Management commercial opérationnel)
+BTS NDRC (Négociation et digitalisation de la relation client)
+BTS Commerce international
+BTS Comptabilité et gestion
+BTS Gestion de la PME
+BTS SAM (Support à l'action managériale)
+BTS SIO (Services informatiques aux organisations)
+BTS SIO option SLAM
+BTS SIO option SISR
+BTS Communication
+BTS Tourisme
+BTS Hôtellerie-restauration
+BTS Diététique
+BTS Assurance
+BTS Banque
+BTS Professions immobilières
+BTS Électrotechnique
+BTS Maintenance des systèmes
+BTS CIEL (Cybersécurité, informatique et réseaux, électronique)
+BTS Bâtiment
+BTS Design graphique
+BTS ESF (Économie sociale familiale)
+BTS SP3S (Services et prestations des secteurs sanitaire et social)
+BTS Opticien-lunetier
+BTS Métiers de l'esthétique
+BTS Métiers de la coiffure
+BTS Logistique et transport
+BTS GTLA (Gestion des transports et logistique associée)
+BTS Assistant de manager
+DUT
+DUT Informatique
+DUT GEA (Gestion des entreprises et des administrations)
+DUT Techniques de commercialisation
+DUT Information-communication
+DUT Carrières sociales
+DUT Génie civil
+DUT Génie électrique et informatique industrielle
+DUT Génie mécanique et productique
+DUT Mesures physiques
+DUT Réseaux et télécommunications
+BUT
+BUT Informatique
+BUT GEA (Gestion des entreprises et des administrations)
+BUT Techniques de commercialisation
+BUT Information-communication
+BUT MMI (Métiers du multimédia et de l'internet)
+BUT Carrières sociales
+BUT Carrières juridiques
+BUT Génie civil
+BUT GEII (Génie électrique et informatique industrielle)
+BUT GMP (Génie mécanique et productique)
+BUT Réseaux et télécommunications
+BUT Science des données
+BUT Chimie
+BUT Mesures physiques
+BUT QLIO (Qualité, logistique industrielle et organisation)
+BUT HSE (Hygiène, sécurité, environnement)
+BUT Gestion logistique et transport
+Licence
+Licence 1
+Licence 2
+Licence 3
+Licence Droit
+Licence Économie
+Licence Économie-Gestion
+Licence Gestion
+Licence AES (Administration économique et sociale)
+Licence Informatique
+Licence Mathématiques
+Licence Physique
+Licence Chimie
+Licence Sciences de la vie
+Licence Biologie
+Licence Psychologie
+Licence Sociologie
+Licence Histoire
+Licence Géographie
+Licence Lettres modernes
+Licence LEA (Langues étrangères appliquées)
+Licence LLCER (Langues, littératures et civilisations étrangères et régionales)
+Licence Sciences de l'éducation
+Licence STAPS
+Licence Information-communication
+Licence Arts
+Licence Philosophie
+Licence Sciences politiques
+Licence MIASHS
+Licence professionnelle
+Licence professionnelle Commerce et distribution
+Licence professionnelle Métiers de l'informatique
+Licence professionnelle Management des organisations
+Licence professionnelle Ressources humaines
+Licence professionnelle Logistique
+Licence professionnelle Marketing digital
+Licence professionnelle E-commerce
+Licence professionnelle Comptabilité
+Licence professionnelle Banque-assurance
+Licence professionnelle Métiers de la communication
+Bachelor
+Bachelor Marketing
+Bachelor Commerce
+Bachelor Communication
+Bachelor Informatique
+Bachelor Ressources humaines
+Bachelor Management
+Bachelor Business
+Bachelor Design
+Bachelor Développement web
+Bachelor Universitaire de Technologie
+Master
+Master 1
+Master 2
+Master Droit
+Master Droit des affaires
+Master Droit social
+Master Droit public
+Master Finance
+Master Comptabilité, contrôle, audit (CCA)
+Master Contrôle de gestion
+Master Management
+Master Management et administration des entreprises (MAE)
+Master Marketing
+Master Marketing digital
+Master Communication
+Master Ressources humaines
+Master Gestion des ressources humaines
+Master Informatique
+Master MIAGE
+Master Data science
+Master Intelligence artificielle
+Master Cybersécurité
+Master Réseaux et télécommunications
+Master Génie logiciel
+Master Mathématiques appliquées
+Master Statistiques
+Master Économie
+Master Économétrie
+Master Sciences politiques
+Master Relations internationales
+Master Affaires publiques
+Master Urbanisme
+Master Psychologie
+Master Psychologie clinique
+Master Sociologie
+Master Histoire
+Master Lettres
+Master MEEF (Métiers de l'enseignement, de l'éducation et de la formation)
+Master Sciences de l'éducation
+Master Biologie
+Master Chimie
+Master Physique
+Master Génie civil
+Master Génie industriel
+Master Logistique
+Master Supply chain
+Master Commerce international
+Master Management de projet
+Master Management de l'innovation
+Master Entrepreneuriat
+Master Tourisme
+Master Journalisme
+Master Traduction
+Master Santé publique
+Master STAPS
+Master Architecture
+Master of Science (MSc)
+Master of Business Administration (MBA)
+MBA
+Mastère spécialisé
+Diplôme d'ingénieur
+Diplôme d'ingénieur généraliste
+Diplôme d'ingénieur en informatique
+Diplôme d'ingénieur en génie civil
+Diplôme d'ingénieur en mécanique
+Diplôme d'ingénieur en électronique
+Diplôme d'ingénieur agronome
+Programme Grande École
+Diplôme d'école de commerce
+Diplôme d'école de commerce (Programme Grande École)
+Doctorat
+Doctorat en informatique
+Doctorat en droit
+Doctorat en sciences
+Doctorat en médecine
+Doctorat en pharmacie
+Diplôme d'État
+Diplôme d'État d'infirmier
+Diplôme d'État d'aide-soignant
+Diplôme d'État d'auxiliaire de puériculture
+Diplôme d'État d'éducateur spécialisé
+Diplôme d'État d'éducateur de jeunes enfants
+Diplôme d'État d'assistant de service social
+Diplôme d'État de moniteur-éducateur
+Diplôme d'État d'accompagnant éducatif et social
+Diplôme d'État d'ambulancier
+Diplôme d'État de masseur-kinésithérapeute
+Diplôme d'État de psychomotricien
+Diplôme d'État d'ergothérapeute
+Diplôme d'État de sage-femme
+Diplôme d'État de docteur en médecine
+Diplôme d'État de docteur en pharmacie
+Diplôme d'État de docteur vétérinaire
+Diplôme d'État d'architecte
+Diplôme d'État de professeur de danse
+Diplôme d'État de la jeunesse, de l'éducation populaire et du sport (DEJEPS)
+Brevet professionnel de la jeunesse, de l'éducation populaire et du sport (BPJEPS)
+BAFA
+BAFD
+Titre professionnel
+Titre professionnel Développeur web et web mobile
+Titre professionnel Concepteur développeur d'applications
+Titre professionnel Technicien supérieur systèmes et réseaux
+Titre professionnel Assistant ressources humaines
+Titre professionnel Secrétaire assistant
+Titre professionnel Secrétaire comptable
+Titre professionnel Comptable assistant
+Titre professionnel Gestionnaire de paie
+Titre professionnel Vendeur conseil en magasin
+Titre professionnel Conseiller de vente
+Titre professionnel Employé commercial en magasin
+Titre professionnel Manager d'unité marchande
+Titre professionnel Négociateur technico-commercial
+Titre professionnel Conseiller relation client à distance
+Titre professionnel Agent de sûreté et de sécurité privée
+Titre professionnel Cuisinier
+Titre professionnel Serveur en restauration
+Titre professionnel Préparateur de commandes
+Titre professionnel Cariste d'entrepôt
+Titre professionnel Conducteur du transport routier de marchandises
+Titre professionnel Technicien de maintenance industrielle
+Titre professionnel Assistant de vie aux familles
+Titre professionnel Formateur professionnel d'adultes
+Titre professionnel Chargé de projet digital
+Titre professionnel Community manager
+Titre professionnel Designer web
+Certificat de qualification professionnelle (CQP)
+DAEU (Diplôme d'accès aux études universitaires)
+DEUG
+DEUST
+DCG (Diplôme de comptabilité et de gestion)
+DSCG (Diplôme supérieur de comptabilité et de gestion)
+DEC (Diplôme d'expertise comptable)
+DU (Diplôme universitaire)
+Capacité en droit
+CAPES
+Agrégation
+Prépa
+Classe préparatoire aux grandes écoles (CPGE)
+Classe préparatoire scientifique (MPSI)
+Classe préparatoire scientifique (PCSI)
+Classe préparatoire scientifique (MP)
+Classe préparatoire scientifique (PC)
+Classe préparatoire scientifique (PSI)
+Classe préparatoire économique et commerciale (ECG)
+Classe préparatoire littéraire (Hypokhâgne)
+Classe préparatoire littéraire (Khâgne)
+Mention complémentaire
+Mise à niveau
+Formation professionnelle
+Formation en alternance
+Formation continue
+Formation certifiante
+Bootcamp Développeur web
+Bootcamp Data
+Permis B
+Permis C
+Permis CE
+Permis D
+CACES
+CACES 1
+CACES 3
+CACES 5
+SST (Sauveteur secouriste du travail)
+PSC1
+Habilitation électrique
+HACCP
+TOEIC
+TOEFL
+IELTS
+Cambridge English
+DELF
+DALF
+Certification Voltaire
+Certificat Google Ads
+Certificat Google Analytics
+Certification AWS Cloud Practitioner
+Certification Microsoft Azure Fundamentals
+Certification Scrum Master (PSM I)
+Certification PMP
+Certification ITIL
+Certification Cisco CCNA
+Certification CompTIA Security+

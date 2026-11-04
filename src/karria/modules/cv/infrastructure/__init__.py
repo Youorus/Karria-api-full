@@ -16,6 +16,7 @@ from karria.modules.cv.infrastructure.repositories import (
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
+    TortoiseSuggestionIndex,
 )
 from karria.modules.cv.infrastructure.transcriber import LlmTranscriber
 
@@ -29,6 +30,7 @@ __all__ = [
     "TortoiseCvRepository",
     "TortoiseDraftRepository",
     "TortoisePhotoRepository",
+    "TortoiseSuggestionIndex",
     "extraction_schema",
     "group_schema",
     "interpretation_schema",

@@ -15,11 +15,29 @@ branché dans `bootstrap/wiring.py`).
 `ForgetUser` et `build_forget_user` sont la réaction à la suppression d'un
 compte : `bootstrap/wiring.py` les abonne à l'événement du module des
 comptes (ADR-0015). Aucun autre module ne les appelle.
+
+`register_tasks`, `run_refresh`, `build_refresh_suggestions` et le port
+`OfferVocabulary` servent les **suggestions à la saisie** (ADR-0028) :
+`bootstrap/worker.py` inscrit le travail nocturne en lui passant le
+vocabulaire de l'index d'offres ; `scripts/suggestions.py` le lance à la
+demande. `SuggestionKind` nomme ce qu'on complète.
 """
 
 from karria.modules.cv.api import router
-from karria.modules.cv.api.dependencies import build_forget_user, get_get_my_cv
-from karria.modules.cv.application import CvFinalized, ForgetOutcome, ForgetUser, GetMyCv
+from karria.modules.cv.api.dependencies import (
+    build_forget_user,
+    build_refresh_suggestions,
+    get_get_my_cv,
+)
+from karria.modules.cv.api.tasks import register_tasks, run_refresh
+from karria.modules.cv.application import (
+    CvFinalized,
+    ForgetOutcome,
+    ForgetUser,
+    GetMyCv,
+    OfferVocabulary,
+    SuggestionRefreshReport,
+)
 from karria.modules.cv.domain import (
     Chapter,
     ChapterStatus,
@@ -34,6 +52,7 @@ from karria.modules.cv.domain import (
     Project,
     Skill,
     SkillLevel,
+    SuggestionKind,
 )
 from karria.shared.module import ModuleDescriptor
 
@@ -62,9 +81,15 @@ __all__ = [
     "Interest",
     "Language",
     "LanguageLevel",
+    "OfferVocabulary",
     "Project",
     "Skill",
     "SkillLevel",
+    "SuggestionKind",
+    "SuggestionRefreshReport",
     "build_forget_user",
+    "build_refresh_suggestions",
     "get_get_my_cv",
+    "register_tasks",
+    "run_refresh",
 ]

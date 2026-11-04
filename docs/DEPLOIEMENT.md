@@ -284,6 +284,28 @@ le WebSocket `wss://api.karria.fr/api/v1/support/me/stream` passe tel quel.
   ouverture d'un flux, `support.stream_opened`.
 - **Couper d'urgence** la console : vider `SUPPORT__ADMIN_TOKEN` et redéployer.
 
+## Suggestions à la saisie du CV (ADR-0028 — 2026-11-04)
+
+- **Migration 15** (`suggestions_du_cv` : table `cv_suggestions`, index
+  `varchar_pattern_ops`) : `aerich upgrade` dans un conteneur ponctuel, **avant**
+  le code (sans la table, `GET /cv/suggestions?kind=title|company|city` répond
+  500 ; les autres familles n'en dépendent pas).
+- **Première matérialisation** (sinon les trois familles de l'index restent
+  vides jusqu'à 4 h 20) :
+
+  ```sh
+  docker run --rm --network dokploy-network --env-file /root/karria-api.env \
+    karria-worker-y9xkmo:latest python -m scripts.suggestions refresh
+  ```
+
+  Rend `city: n`, `company: n`, `title: n` ; relançable à volonté.
+- **Worker** : `cv.refresh_suggestions`, chaque nuit à 4 h 20, inscrit par
+  `bootstrap/worker.py` avec le vocabulaire d'`offers`. Aucune variable
+  d'environnement nouvelle.
+- **Vérifier** : `/health/ready` 200 ; avec une session,
+  `GET /api/v1/cv/suggestions?kind=city&q=par` → 200 `{"items": ["Paris", …]}` ;
+  `kind=language&q=ang` → `Anglais` même sans matérialisation.
+
 ## Mesure de la recherche en production (relecture du 2026-10-29)
 
 `python -m scripts.offers_eval --runs 2 --judge --only <indices>` dans un

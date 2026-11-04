@@ -10,16 +10,18 @@ import pytest
 
 from karria.bootstrap import worker
 from karria.bootstrap.worker import WORKER_CONCURRENCY, build_worker_app, run_worker
+from karria.modules.cv.api.tasks import TASK_REFRESH_SUGGESTIONS
 from karria.modules.offers.infrastructure.queue import TASK_SYNC_INDEX
 from karria.shared.queue import Status, UniqueViolation
 
 pytestmark = pytest.mark.unit
 
 
-def test_le_worker_connait_les_travaux_d_offers() -> None:
+def test_le_worker_connait_les_travaux_d_offers_et_de_cv() -> None:
     app = build_worker_app()
 
     assert TASK_SYNC_INDEX in app.tasks
+    assert TASK_REFRESH_SUGGESTIONS in app.tasks
 
 
 class FakeApp:

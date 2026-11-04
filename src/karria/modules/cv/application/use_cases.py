@@ -3,7 +3,8 @@
 Chaque classe est une intention du contrat (`docs/contrat-api-cv.md`) :
 lire son CV, ouvrir le brouillon, interpréter une réponse, valider un
 chapitre, finaliser, transcrire, envoyer une photo, importer un CV,
-modifier une section du CV. Les
+modifier une section du CV, suggérer une valeur à la saisie et
+matérialiser le vocabulaire qui les nourrit. Les
 dépendances arrivent par le constructeur ; aucune n'est un adaptateur
 concret, et la suite unitaire les remplace toutes par des doublures.
 """
@@ -26,14 +27,19 @@ from karria.modules.cv.application.ports import (
     CvRepository,
     DraftRepository,
     Interpretation,
+    OfferVocabulary,
     PhotoRepository,
     PortraitEnhancer,
+    SuggestionIndex,
     UploadInspector,
 )
 from karria.modules.cv.domain import (
     CHAPTER_SCHEMAS,
     INTERPRETABLE_CHAPTERS,
+    MATERIALIZED_KINDS,
     MAX_DOCUMENT_PAGES,
+    REFERENCE_KINDS,
+    SUGGESTION_LIMIT,
     Chapter,
     ChapterSubmission,
     ChapterSubmissionError,
@@ -46,13 +52,17 @@ from karria.modules.cv.domain import (
     DraftIncompleteError,
     DraftNotFoundError,
     ReceivedFile,
+    SuggestionKind,
     UnsupportedUploadError,
     check_audio,
     check_audio_size,
     check_audio_type,
     check_document,
     check_documents,
+    clean_vocabulary,
+    normalize_query,
     plain_content_type,
+    suggest_from_reference,
     validate_chapter_payload,
 )
 from karria.shared.clock import Clock
@@ -754,3 +764,66 @@ class ForgetUser:
                 logger.warning("cv.object_delete_failed", bucket=Bucket.MEDIA.value, key=key)
                 failed.add(key)
         return failed
+
+
+# ---------------------------------------------------------------------
+# Suggestions à la saisie
+# ---------------------------------------------------------------------
+
+
+class SuggestCompletions:
+    """Propose des valeurs connues pour ce qu'une personne commence à taper.
+
+    Les familles embarquées (diplômes, écoles, compétences, langues) se
+    cherchent en mémoire, sans base ; les familles matérialisées
+    (intitulés, entreprises, villes) dans la table que le worker remplit.
+    Une saisie vide ne rend rien : on ne liste pas, on complète.
+    """
+
+    def __init__(self, index: SuggestionIndex) -> None:
+        self._index = index
+
+    async def execute(self, kind: SuggestionKind, query: str) -> list[str]:
+        folded = normalize_query(query)
+        if not folded:
+            return []
+        if kind in REFERENCE_KINDS:
+            return suggest_from_reference(kind, folded, limit=SUGGESTION_LIMIT)
+        return await self._index.search(kind, folded, limit=SUGGESTION_LIMIT)
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestionRefreshReport:
+    """Ce qu'une matérialisation a écrit, par famille."""
+
+    written: dict[SuggestionKind, int]
+
+
+class RefreshSuggestions:
+    """Matérialise le vocabulaire de l'index d'offres dans la table des suggestions.
+
+    Un passage par jour suffit : le vocabulaire bouge à l'échelle des
+    collectes, pas des frappes. Chaque famille est remplacée d'un bloc
+    (`SuggestionIndex.replace`), après nettoyage par le domaine. Une
+    famille dont le vocabulaire est **vide** n'est pas remplacée : un
+    index momentanément indisponible ne doit pas effacer ce qu'on servait.
+    """
+
+    def __init__(self, vocabulary: OfferVocabulary, index: SuggestionIndex) -> None:
+        self._vocabulary = vocabulary
+        self._index = index
+
+    async def execute(self) -> SuggestionRefreshReport:
+        written: dict[SuggestionKind, int] = {}
+        for kind in sorted(MATERIALIZED_KINDS):
+            raw = await self._vocabulary.distinct(kind)
+            entries = clean_vocabulary(kind, raw)
+            if not entries:
+                logger.warning("cv.suggestions_empty", kind=kind.value, raw=len(raw))
+                written[kind] = 0
+                continue
+            written[kind] = await self._index.replace(kind, entries)
+            logger.info(
+                "cv.suggestions_refreshed", kind=kind.value, raw=len(raw), written=written[kind]
+            )
+        return SuggestionRefreshReport(written=written)

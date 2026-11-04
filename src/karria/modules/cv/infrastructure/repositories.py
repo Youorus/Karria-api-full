@@ -12,6 +12,9 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
+from tortoise import connections
+from tortoise.transactions import in_transaction
+
 from karria.modules.cv.domain import (
     CHAPTER_ORDER,
     Chapter,
@@ -28,11 +31,14 @@ from karria.modules.cv.domain import (
     Language,
     Project,
     Skill,
+    SuggestionKind,
+    VocabularyEntry,
 )
 from karria.modules.cv.infrastructure.models import (
     CurriculumVitaeModel,
     CvDraftModel,
     CvPhotoModel,
+    CvSuggestionModel,
 )
 
 
@@ -175,3 +181,38 @@ def _photo_from_row(row: CvPhotoModel) -> CvPhoto:
         enhanced=row.enhanced,
         created_at=row.created_at,
     )
+
+
+class TortoiseSuggestionIndex:
+    """Implémente `SuggestionIndex` sur la table `cv_suggestions`.
+
+    La recherche est une requête SQL directe : `LIKE 'q%'` sert l'index
+    `(kind, folded varchar_pattern_ops)` ; `LIKE '% q%'` (début de mot)
+    parcourt la famille, qui tient en quelques dizaines de milliers de
+    lignes — quelques millisecondes. Le classement est celui du domaine
+    (`rank`) : préfixe d'abord, poids, alphabet.
+    """
+
+    async def search(self, kind: SuggestionKind, folded_query: str, *, limit: int) -> list[str]:
+        escaped = folded_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = await connections.get("default").execute_query_dict(
+            "SELECT label FROM cv_suggestions "
+            "WHERE kind = $1 AND (folded LIKE $2 OR folded LIKE $3) "
+            "ORDER BY (folded LIKE $2) DESC, weight DESC, folded ASC LIMIT $4",
+            [kind.value, f"{escaped}%", f"% {escaped}%", int(limit)],
+        )
+        return [str(row["label"]) for row in rows]
+
+    async def replace(self, kind: SuggestionKind, entries: Sequence[VocabularyEntry]) -> int:
+        async with in_transaction():
+            await CvSuggestionModel.filter(kind=kind.value).delete()
+            await CvSuggestionModel.bulk_create(
+                [
+                    CvSuggestionModel(
+                        kind=kind.value, label=e.label, folded=e.folded, weight=e.weight
+                    )
+                    for e in entries
+                ],
+                batch_size=1_000,
+            )
+        return len(entries)

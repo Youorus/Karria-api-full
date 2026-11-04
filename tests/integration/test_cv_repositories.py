@@ -7,11 +7,18 @@ from uuid import uuid4
 import pytest
 
 from doubles import CV_NOW, complete_draft
-from karria.modules.cv.domain import Chapter, CurriculumVitae, CvPhoto
+from karria.modules.cv.domain import (
+    Chapter,
+    CurriculumVitae,
+    CvPhoto,
+    SuggestionKind,
+    VocabularyEntry,
+)
 from karria.modules.cv.infrastructure import (
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
+    TortoiseSuggestionIndex,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("clean_database")]
@@ -87,3 +94,43 @@ class TestPhotos:
         await repository.delete([])
         assert await repository.list_by_user(user) == []
         assert await repository.list_by_user(other) == []
+
+
+def entry(label: str, folded: str, weight: int) -> VocabularyEntry:
+    return VocabularyEntry(label=label, folded=folded, weight=weight)
+
+
+class TestSuggestions:
+    async def test_le_vocabulaire_se_remplace_et_se_cherche_par_prefixe_ou_debut_de_mot(
+        self,
+    ) -> None:
+        index = TortoiseSuggestionIndex()
+        await index.replace(SuggestionKind.CITY, [entry("Ancienne", "ancienne", 1)])
+        written = await index.replace(
+            SuggestionKind.CITY,
+            [
+                entry("Paris", "paris", 900),
+                entry("Pau", "pau", 30),
+                entry("Le Parc", "le parc", 1),
+                entry("Saint-Paul", "saint-paul", 2),
+                entry("Lyon", "lyon", 400),
+            ],
+        )
+        await index.replace(SuggestionKind.TITLE, [entry("Pâtissier", "patissier", 9)])
+
+        assert written == 5
+        assert await index.search(SuggestionKind.CITY, "pa", limit=8) == [
+            "Paris",
+            "Pau",
+            "Le Parc",
+        ]
+        assert await index.search(SuggestionKind.CITY, "anc", limit=8) == []
+        assert await index.search(SuggestionKind.CITY, "pa", limit=1) == ["Paris"]
+        assert await index.search(SuggestionKind.TITLE, "pa", limit=8) == ["Pâtissier"]
+
+    async def test_les_jokers_de_like_sont_des_caracteres_comme_les_autres(self) -> None:
+        index = TortoiseSuggestionIndex()
+        await index.replace(SuggestionKind.COMPANY, [entry("Carrefour", "carrefour", 5)])
+
+        assert await index.search(SuggestionKind.COMPANY, "%", limit=8) == []
+        assert await index.search(SuggestionKind.COMPANY, "c_r", limit=8) == []

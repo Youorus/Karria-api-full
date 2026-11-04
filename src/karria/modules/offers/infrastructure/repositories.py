@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from tortoise import connections
@@ -1108,3 +1108,32 @@ class TortoiseInteractionLog:
                 for e in events
             ]
         )
+
+
+#: Les colonnes qu'un autre module peut demander comme vocabulaire.
+VOCABULARY_COLUMNS: Final[dict[str, str]] = {
+    "title": "title",
+    "company": "company_name",
+    "city": "city",
+}
+
+
+class TortoiseOfferVocabulary:
+    """Les libellés distincts des offres actives, avec leur fréquence.
+
+    Sert le port `OfferVocabulary` du module `cv` (branché par `bootstrap`),
+    structurellement : des paires (libellé, occurrences), rien du domaine
+    des offres. Une requête `GROUP BY` sur la table entière, **une fois par
+    jour** dans le worker — jamais sur le chemin d'une frappe.
+    """
+
+    async def distinct(self, kind: str) -> list[tuple[str, int]]:
+        column = VOCABULARY_COLUMNS.get(str(kind))
+        if column is None:
+            return []
+        rows = await connections.get("default").execute_query_dict(
+            f"SELECT {column} AS label, COUNT(*) AS n FROM offers_offers "  # noqa: S608 - colonne choisie dans un dictionnaire fermé
+            f"WHERE is_active = TRUE AND duplicate_of IS NULL AND {column} IS NOT NULL "
+            f"GROUP BY {column}"
+        )
+        return [(str(row["label"]), int(row["n"])) for row in rows]

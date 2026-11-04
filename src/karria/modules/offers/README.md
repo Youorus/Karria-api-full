@@ -39,6 +39,10 @@
 - **Le compte** : `user_id` est un UUID opaque ; l'oubli vient de
   l'événement `AccountDeleted` (ADR-0015).
 - **L'analyse de chaque offre par Karria** : n'existe pas (`PLUS-TARD.md`).
+- **Les suggestions à la saisie du CV** (ADR-0028) : module `cv`. Ce module
+  ne fournit que le vocabulaire — intitulés, employeurs et villes distincts
+  des offres actives, avec leur fréquence (`build_offer_vocabulary`) — que
+  `bootstrap/worker.py` passe à `cv` comme son port `OfferVocabulary`.
 
 ## Les choix qu'on ne devine pas en lisant le code
 

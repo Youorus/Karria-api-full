@@ -14,6 +14,7 @@ from karria.modules.cv.api.dependencies import (
     get_draft_repository,
     get_photo_repository,
     get_portrait_enhancer,
+    get_suggestion_index,
     get_upload_inspector,
 )
 from karria.modules.cv.infrastructure import (
@@ -25,6 +26,7 @@ from karria.modules.cv.infrastructure import (
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
+    TortoiseSuggestionIndex,
 )
 from karria.shared.clock import SystemClock
 from karria.shared.config import GeminiSettings, Settings
@@ -38,6 +40,7 @@ def test_les_ports_de_persistance_et_dinspection_ont_leur_adaptateur() -> None:
     assert isinstance(get_draft_repository(), TortoiseDraftRepository)
     assert isinstance(get_cv_repository(), TortoiseCvRepository)
     assert isinstance(get_photo_repository(), TortoisePhotoRepository)
+    assert isinstance(get_suggestion_index(), TortoiseSuggestionIndex)
     assert isinstance(get_upload_inspector(), FileInspector)
 
 

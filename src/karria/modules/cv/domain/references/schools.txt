@@ -1,0 +1,322 @@
+# Établissements d'enseignement, de formation et d'apprentissage courants
+# en France. L'ordre fait le poids à égalité de correspondance.
+Lycée
+Lycée professionnel
+Lycée polyvalent
+Lycée général et technologique
+Collège
+Université
+Université Paris 1 Panthéon-Sorbonne
+Université Paris-Panthéon-Assas
+Sorbonne Université
+Université Sorbonne Nouvelle
+Université Paris Cité
+Université Paris-Saclay
+Université Paris Dauphine - PSL
+Université Paris Nanterre
+Université Paris 8 Vincennes-Saint-Denis
+Université Paris-Est Créteil (UPEC)
+Université Gustave Eiffel
+Université Sorbonne Paris Nord
+Université de Versailles Saint-Quentin-en-Yvelines (UVSQ)
+Université d'Évry Paris-Saclay
+CY Cergy Paris Université
+Université de Lyon
+Université Claude Bernard Lyon 1
+Université Lumière Lyon 2
+Université Jean Moulin Lyon 3
+Université Jean Monnet Saint-Étienne
+Université Grenoble Alpes
+Université Savoie Mont Blanc
+Aix-Marseille Université
+Université de Toulon
+Université Côte d'Azur
+Université d'Avignon
+Université de Montpellier
+Université Paul-Valéry Montpellier 3
+Université de Nîmes
+Université de Perpignan
+Université de Toulouse
+Université Toulouse Capitole
+Université Toulouse - Jean Jaurès
+Université Toulouse III - Paul Sabatier
+Université de Bordeaux
+Université Bordeaux Montaigne
+Université de Pau et des Pays de l'Adour
+Université de La Rochelle
+Université de Poitiers
+Université de Limoges
+Université Clermont Auvergne
+Université de Lille
+Université d'Artois
+Université du Littoral Côte d'Opale
+Université Polytechnique Hauts-de-France
+Université de Picardie Jules Verne
+Université de Reims Champagne-Ardenne
+Université de Lorraine
+Université de Strasbourg
+Université de Haute-Alsace
+Université de Bourgogne
+Université de Franche-Comté
+Université de Rennes
+Université Rennes 2
+Université de Bretagne Occidentale
+Université de Bretagne Sud
+Nantes Université
+Université d'Angers
+Le Mans Université
+Université de Tours
+Université d'Orléans
+Université de Caen Normandie
+Université de Rouen Normandie
+Université Le Havre Normandie
+Université de Corse
+Université de La Réunion
+Université des Antilles
+Université de Guyane
+Université de Nouvelle-Calédonie
+Université de la Polynésie française
+IUT
+IUT de Paris - Rives de Seine
+IUT de Villetaneuse
+IUT de Saint-Denis
+IUT de Créteil-Vitry
+IUT de Sénart-Fontainebleau
+IUT de Cergy-Pontoise
+IUT de Vélizy
+IUT d'Orsay
+IUT de Sceaux
+IUT de Cachan
+IUT de Lyon 1
+IUT Lumière Lyon 2
+IUT Jean Moulin Lyon 3
+IUT de Grenoble
+IUT d'Aix-Marseille
+IUT de Nice Côte d'Azur
+IUT de Montpellier-Sète
+IUT de Toulouse
+IUT de Bordeaux
+IUT de Lille
+IUT de Nantes
+IUT de Rennes
+IUT de Strasbourg
+IUT de Nancy
+IUT de Metz
+IUT de Reims
+IUT de Dijon
+IUT de Rouen
+IUT de Caen
+HEC Paris
+ESSEC Business School
+ESCP Business School
+EDHEC Business School
+EM Lyon Business School
+emlyon business school
+Audencia
+Grenoble École de Management
+KEDGE Business School
+NEOMA Business School
+SKEMA Business School
+TBS Education
+Toulouse Business School
+Montpellier Business School
+Rennes School of Business
+Burgundy School of Business
+IÉSEG School of Management
+ESSCA
+EM Normandie
+EM Strasbourg
+Excelia Business School
+ISC Paris
+PSB Paris School of Business
+ISG
+INSEEC
+ESG
+ESG Paris
+ESGCI
+ESGI
+ESLSCA
+IPAG Business School
+EBS Paris
+EDC Paris Business School
+ICN Business School
+Institut Mines-Télécom Business School
+ESC Clermont
+ESC Pau
+ESC Amiens
+Brest Business School
+South Champagne Business School
+École Polytechnique
+École des Ponts ParisTech
+Mines Paris - PSL
+CentraleSupélec
+Centrale Lyon
+Centrale Lille
+Centrale Nantes
+Centrale Marseille
+Centrale Méditerranée
+Télécom Paris
+Télécom SudParis
+ENSTA Paris
+ENSAE Paris
+ISAE-SUPAERO
+INSA Lyon
+INSA Toulouse
+INSA Rennes
+INSA Rouen Normandie
+INSA Strasbourg
+INSA Hauts-de-France
+INSA Centre Val de Loire
+Arts et Métiers (ENSAM)
+UTC - Université de Technologie de Compiègne
+UTT - Université de Technologie de Troyes
+UTBM - Université de Technologie de Belfort-Montbéliard
+Grenoble INP
+Toulouse INP
+Bordeaux INP
+Lorraine INP
+IMT Atlantique
+IMT Mines Albi
+IMT Mines Alès
+IMT Nord Europe
+Mines Saint-Étienne
+Mines Nancy
+ESIEE Paris
+ESILV
+EFREI Paris
+EPITA
+EPITECH
+ECE Paris
+ESIEA
+ISEP
+ESTACA
+ESTP Paris
+EIGSI
+EI CESI
+CESI
+CESI École d'Ingénieurs
+Polytech
+Polytech Paris-Saclay
+Polytech Sorbonne
+Polytech Lyon
+Polytech Grenoble
+Polytech Marseille
+Polytech Nice Sophia
+Polytech Montpellier
+Polytech Nantes
+Polytech Lille
+Polytech Tours
+Polytech Orléans
+Polytech Clermont
+Polytech Annecy-Chambéry
+ENSIMAG
+ENSEEIHT
+ENSEIRB-MATMECA
+ENSIIE
+ENSICAEN
+ENSSAT
+ENIB
+ENSIBS
+ISIMA
+ESIR
+AgroParisTech
+Institut Agro
+VetAgro Sup
+Oniris
+École nationale vétérinaire d'Alfort
+ENS Paris
+ENS Paris-Saclay
+ENS de Lyon
+ENS Rennes
+Sciences Po
+Sciences Po Paris
+Sciences Po Lyon
+Sciences Po Grenoble
+Sciences Po Lille
+Sciences Po Bordeaux
+Sciences Po Toulouse
+Sciences Po Aix
+Sciences Po Rennes
+Sciences Po Strasbourg
+Sciences Po Saint-Germain-en-Laye
+ENA
+INSP (Institut national du service public)
+CELSA
+EFAP
+ISCOM
+Sup de Pub
+École de journalisme (CFJ)
+ESJ Lille
+IPJ Paris-Dauphine
+Gobelins
+École Estienne
+École Boulle
+École Duperré
+ENSAD (Arts Décoratifs)
+Beaux-Arts de Paris
+École du Louvre
+Strate École de Design
+LISAA
+Penninghen
+ESAG
+École Intuit Lab
+ECV
+Rubika
+Supinfocom
+ENJMIN
+ISART Digital
+Le Wagon
+OpenClassrooms
+Wild Code School
+Ironhack
+Simplon
+42
+École 42
+Hetic
+Digital Campus
+Supinfo
+IIM Digital School
+Sup de Vinci
+Ynov Campus
+Coding Factory
+Webforce3
+La Capsule
+Conservatoire national des arts et métiers (CNAM)
+AFPA
+GRETA
+CFA
+CFA des métiers
+CFA du commerce
+Chambre de commerce et d'industrie (CCI)
+Chambre de métiers et de l'artisanat (CMA)
+Campus des métiers
+Compagnons du Devoir
+AFTRAL
+Promotrans
+IFSI (Institut de formation en soins infirmiers)
+IFAS (Institut de formation d'aides-soignants)
+IRTS (Institut régional du travail social)
+Croix-Rouge française (formation)
+Institut de formation en masso-kinésithérapie
+École d'ostéopathie
+Lycée hôtelier
+École hôtelière
+Institut Paul Bocuse
+Ferrandi Paris
+Le Cordon Bleu
+École Ducasse
+Vatel
+Institut Lyfe
+ESCF
+École de commerce
+École d'ingénieurs
+École de design
+École d'art
+École de communication
+École d'informatique
+École de langues
+Centre de formation
+Organisme de formation
+Pôle emploi (formation)
+France Travail (formation)
+Mission locale

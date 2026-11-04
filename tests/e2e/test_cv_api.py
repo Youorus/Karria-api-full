@@ -30,6 +30,7 @@ from doubles import (
     InMemoryCvRepository,
     InMemoryDraftRepository,
     InMemoryPhotoRepository,
+    InMemorySuggestionIndex,
     sample_image,
 )
 from karria.modules.cv.api.dependencies import (
@@ -41,6 +42,7 @@ from karria.modules.cv.api.dependencies import (
     get_draft_repository,
     get_photo_repository,
     get_portrait_enhancer,
+    get_suggestion_index,
     get_upload_inspector,
 )
 from karria.modules.cv.application import GeneratedImage, Interpretation
@@ -49,6 +51,8 @@ from karria.modules.cv.domain import (
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
     PhotoEnhanceUnavailableError,
+    SuggestionKind,
+    VocabularyEntry,
 )
 from karria.shared.auth import Principal
 from karria.shared.database import NullUnitOfWork
@@ -73,6 +77,7 @@ class Fakes:
             {Chapter.IDENTITY: CV_IDENTITY, Chapter.EXPERIENCES: [CV_EXPERIENCE]}
         )
         self.inspector = FakeInspector(pages=1, duration=10.0)
+        self.suggestions = InMemorySuggestionIndex()
 
 
 @pytest.fixture
@@ -88,6 +93,7 @@ def fakes(app: FastAPI, ai_consented: None) -> Fakes:
             get_portrait_enhancer: lambda: doubles.enhancer,
             get_cv_extractor: lambda: doubles.extractor,
             get_upload_inspector: lambda: doubles.inspector,
+            get_suggestion_index: lambda: doubles.suggestions,
             get_clock: FakeClock,
             get_unit_of_work: NullUnitOfWork,
         }
@@ -563,3 +569,70 @@ class TestVoix:
 
         assert response.status_code == 422
         assert response.json()["error"]["details"]["field"] == "audio_file"
+
+
+# ---------------------------------------------------------------------
+# Suggestions à la saisie (ADR-0028)
+# ---------------------------------------------------------------------
+
+
+class TestSuggestions:
+    async def test_sans_session_c_est_401(self, client: AsyncClient, fakes: Fakes) -> None:
+        response = await client.get(f"{API}/cv/suggestions", params={"kind": "city", "q": "par"})
+
+        assert response.status_code == 401
+
+    async def test_une_famille_inconnue_est_refusee(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.get(f"{API}/cv/suggestions", params={"kind": "color", "q": "r"})
+
+        assert response.status_code == 422
+
+    async def test_les_villes_viennent_de_l_index_materialise_dans_l_ordre(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        fakes.suggestions.entries[SuggestionKind.CITY] = [
+            VocabularyEntry(label="Pau", folded="pau", weight=30),
+            VocabularyEntry(label="Paris", folded="paris", weight=900),
+            VocabularyEntry(label="Le Parc", folded="le parc", weight=1),
+            VocabularyEntry(label="Lyon", folded="lyon", weight=400),
+        ]
+
+        response = await client.get(f"{API}/cv/suggestions", params={"kind": "city", "q": "PÀ"})
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"items": ["Paris", "Pau", "Le Parc"]}
+
+    async def test_une_langue_vient_de_la_liste_embarquee_sans_index(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.get(
+            f"{API}/cv/suggestions", params={"kind": "language", "q": "ang"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["items"][0] == "Anglais"
+        assert fakes.suggestions.searches == []
+
+    async def test_une_saisie_vide_rend_une_liste_vide(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.get(f"{API}/cv/suggestions", params={"kind": "skill"})
+
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+
+    async def test_une_saisie_trop_longue_est_refusee(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        response = await client.get(
+            f"{API}/cv/suggestions", params={"kind": "skill", "q": "x" * 61}
+        )
+
+        assert response.status_code == 422
+
+    async def test_huit_au_plus(self, client: AsyncClient, fakes: Fakes, me: Principal) -> None:
+        response = await client.get(f"{API}/cv/suggestions", params={"kind": "degree", "q": "b"})
+
+        assert len(response.json()["items"]) == 8

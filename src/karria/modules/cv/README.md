@@ -4,7 +4,7 @@ Le contrat est `karria_app/docs/contrat-api-cv.md` ; ce module le sert sous
 `/api/v1` : `GET /cv/me`, `PUT /cv/me/chapters/{chapter}`, `GET|POST /cv/draft`,
 `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{chapter}`,
 `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`,
-`POST /voice/transcribe`. Toutes exigent la session.
+`POST /voice/transcribe`, `GET /cv/suggestions`. Toutes exigent la session.
 
 Trois façons d'avoir un CV, une seule forme : **l'import** d'un CV existant
 (la voie principale depuis le 2026-11-04 — il écrit le CV directement, à
@@ -32,6 +32,13 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   `infrastructure/prompts.py` et nulle part ailleurs.
 - **Les règles sur les fichiers reçus** (`domain/uploads.py`) : types,
   10 Mo et 10 pages pour un CV, 10 Mo et 5 minutes pour un enregistrement.
+- **Les suggestions à la saisie** (ADR-0028) : la table `cv_suggestions`
+  (intitulés, entreprises, villes — matérialisés chaque nuit depuis l'index
+  d'offres par `cv.refresh_suggestions`, ou à la demande par
+  `python -m scripts.suggestions refresh`), les listes de référence
+  embarquées `domain/references/{schools,degrees,skills,languages}.txt`
+  (une valeur par ligne, en français, l'ordre fait le poids), et les règles
+  de classement et de nettoyage (`domain/suggestions.py`).
 
 ## Ce qu'il ne possède pas, et où ça vit
 
@@ -48,6 +55,10 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   clés, et ne lit jamais une URL que le client lui renverrait.
 - **La configuration de Gemini** : `GeminiSettings` dans `shared/config`
   (`GEMINI__API_KEY`, `GEMINI__TEXT_MODEL`, `GEMINI__IMAGE_MODEL`).
+- **Les offres.** Le vocabulaire des suggestions arrive par le port
+  `OfferVocabulary` (des paires libellé/occurrences), que
+  `bootstrap/worker.py` branche sur `offers.build_offer_vocabulary` ; ce
+  module ne lit jamais `offers_offers`.
 
 ## Les choix qu'on ne devine pas en lisant le code
 
@@ -98,6 +109,15 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   l'inverse de la finalisation. Une clé qui résiste garde sa ligne pour
   qu'un rejeu la retrouve ; l'échec est journalisé avec ses clés
   (`cv.forget_incomplete`). Le cas d'usage est idempotent.
+- **Une suggestion est une aide, jamais une contrainte** (ADR-0028) :
+  `GET /cv/suggestions?kind=title|company|city|school|degree|skill|language&q=…`
+  rend huit libellés au plus, par préfixe du libellé ou d'un de ses mots,
+  casse et accents indifférents ; vide pour une saisie vide, `422` pour une
+  famille inconnue ou plus de 60 caractères. Les trois premières familles
+  sont **vides tant que le worker n'a pas matérialisé une fois**. Les
+  intitulés d'annonces sont nettoyés avant d'être proposés (« H/F »,
+  séparateurs, majuscules), et un libellé vu moins de deux fois n'est pas
+  « connu ».
 - **Les erreurs** portent leur raison fine dans `details.reason` :
   `draft_not_found` (404), `draft_incomplete` (409, avec `chapters`),
   `chapter_invalid` / `chapter_required` / `chapter_items_expected` /

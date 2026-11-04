@@ -46,6 +46,7 @@ from karria.modules.offers.infrastructure import (
     TortoiseIngestionRunRepository,
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
+    TortoiseOfferVocabulary,
     TortoiseScrapeTargetRepository,
 )
 from karria.modules.offers.infrastructure.models import IngestionRunModel
@@ -615,3 +616,22 @@ class TestElargissementsEnAttente:
         await repository.set_pending_widenings(conversation, [])
         assert await repository.pending_widenings(conversation) == []
         assert await repository.pending_widenings(uuid4()) == []
+
+
+class TestVocabulaire:
+    async def test_les_libelles_distincts_des_offres_actives_avec_leur_frequence(self) -> None:
+        repository = TortoiseOfferRepository()
+        await repository.insert_many(
+            [
+                make_offer(title="Serveur H/F"),
+                make_offer(title="Serveur H/F", company=Company(name="Chez Lulu")),
+                make_offer(title="Cuisinier", is_active=False),
+                make_offer(title="Plongeur", duplicate_of=uuid4()),
+            ]
+        )
+        vocabulary = TortoiseOfferVocabulary()
+
+        assert await vocabulary.distinct("title") == [("Serveur H/F", 2)]
+        assert sorted(await vocabulary.distinct("company")) == [("Chez Lulu", 1), ("Le Bistrot", 1)]
+        assert await vocabulary.distinct("city") == [("Paris", 2)]
+        assert await vocabulary.distinct("color") == []

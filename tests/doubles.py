@@ -30,6 +30,9 @@ from karria.modules.cv.domain import (
     CvPhoto,
     DocumentInfo,
     Draft,
+    SuggestionKind,
+    VocabularyEntry,
+    suggest_from,
 )
 from karria.modules.devices.application import StoredTicket
 from karria.modules.devices.domain import (
@@ -701,6 +704,32 @@ class InMemoryPhotoRepository:
     async def delete(self, photo_ids: Sequence[UUID]) -> None:
         for photo_id in photo_ids:
             self.photos.pop(photo_id, None)
+
+
+class InMemorySuggestionIndex:
+    """Implémente `SuggestionIndex` en mémoire, avec le classement du domaine."""
+
+    def __init__(self) -> None:
+        self.entries: dict[SuggestionKind, list[VocabularyEntry]] = {}
+        self.searches: list[tuple[SuggestionKind, str, int]] = []
+
+    async def search(self, kind: SuggestionKind, folded_query: str, *, limit: int) -> list[str]:
+        self.searches.append((kind, folded_query, limit))
+        return suggest_from(self.entries.get(kind, []), folded_query)[:limit]
+
+    async def replace(self, kind: SuggestionKind, entries: Sequence[VocabularyEntry]) -> int:
+        self.entries[kind] = list(entries)
+        return len(entries)
+
+
+class StaticOfferVocabulary:
+    """Implémente `OfferVocabulary` avec des paires fixées par le test."""
+
+    def __init__(self, by_kind: dict[SuggestionKind, list[tuple[str, int]]]) -> None:
+        self.by_kind = by_kind
+
+    async def distinct(self, kind: SuggestionKind) -> list[tuple[str, int]]:
+        return list(self.by_kind.get(kind, []))
 
 
 class FakeInterpreter:

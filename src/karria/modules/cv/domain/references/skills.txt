@@ -1,0 +1,345 @@
+# Compétences courantes, transversales d'abord puis par métier. L'ordre
+# fait le poids à égalité de correspondance.
+Travail en équipe
+Communication
+Organisation
+Rigueur
+Autonomie
+Sens du service
+Relation client
+Gestion du stress
+Adaptabilité
+Prise d'initiative
+Gestion du temps
+Résolution de problèmes
+Esprit d'analyse
+Esprit de synthèse
+Créativité
+Leadership
+Management d'équipe
+Gestion de projet
+Négociation
+Écoute active
+Pédagogie
+Ponctualité
+Polyvalence
+Sens des responsabilités
+Travail sous pression
+Prise de parole en public
+Rédaction
+Orthographe
+Accueil
+Accueil physique et téléphonique
+Vente
+Conseil client
+Encaissement
+Mise en rayon
+Merchandising
+Gestion des stocks
+Inventaire
+Réception de marchandises
+Préparation de commandes
+Logistique
+Conduite de chariot élévateur
+Manutention
+Gestion de caisse
+Fidélisation client
+Prospection commerciale
+Prospection téléphonique
+Développement commercial
+Gestion de portefeuille clients
+Techniques de vente
+Vente additionnelle
+Closing
+CRM
+Salesforce
+HubSpot
+Marketing
+Marketing digital
+SEO
+SEA
+Google Ads
+Google Analytics
+Réseaux sociaux
+Community management
+Rédaction web
+Emailing
+Mailchimp
+Brand content
+Stratégie de contenu
+Création de contenu
+Canva
+Photoshop
+Illustrator
+InDesign
+Figma
+Adobe Premiere Pro
+After Effects
+Montage vidéo
+Photographie
+Design graphique
+UX design
+UI design
+Wireframing
+Prototypage
+Microsoft Office
+Pack Office
+Word
+Excel
+Excel avancé
+Tableaux croisés dynamiques
+PowerPoint
+Outlook
+Google Workspace
+Google Sheets
+Notion
+Trello
+Jira
+Confluence
+Slack
+Microsoft Teams
+Saisie de données
+Classement et archivage
+Gestion administrative
+Gestion du courrier
+Prise de rendez-vous
+Gestion d'agenda
+Secrétariat
+Comptabilité
+Comptabilité générale
+Comptabilité analytique
+Facturation
+Relances clients
+Recouvrement
+Gestion de la paie
+Déclarations sociales
+Contrôle de gestion
+Analyse financière
+Budget
+Trésorerie
+Audit
+Fiscalité
+Sage
+Cegid
+SAP
+Oracle
+Ressources humaines
+Recrutement
+Entretiens de recrutement
+Onboarding
+Administration du personnel
+Formation
+Droit du travail
+Gestion des conflits
+Gestion des plannings
+Anglais professionnel
+Anglais courant
+Espagnol professionnel
+Allemand professionnel
+Programmation
+Développement web
+Développement mobile
+Développement logiciel
+HTML
+CSS
+JavaScript
+TypeScript
+React
+React Native
+Vue.js
+Angular
+Next.js
+Node.js
+Express
+Python
+Django
+FastAPI
+Flask
+Java
+Spring Boot
+Kotlin
+Swift
+C
+C++
+C#
+.NET
+PHP
+Symfony
+Laravel
+WordPress
+Ruby
+Ruby on Rails
+Go
+Rust
+Scala
+SQL
+PostgreSQL
+MySQL
+MongoDB
+Redis
+Elasticsearch
+Bases de données
+Modélisation de données
+Git
+GitHub
+GitLab
+CI/CD
+Docker
+Kubernetes
+Linux
+Bash
+Administration système
+Administration réseau
+Réseaux
+Cybersécurité
+Sécurité informatique
+Cloud
+AWS
+Microsoft Azure
+Google Cloud
+Terraform
+Ansible
+DevOps
+Tests unitaires
+Tests automatisés
+Méthodes agiles
+Scrum
+Kanban
+Product management
+Analyse de données
+Data analysis
+Data science
+Machine learning
+Deep learning
+Intelligence artificielle
+Power BI
+Tableau
+Looker
+Pandas
+NumPy
+R
+MATLAB
+Statistiques
+Big data
+Spark
+Support technique
+Support utilisateurs
+Helpdesk
+Maintenance informatique
+Dépannage
+Installation de matériel
+Rédaction de documentation technique
+Électricité
+Électrotechnique
+Plomberie
+Chauffage
+Climatisation
+Maçonnerie
+Menuiserie
+Peinture en bâtiment
+Carrelage
+Soudure
+Mécanique
+Mécanique automobile
+Maintenance industrielle
+Lecture de plans
+AutoCAD
+SolidWorks
+Revit
+CAO
+DAO
+Conduite de travaux
+Suivi de chantier
+Sécurité au travail
+Habilitation électrique
+Cuisine
+Pâtisserie
+Service en salle
+Dressage des tables
+Prise de commandes
+Bar
+Hygiène alimentaire (HACCP)
+Gestion des approvisionnements
+Soins aux personnes
+Aide à la toilette
+Aide aux repas
+Accompagnement des personnes âgées
+Accompagnement des personnes en situation de handicap
+Garde d'enfants
+Éveil de l'enfant
+Animation
+Animation d'ateliers
+Premiers secours
+Soins infirmiers
+Prise de constantes
+Distribution de médicaments
+Transmissions
+Entretien des locaux
+Nettoyage
+Repassage
+Conduite
+Livraison
+Permis B
+Transport de marchandises
+Gestion de tournées
+Sécurité
+Surveillance
+Contrôle d'accès
+Télévente
+Gestion des réclamations
+Service après-vente
+Traitement des appels entrants
+Traitement des appels sortants
+Standard téléphonique
+Enseignement
+Soutien scolaire
+Conception de supports pédagogiques
+Traduction
+Interprétariat
+Relecture
+Correction
+Journalisme
+Rédaction de rapports
+Veille
+Benchmark
+Études de marché
+Planification
+Coordination
+Reporting
+Amélioration continue
+Lean management
+Qualité
+Normes ISO
+Contrôle qualité
+Gestion documentaire
+Achats
+Sourcing
+Gestion des fournisseurs
+Appels d'offres
+Supply chain
+Import-export
+Douane
+Incoterms
+Gestion immobilière
+Transactions immobilières
+Droit
+Droit des affaires
+Droit des contrats
+Rédaction d'actes
+Veille juridique
+Conformité
+RGPD
+Événementiel
+Organisation d'événements
+Relations presse
+Relations publiques
+Lobbying
+Dessin
+Illustration
+Couture
+Coiffure
+Esthétique
+Maquillage
+Manucure
+Massage
+Vente de prestations

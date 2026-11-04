@@ -17,7 +17,10 @@ Ce qu'il expose, et pour qui :
 - `SearchCriteria`, `RawPosting` — les valeurs que ces commandes manipulent ;
 - `build_attach_companies`, `build_backfill_companies`, `fetch_logos_within`,
   `CompanySighting`, `company_key`, `company_domain` — pour
-  `scripts/companies.py` (entreprises de la V1, rattrapage, logos).
+  `scripts/companies.py` (entreprises de la V1, rattrapage, logos) ;
+- `build_offer_vocabulary` — les intitulés, entreprises et villes
+  distincts de l'index, que `bootstrap/worker.py` passe au module `cv`
+  comme son port `OfferVocabulary` (suggestions à la saisie).
 """
 
 from karria.modules.offers.api import router
@@ -30,6 +33,7 @@ from karria.modules.offers.api.dependencies import (
     build_ingest_batch,
     build_ingest_postings,
     build_lease_targets,
+    build_offer_vocabulary,
     build_reconcile_index,
     build_refresh_targets,
     build_search_offers,
@@ -69,6 +73,7 @@ __all__ = [
     "build_ingest_batch",
     "build_ingest_postings",
     "build_lease_targets",
+    "build_offer_vocabulary",
     "build_reconcile_index",
     "build_refresh_targets",
     "build_search_offers",

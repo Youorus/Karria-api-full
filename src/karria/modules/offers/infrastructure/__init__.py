@@ -29,6 +29,7 @@ from karria.modules.offers.infrastructure.repositories import (
     TortoiseKarriaMemoryRepository,
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
+    TortoiseOfferVocabulary,
     TortoiseScrapeTargetRepository,
 )
 
@@ -56,6 +57,7 @@ __all__ = [
     "TortoiseKarriaMemoryRepository",
     "TortoiseOfferRepository",
     "TortoiseOfferStateRepository",
+    "TortoiseOfferVocabulary",
     "TortoiseScrapeTargetRepository",
     "build_transport",
     "collection_name",

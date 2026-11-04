@@ -8,7 +8,8 @@ Contrat
   ses modules. Il ne sert aucune route.
 - Les travaux d'un module s'inscrivent **ici**, en recevant les ports
   qu'un autre module remplit — exactement comme `wiring.py` le fait pour
-  HTTP : `offers` reçoit le notificateur de `devices`, sans l'importer.
+  HTTP : `offers` reçoit le notificateur de `devices`, sans l'importer, et
+  `cv` reçoit le vocabulaire d'`offers` pour ses suggestions à la saisie.
 - Rien de lourd au démarrage : les travaux planifiés tournent à leur
   heure, pas au boot (AGENTS.md §6.4).
 """
@@ -19,7 +20,9 @@ from typing import Final
 
 from karria.bootstrap.orm import TORTOISE_ORM
 from karria.bootstrap.wiring import build_user_notifier
+from karria.modules.cv import register_tasks as register_cv_tasks
 from karria.modules.documents import register_tasks as register_documents_tasks
+from karria.modules.offers import build_offer_vocabulary
 from karria.modules.offers import register_tasks as register_offers_tasks
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
@@ -80,6 +83,10 @@ def build_worker_app() -> App:
     register_queue_maintenance(app)
     register_offers_tasks(app, notifier=build_user_notifier)
     register_documents_tasks(app)
+    # `cv` matérialise chaque nuit les intitulés, entreprises et villes de
+    # l'index d'offres (ADR-0028) ; sans ce branchement, les suggestions
+    # `title|company|city` resteraient vides — dégradé, pas cassé.
+    register_cv_tasks(app, vocabulary=build_offer_vocabulary)
     return app
 
 

@@ -1,7 +1,8 @@
 """Routes HTTP du module `cv` — `docs/contrat-api-cv.md`, en exécutable.
 
 Toutes exigent la session : le CV est *le sien*, et rien ici ne concerne
-quelqu'un d'autre. Une route reçoit, délègue, projette. Les fichiers reçus
+quelqu'un d'autre — les suggestions aussi, qui n'ont de sens qu'en
+éditant son CV. Une route reçoit, délègue, projette. Les fichiers reçus
 sont lus **bornés** (`read(limite + 1)`) : un envoi de deux gigaoctets ne
 doit pas pouvoir remplir la mémoire avant qu'une règle le refuse.
 """
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from karria.modules.cv.api.dependencies import (
     DraftPresenterDep,
@@ -20,6 +21,7 @@ from karria.modules.cv.api.dependencies import (
     ImportCvDep,
     InterpretAnswerDep,
     OpenDraftDep,
+    SuggestCompletionsDep,
     TranscribeVoiceDep,
     UpdateCvChapterDep,
     UploadPhotoDep,
@@ -33,14 +35,17 @@ from karria.modules.cv.api.schemas import (
     InterpretationRead,
     InterpretRequest,
     PhotoRead,
+    SuggestionsRead,
     TranscriptionRead,
 )
 from karria.modules.cv.domain import (
     MAX_AUDIO_BYTES,
     MAX_DOCUMENT_BYTES,
+    QUERY_MAX_LENGTH,
     Chapter,
     ChapterSubmission,
     ReceivedFile,
+    SuggestionKind,
 )
 from karria.shared.auth import (
     AiConsentedPrincipalDep,
@@ -105,6 +110,32 @@ async def update_cv_chapter(
         ChapterSubmission(data=body.data, items=body.items, skipped=body.skipped),
     )
     return await CvRead.present(cv, storage)
+
+
+@cv_router.get(
+    "/suggestions",
+    summary="Suggestions à la saisie",
+    response_model=SuggestionsRead,
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.INVALID_INPUT),
+)
+async def suggest(
+    suggest_completions: SuggestCompletionsDep,
+    kind: Annotated[SuggestionKind, Query(description="Ce qu'on complète.")],
+    q: Annotated[
+        str,
+        Query(
+            max_length=QUERY_MAX_LENGTH,
+            description="Ce que la personne a tapé. Casse et accents indifférents.",
+        ),
+    ] = "",
+) -> SuggestionsRead:
+    """Des valeurs connues qui commencent par la saisie (ou dont un mot commence par elle).
+
+    `title`, `company` et `city` viennent de l'index d'offres (matérialisé
+    chaque nuit) ; `school`, `degree`, `skill` et `language` de listes de
+    référence embarquées. Huit au plus ; vide pour une saisie vide.
+    """
+    return SuggestionsRead(items=await suggest_completions.execute(kind, q))
 
 
 @cv_router.get(

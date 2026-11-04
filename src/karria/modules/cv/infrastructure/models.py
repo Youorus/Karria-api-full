@@ -70,3 +70,27 @@ class CvPhotoModel(BaseDBModel):
 
     class Meta:
         table = "cv_photos"
+
+
+class CvSuggestionModel(BaseDBModel):
+    """Un libellé proposé à la saisie, matérialisé depuis l'index d'offres.
+
+    Remplie d'un bloc par famille (`kind`) par le worker, lue par préfixe
+    sur `folded` : jamais une requête `DISTINCT` sur les offres à chaque
+    frappe. Les familles embarquées (diplômes, écoles, compétences,
+    langues) ne sont **pas** ici : elles vivent dans `domain/references/`.
+    """
+
+    kind = fields.CharField(max_length=16, description="title, company ou city.")
+    label = fields.CharField(max_length=150, description="La forme proposée.")
+    folded = fields.CharField(
+        max_length=150, description="Minuscules, sans accents : la clé de recherche."
+    )
+    weight = fields.IntField(description="Occurrences dans l'index : le poids du classement.")
+
+    class Meta:
+        table = "cv_suggestions"
+        table_description = (
+            "Vocabulaire des suggestions à la saisie du CV (intitulés, entreprises, villes)."
+        )
+        unique_together = (("kind", "folded"),)
