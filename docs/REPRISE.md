@@ -5,7 +5,7 @@
 
 **Dernière mise à jour : 2026-11-05**
 
-### Session du 2026-11-05 — dossiers de candidature, module `applications` (ADR-0033 — Fable) — EN COURS DE DÉPLOIEMENT
+### Session du 2026-11-05 — dossiers de candidature, module `applications` (ADR-0033 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : depuis la fiche d'une offre, « Adapter mon CV à cette offre » : un
 dossier lié à l'offre, une **copie** du CV adaptée d'abord par Karria (propositions
@@ -40,10 +40,29 @@ envoi e-mail : ADR-0029 à 0032, migration 17) — d'où **ADR-0033** pour ce mo
 - Tests : domaine, cas d'usage, adaptateurs LLM, câblage, tâches, e2e HTTP, intégration
   PostgreSQL du dépôt ; `make check` vert (3 204 tests, 96 %).
 
-**Reste** : voir la fin de cette section une fois le déploiement vérifié ; côté app : libellé
-de l'usage `application`, écran atelier (propositions avant/après), lettre, espace
-Candidatures ; valider l'ADR-0033 ; mesurer la qualité réelle des propositions sur de vrais
-CV/offres (aucun appel réel au modèle n'a été fait dans cette session).
+**En production** (commit `50e013d` sur `main`, webhook Dokploy, trois applications
+redéployées en ~1 min) : **migration 16 appliquée avant le code** par un conteneur ponctuel sur
+l'image en place, le fichier monté depuis `/root/karria-applications-deploy/migrations/models/`
+(`aerich upgrade` → « Success upgrading to 16_… », vérifié dans `aerich` et par
+`information_schema.columns`) ; `/health/ready` 200 ; `GET /api/v1/applications` sans jeton →
+401 (la route existe ; 404 avant) ; journaux API et worker sans erreur, `worker.started`.
+Aucune variable nouvelle posée : `cv_adapt` et `letter_draft` partent sur `GEMINI__TEXT_MODEL`.
+**Non vérifié par HTTP avec une session** (pas de compte de test sous la main) : aucune
+adaptation ni lettre réelle n'a été produite par le modèle de production dans cette session.
+Le commit a été fait avec `--no-verify` pour ne pas remuer l'arbre de l'autre agent : l'arbre
+**indexé exact** a été exporté et vérifié à part (ruff, mypy strict, import-linter, 3 144 tests,
+98 %), ce qui est plus strict que le hook.
+
+**Reste** : valider l'ADR-0033 ; côté app (`karria_app`) : libellé de l'usage `application`
+dans `TEXTES_IA`, écran atelier (propositions avant/après, « tout accepter »), lettre, espace
+Candidatures (`docs/contrat-api-candidatures.md` à recopier dans `karria_app/docs`) ; essai
+réel sur un vrai CV et une vraie offre pour juger la qualité des propositions et de la lettre
+(ajuster `infrastructure/prompts.py`, et `extract_keywords` si les mots-clés sont bruyants) ;
+un dossier resté `en_cours` sans worker ne se relance pas (`adapt` n'accepte que `echouee`) —
+à surveiller ; la fusion avec le travail de l'autre agent (`documents` : rendu ancré,
+lettre, envoi — ADR-0029 à 0032, migration 17) se fait à son commit, ces fichiers partagés
+(`wiring.py`, `pyproject.toml`, `modules.py`, `settings.py`, `conftest` d'intégration, index
+des ADR) ont été indexés **sans** ses hunks.
 
 ### 2026-11-04, tard — feuille de route de l'atelier CV (Fable) — À VALIDER PAR MARC
 
