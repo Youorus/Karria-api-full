@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 
 from doubles import InMemorySuggestionIndex, StaticOfferVocabulary
@@ -63,6 +65,34 @@ class TestMaterialiser:
         assert index.entries[SuggestionKind.TITLE][0].weight == 15
         assert [e.label for e in index.entries[SuggestionKind.COMPANY]] == ["Carrefour", "Lidl"]
         assert [e.label for e in index.entries[SuggestionKind.CITY]] == ["Paris", "Lyon"]
+
+    async def test_une_famille_en_echec_ne_prive_pas_les_autres(self) -> None:
+        class FailingIndex(InMemorySuggestionIndex):
+            async def replace(
+                self, kind: SuggestionKind, entries: Sequence[VocabularyEntry]
+            ) -> int:
+                if kind is SuggestionKind.COMPANY:
+                    msg = "colonne trop courte"
+                    raise RuntimeError(msg)
+                return await super().replace(kind, entries)
+
+        index = FailingIndex()
+        vocabulary = StaticOfferVocabulary(
+            {
+                SuggestionKind.TITLE: [("Vendeur", 4)],
+                SuggestionKind.COMPANY: [("Piège", 4)],
+                SuggestionKind.CITY: [("Lyon", 4)],
+            }
+        )
+
+        report = await RefreshSuggestions(vocabulary, index).execute()
+
+        assert report.written == {
+            SuggestionKind.CITY: 1,
+            SuggestionKind.COMPANY: 0,
+            SuggestionKind.TITLE: 1,
+        }
+        assert SuggestionKind.COMPANY not in index.entries
 
     async def test_un_vocabulaire_vide_ne_remplace_pas_ce_qu_on_servait(self) -> None:
         index = InMemorySuggestionIndex()

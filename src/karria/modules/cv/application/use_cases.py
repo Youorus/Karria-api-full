@@ -816,14 +816,23 @@ class RefreshSuggestions:
     async def execute(self) -> SuggestionRefreshReport:
         written: dict[SuggestionKind, int] = {}
         for kind in sorted(MATERIALIZED_KINDS):
-            raw = await self._vocabulary.distinct(kind)
-            entries = clean_vocabulary(kind, raw)
-            if not entries:
-                logger.warning("cv.suggestions_empty", kind=kind.value, raw=len(raw))
+            # Une famille qui échoue — une ligne de l'index que la base
+            # refuse, une panne pendant le remplacement — ne prive pas les
+            # autres de leur matérialisation : l'échec se journalise, on
+            # continue, et le rapport dit 0 pour elle.
+            try:
+                written[kind] = await self._refresh(kind)
+            except Exception:
+                logger.exception("cv.suggestions_refresh_failed", kind=kind.value)
                 written[kind] = 0
-                continue
-            written[kind] = await self._index.replace(kind, entries)
-            logger.info(
-                "cv.suggestions_refreshed", kind=kind.value, raw=len(raw), written=written[kind]
-            )
         return SuggestionRefreshReport(written=written)
+
+    async def _refresh(self, kind: SuggestionKind) -> int:
+        raw = await self._vocabulary.distinct(kind)
+        entries = clean_vocabulary(kind, raw)
+        if not entries:
+            logger.warning("cv.suggestions_empty", kind=kind.value, raw=len(raw))
+            return 0
+        count = await self._index.replace(kind, entries)
+        logger.info("cv.suggestions_refreshed", kind=kind.value, raw=len(raw), written=count)
+        return count

@@ -163,6 +163,11 @@ def clean_vocabulary(
         if label is None:
             continue
         folded = fold(label)
+        # La clé pliée peut être plus longue que le libellé (NFKD décompose,
+        # « ﬁ » devient « fi ») ou vide (un libellé fait de signes
+        # combinants) : la colonne est bornée, l'entrée s'écarte.
+        if not folded or len(folded) > LABEL_MAX_LENGTH:
+            continue
         best_label, best_count, total = merged.get(folded, (label, 0, 0))
         if count > best_count:
             best_label, best_count = label, count
@@ -210,7 +215,8 @@ def parse_reference(lines: Iterable[str]) -> list[VocabularyEntry]:
 def reference_entries(kind: SuggestionKind) -> tuple[VocabularyEntry, ...]:
     """Les entrées d'une liste embarquée, lues une fois par processus."""
     filename = _REFERENCE_FILES[kind]
-    text = (resources.files(__package__) / "references" / filename).read_text(encoding="utf-8")
+    package = resources.files("karria.modules.cv.domain")
+    text = (package / "references" / filename).read_text(encoding="utf-8")
     return tuple(parse_reference(text.splitlines()))
 
 

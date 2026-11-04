@@ -115,6 +115,18 @@ class TestLeVocabulaire:
         entries = clean_vocabulary(SuggestionKind.CITY, [("Aurillac", 1)])
         assert [e.label for e in entries] == ["Aurillac"]
 
+    def test_ecarte_un_libelle_dont_la_cle_pliee_deborde_la_colonne(self) -> None:
+        # « ﬁ » (une ligature, un caractère) se plie en « fi » (deux) : le
+        # libellé tient dans 150, sa clé non. L'entrée s'écarte, le reste passe.
+        long_label = "\ufb01" * 100
+        entries = clean_vocabulary(SuggestionKind.CITY, [(long_label, 5), ("Paris", 1)])
+        assert [e.label for e in entries] == ["Paris"]
+
+    def test_ecarte_un_libelle_dont_la_cle_pliee_est_vide(self) -> None:
+        # Des signes combinants seuls : un libellé « non vide » sans clé.
+        entries = clean_vocabulary(SuggestionKind.CITY, [("\u0301\u0301\u0301", 5)])
+        assert entries == []
+
     def test_trie_par_poids_decroissant_puis_alphabet(self) -> None:
         entries = clean_vocabulary(
             SuggestionKind.CITY, [("Lyon", 5), ("Paris", 50), ("Lille", 5), ("Nancy", 9)]
