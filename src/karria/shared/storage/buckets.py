@@ -55,6 +55,13 @@ class Bucket(StrEnum):
     #: messages vocaux et captures d'écran, dans les deux sens. Privé, servi
     #: par URL signée ; conservé tant que la conversation existe.
     SUPPORT = "support"
+    #: Ressources **publiques et libres de droits** de Karria : la marque
+    #: (logo des e-mails) et les copies publiques des polices libres servies
+    #: par les modèles de CV, pour le rendu de l'atelier dans l'app
+    #: (ADR-0029, ADR-0032). Public parce qu'une adresse **stable** se met en
+    #: cache (une URL signée change à chaque rendu) ; rien de personnel n'y
+    #: entre jamais : des polices OFL et notre propre logo.
+    ASSETS = "assets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +162,14 @@ REGISTRY: Final[dict[Bucket, BucketPolicy]] = {
         # Une capture d'écran se lit sur un téléphone : même réduction que
         # les photos de profil.
         image=ImagePolicy(max_edge=2_048, quality=85),
+    ),
+    Bucket.ASSETS: BucketPolicy(
+        public_read=True,
+        allowed_content_types=frozenset({"font/ttf", "image/png", "image/webp", "image/svg+xml"}),
+        max_bytes=4 * 1024 * 1024,
+        # Un fichier public s'adresse par un nom qui ne change pas de contenu
+        # (police statique, logo versionné dans son nom) : cache long.
+        cache_seconds=31_536_000,
     ),
     Bucket.LANDING: BucketPolicy(
         allowed_content_types=frozenset({"application/gzip", "application/x-ndjson"}),

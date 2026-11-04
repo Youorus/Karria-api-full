@@ -47,6 +47,7 @@ class ConsoleMailer:
             subject=rendered.subject,
             recipient=mail.to,
             body=rendered.text_body,
+            attachments=[a.file_name for a in mail.attachments],
         )
 
     async def check_health(self) -> None:

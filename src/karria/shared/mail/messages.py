@@ -83,6 +83,9 @@ class MailTemplate:
         preview: Texte d'aperçu, affiché par les clients à côté de l'objet.
             Souvent négligé — et le client affiche alors les premiers mots
             du HTML, ce qui donne « Voir ce message dans un navigateur ».
+        signature_from: Clé du contexte qui **signe** le message à la place
+            de « L'équipe Karria » — le nom de la personne qui transmet ses
+            documents (ADR-0031). `None` : la signature de l'équipe.
         footer_note: Pourquoi ce message-ci arrive, en une phrase, au pied.
 
             C'est la première question de quelqu'un qui ne se souvient pas
@@ -100,6 +103,7 @@ class MailTemplate:
     category: MailCategory
     preview: dict[Language, str] = field(default_factory=dict)
     footer_note: dict[Language, str] = field(default_factory=dict)
+    signature_from: str | None = None
 
 
 class MailMessage(StrEnum):
@@ -124,6 +128,10 @@ class MailMessage(StrEnum):
     #: Une personne vient d'écrire à l'équipe dans « Parler à l'équipe »
     #: (module `support`). Adressé à l'équipe, jamais à la personne.
     SUPPORT_NEW_MESSAGE = "support_new_message"
+    #: Les documents d'une personne (CV, lettre) en pièces jointes, à
+    #: l'adresse qu'elle a choisie — la sienne ou une autre (ADR-0031).
+    #: Signé de son nom ; aucun texte libre.
+    DOCUMENTS_SENT = "documents_sent"
 
 
 #: Le registre. Une entrée par message, et rien de plus à toucher ailleurs.
@@ -186,6 +194,29 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
             Language.EN: (
                 "You receive this message because you are on duty for « Talk to the "
                 "team » (SUPPORT__TEAM_EMAIL)."
+            ),
+        },
+    ),
+    MailMessage.DOCUMENTS_SENT: MailTemplate(
+        subject={
+            Language.FR: "Documents de candidature de $sender_name",
+            Language.EN: "Application documents from $sender_name",
+        },
+        template="documents_sent",
+        category=MailCategory.NOTIFICATION,
+        preview={
+            Language.FR: "$count document(s) en pièce jointe, envoyé(s) depuis Karria.",
+            Language.EN: "$count document(s) attached, sent from Karria.",
+        },
+        signature_from="sender_name",
+        footer_note={
+            Language.FR: (
+                "Vous recevez ce message parce que $sender_name a choisi votre adresse "
+                "pour s&rsquo;envoyer ses documents depuis Karria. Rien d&rsquo;autre ne suivra."
+            ),
+            Language.EN: (
+                "You receive this message because $sender_name chose your address to send "
+                "their documents from Karria. Nothing else will follow."
             ),
         },
     ),

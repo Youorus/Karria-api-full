@@ -62,6 +62,29 @@ FILET: Final = "#eceff4"
 ENCART: Final = "#eef3fc"
 
 # ---------------------------------------------------------------------
+# Thème sombre (ADR-0032)
+# ---------------------------------------------------------------------
+#
+# Les valeurs du thème sombre de l'application, aplaties. Elles ne servent
+# que dans le bloc `@media (prefers-color-scheme: dark)` de `layout.py` ;
+# un client qui ignore la media query (Gmail mobile) inverse la palette
+# claire lui-même, et celle-ci est choisie pour le supporter : texte très
+# sombre sur blanc, bleu qui garde son contraste dans les deux sens.
+
+#: Fond de page sombre.
+SOMBRE_FOND: Final = "#0b1220"
+#: Panneau sombre, à peine plus clair que le fond.
+SOMBRE_PANNEAU: Final = "#111a2b"
+#: Bordure et filets en sombre.
+SOMBRE_BORDURE: Final = "#243049"
+#: Texte courant en sombre.
+SOMBRE_TEXTE: Final = "#eef2f8"
+#: Texte secondaire et pied en sombre.
+SOMBRE_TEXTE_ATTENUE: Final = "#9aa6bb"
+#: Bleu de la marque éclairci pour tenir sur fond sombre.
+SOMBRE_PRIMAIRE: Final = "#5ea2ff"
+
+# ---------------------------------------------------------------------
 # Typographie
 # ---------------------------------------------------------------------
 
@@ -102,20 +125,24 @@ LARGEUR: Final = 600
 # Le logo, et l'adresse du site public
 # ---------------------------------------------------------------------
 
-#: Le symbole de la marque, en PNG.
+#: Le mot-logo de la marque, en PNG, sur notre stockage public (ADR-0032).
 #:
 #: En PNG et non en SVG : Gmail supprime purement et simplement les images
-#: SVG, et Outlook ne les rend pas. Servi en 512 px pour un affichage à
-#: 34 px, ce qui le garde net sur un écran à densité double.
-#:
-#: L'URL est absolue et pointe le site public. Une image d'e-mail ne peut
-#: pas être relative — le message est lu hors de tout site. **À confirmer
-#: le jour du premier envoi réel** : le fichier doit exister à cette
-#: adresse, sans quoi l'en-tête n'affiche qu'un carré vide chez qui
-#: autorise les images.
-LOGO_URL: Final = "https://karria.fr/icon-512.png"
-#: Taille d'affichage du symbole dans l'en-tête.
-LOGO_TAILLE: Final = 34
+#: SVG, et Outlook ne les rend pas. Servi à 2× (577 × 203 px) pour un
+#: affichage à 28 px de haut, net sur un écran à densité double. Deux
+#: fichiers : le logo noir pour le thème clair, le logo blanc pour le
+#: sombre ; `layout.header` les pose tous les deux et la feuille de style
+#: montre le bon. Déposés par `python -m scripts.assets brand` ; tant qu'ils
+#: n'y sont pas, l'en-tête n'affiche que le mot « Karria » en texte.
+LOGO_CLAIR_URL: Final = (
+    "https://storage.karria.fr/karria-production-assets/brand/karria-mot-logo-noir.png"
+)
+LOGO_SOMBRE_URL: Final = (
+    "https://storage.karria.fr/karria-production-assets/brand/karria-mot-logo-blanc.png"
+)
+#: Dimensions d'affichage du mot-logo (le fichier fait 577 × 203).
+LOGO_HAUTEUR: Final = 28
+LOGO_LARGEUR: Final = 80
 
 #: Le site public, racine des liens du pied de page.
 #:

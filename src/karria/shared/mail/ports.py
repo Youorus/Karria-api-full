@@ -16,6 +16,24 @@ from karria.shared.mail.messages import MailMessage
 
 
 @dataclass(frozen=True, slots=True)
+class Attachment:
+    """Une pièce jointe : un fichier produit par Karria (CV, lettre), jamais reçu d'un tiers.
+
+    Le nom est celui que le destinataire verra ; il est nettoyé par le
+    transport (pas de séparateur de chemin, pas de retour à la ligne).
+    """
+
+    file_name: str
+    content_type: str
+    data: bytes
+
+
+#: Taille totale des pièces jointes d'un message : au-delà, beaucoup de
+#: serveurs receveurs refusent (10 Mo est le plancher le plus courant).
+MAX_ATTACHMENTS_BYTES: int = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True, slots=True)
 class OutgoingMail:
     """Un message prêt à partir.
 
@@ -25,12 +43,15 @@ class OutgoingMail:
             exposerait les uns aux autres.
         context: Valeurs substituées dans l'objet et le gabarit.
         reply_to: Adresse de réponse, quand elle diffère de l'expéditeur.
+        attachments: Pièces jointes (ADR-0031). Des fichiers que Karria a
+            produits elle-même ; leur taille totale est bornée.
     """
 
     message: MailMessage
     to: str
     context: dict[str, Any] = field(default_factory=dict)
     reply_to: str | None = None
+    attachments: tuple[Attachment, ...] = ()
 
     #: Langue de rédaction. Décidée par l'appelant — qui seul sait s'il
     #: s'adresse à un compte dont la préférence est connue, ou à une

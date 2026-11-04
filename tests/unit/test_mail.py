@@ -65,6 +65,10 @@ CONTEXTE: Final[dict[str, Any]] = {
     "preview": "Le fil ne se charge plus depuis ce matin.",
     "kind_label": "texte",
     "console_url": "https://api.karria.fr/api/v1/internal/support/console",
+    # Ce que `documents` passe pour transmettre des pièces jointes (ADR-0031).
+    "sender_name": "Awa Diallo",
+    "documents": "- CV - Awa Diallo.pdf\n- Lettre de motivation - Acme.pdf",
+    "count": 2,
 }
 
 
@@ -181,7 +185,8 @@ class TestGabaritDeMarque:
         """
         rendu = _rendre(MailMessage.WELCOME)
 
-        assert theme.LOGO_URL in rendu.html_body
+        assert theme.LOGO_CLAIR_URL in rendu.html_body
+        assert theme.LOGO_SOMBRE_URL in rendu.html_body
         assert f'alt="{layout.BRAND}"' in rendu.html_body
         assert rendu.html_body.count(layout.BRAND) >= 2
 
@@ -230,6 +235,7 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.WELCOME: "Bienvenue sur Karria, Awa",
     MailMessage.SMTP_TEST: "Test SMTP Karria",
     MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
+    MailMessage.DOCUMENTS_SENT: "Documents de candidature de Awa Diallo",
 }
 
 #: Ce qui trahit une variable mal rendue, quelle que soit sa syntaxe.
@@ -359,6 +365,9 @@ class TestQualiteRedactionnelle:
         """Qui signe, pourquoi ce message, à qui, et comment nous joindre."""
         rendu = _rendre(message, langue)
         signature = "L\u2019équipe Karria" if langue is Language.FR else "The Karria team"
+        if REGISTRY[message].signature_from:
+            # Un message transmis au nom d'une personne est signé d'elle (ADR-0031).
+            signature = str(CONTEXTE[REGISTRY[message].signature_from])
 
         for partie in (rendu.html_body, rendu.text_body):
             assert signature in partie

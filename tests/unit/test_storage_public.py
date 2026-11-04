@@ -40,8 +40,9 @@ class Recorder:
         return {"ETag": '"e"'}
 
 
-def test_seul_le_bucket_des_logos_est_public() -> None:
-    assert [b for b, policy in REGISTRY.items() if policy.public_read] == [Bucket.LOGOS]
+def test_seuls_les_logos_et_les_ressources_libres_sont_publics() -> None:
+    public = {b for b, policy in REGISTRY.items() if policy.public_read}
+    assert public == {Bucket.LOGOS, Bucket.ASSETS}
 
 
 @pytest.mark.parametrize(

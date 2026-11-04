@@ -97,10 +97,13 @@ def render(
 
     from karria.shared.mail import layout  # noqa: PLC0415 - cycle d'import
 
+    signed_by = (
+        safe.get(definition.signature_from, "") if definition.signature_from else ""
+    ) or _SIGNATURE[language]
     body = "\n".join(
         (
             _compose(remplir(_read(definition.template, language))),
-            layout.signature(_SIGNATURE[language]),
+            layout.signature(str(signed_by)),
         )
     )
     # L'objet est un en-tête, pas du HTML : il se remplit avec les valeurs

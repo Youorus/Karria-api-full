@@ -61,4 +61,8 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0026](0026-parler-a-l-equipe-et-temps-reel.md) | « Parler à l'équipe » : un fil par compte, un flux WebSocket réveillé par `LISTEN`/`NOTIFY`, push et courriel sans doublon | Proposée |
 | [0027](0027-tri-du-fil-et-session-expiree.md) | Le tri du fil (pertinence, date, distance haversine) en base dans les deux modes ; un jeton présenté mais refusé répond 401 au lieu de valoir un visiteur | Proposée |
 | [0028](0028-suggestions-a-la-saisie-du-cv.md) | Suggestions à la saisie du CV : vocabulaire de l'index d'offres matérialisé par le worker, listes de référence embarquées, port entre modules | Proposée |
+| [0029](0029-rendu-html-ancre-pour-l-atelier.md) | Rendu HTML ancré pour l'atelier CV : le même HTML que le PDF, des ancres `data-chemin`, polices publiques, pagination estimée | Proposée |
+| [0030](0030-lettre-de-motivation-comme-document.md) | La lettre de motivation est un document rendu dans la grammaire du modèle de CV (HTML ancré, PDF, DOCX, export `kind: letter`) | Proposée |
+| [0031](0031-envoi-des-documents-par-e-mail.md) | Envoi des documents par e-mail : pièces jointes au port mail, aucun texte libre, cinq envois par jour, remise en file | Proposée |
+| [0032](0032-gabarits-d-e-mail.md) | Gabarits d'e-mail sans étiquette ni encart, mode sombre réel, logo sur le stockage public | Proposée |
 | [0033](0033-dossiers-de-candidature.md) | Dossiers de candidature : copie figée du CV, propositions réversibles, lettre liée à une offre, offre figée, purge | Proposée |

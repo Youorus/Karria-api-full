@@ -36,11 +36,13 @@ from karria.shared.mail.messages import (
     MailMessage,
     MailTemplate,
 )
-from karria.shared.mail.ports import Mailer, OutgoingMail
+from karria.shared.mail.ports import MAX_ATTACHMENTS_BYTES, Attachment, Mailer, OutgoingMail
 from karria.shared.mail.rendering import RenderedMail, render, render_for
 
 __all__ = [
+    "MAX_ATTACHMENTS_BYTES",
     "REGISTRY",
+    "Attachment",
     "MailCategory",
     "MailDeliveryError",
     "MailMessage",

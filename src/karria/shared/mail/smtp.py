@@ -39,7 +39,7 @@ from karria.shared.mail.errors import (
     MailRecipientRefusedError,
     MailServerUnavailableError,
 )
-from karria.shared.mail.ports import OutgoingMail
+from karria.shared.mail.ports import MAX_ATTACHMENTS_BYTES, OutgoingMail
 from karria.shared.mail.rendering import render_for
 
 if TYPE_CHECKING:
@@ -126,6 +126,21 @@ class SmtpMailer:
         # affiche la **dernière** partie qu'il sait rendre.
         message.set_content(text_body)
         message.add_alternative(html_body, subtype="html")
+        if mail.attachments:
+            total = sum(len(a.data) for a in mail.attachments)
+            if total > MAX_ATTACHMENTS_BYTES:
+                raise MailDeliveryError(f"pièces jointes trop lourdes : {total} octets")
+            # `add_attachment` sur un message `multipart/alternative` le
+            # convertit lui-même en `multipart/mixed` : le texte et le HTML
+            # restent une alternative, les fichiers viennent après.
+            for attachment in mail.attachments:
+                maintype, _, subtype = attachment.content_type.partition("/")
+                message.add_attachment(
+                    attachment.data,
+                    maintype=maintype or "application",
+                    subtype=subtype or "octet-stream",
+                    filename=_safe_file_name(attachment.file_name),
+                )
         return message
 
     def _deliver(self, message: EmailMessage) -> None:
@@ -150,6 +165,12 @@ class SmtpMailer:
                 server.login(self._settings.username, self._settings.password.get_secret_value())
         except (smtplib.SMTPException, OSError) as exc:
             raise _classify(exc) from exc
+
+
+def _safe_file_name(name: str) -> str:
+    """Un nom de pièce jointe sans séparateur ni caractère de contrôle."""
+    cleaned = "".join(c for c in name if c.isprintable() and c not in '/\\:*?"<>|')
+    return cleaned.strip() or "document"
 
 
 def _mask(address: str) -> str:
