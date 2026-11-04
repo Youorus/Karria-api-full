@@ -23,9 +23,30 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `devices`  | fait | `PUT/DELETE /devices/{installation_id}`, `POST /devices/me/test-notification` (local/test) ; service interne `SendPushToUser` (Expo) |
 | `cv`       | fait | `GET /cv/me`, `PUT /cv/me/chapters/{c}`, `GET/POST /cv/draft`, `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{c}`, `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`, `POST /voice/transcribe` |
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
-| `payments` | **en production, ALLUMÉ en live depuis le 2026-11-04** (ADR-0023 + **ADR-0024** « Proposées » ; compte Stripe **partagé avec Zoumani**, objets étiquetés `app=karria`, `lookup_key` `karria_*`, libellé `KARRIA`, portail `PAYMENTS__PORTAL_CONFIGURATION` ; version d'API `2026-09-30.endive` alignée SDK/webhook ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
+| `payments` | **en production, ALLUMÉ en live depuis le 2026-11-04** (ADR-0023 + **ADR-0024** « Proposées » ; compte Stripe **dédié « Karria »** (`acct_…SbjB6`, SEYA LABS) depuis le 2026-11-04 soir, objets étiquetés `app=karria`, `lookup_key` `karria_*`, libellé `KARRIA` posé par le code, pas de `PAYMENTS__PORTAL_CONFIGURATION` (portail par défaut du compte) ; version d'API `2026-09-30.endive` alignée SDK/webhook ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
+
+### Session du 2026-11-04, fin (Stripe bascule sur le **compte Karria dédié** — Fable) — EN PRODUCTION
+
+Marc a finalement voulu deux comptes Stripe sous SEYA LABS : « KARRIA » seul sur les relevés
+et des factures Karria, Zoumani intact. Il a créé le compte « Karria » et une **clé restreinte**.
+Fait : `PAYMENTS__SECRET_KEY` (rk Karria) et `PAYMENTS__WEBHOOK_SECRET` (webhook du nouveau
+compte) remplacés dans `/root/karria-api.env` **et** dans l'env Dokploy de l'API ;
+`PAYMENTS__PORTAL_CONFIGURATION` retiré (c'était le portail Zoumani) ; redéployé ;
+`/health/ready` 200. Vérifié en prod : webhook non signé → 422 `signature_missing` ; signé
+avec le nouveau secret → 200 (`applied: false` pour une session inconnue). Chez Stripe (lu par
+l'API) : webhook `https://api.karria.fr/api/v1/payments/webhook` actif, les 5 événements,
+version `2026-10-28.endive` (le code ne dépend pas de la version : il relit l'objet par le SDK) ;
+**aucun produit** encore dans le compte (créés au premier checkout) ; **libellé de relevé encore
+« SEYA LABS »**, **aucun logo/couleur** (ni sur Karria ni sur Zoumani).
+
+**Reste côté Marc (compte Karria)** : libellé de relevé → `KARRIA` ; Image de marque (logo,
+icône, couleur) ; portail client (résiliation, factures, carte, liens CGU/confidentialité) ;
+reçus par e-mail ; puis **test réel** 1 café 2,99 € depuis l'iPhone et remboursement. **Compte
+Zoumani** : archiver `prod_VZE1QFg` (café Karria d'essai) et supprimer le webhook Karria
+`we_1UUrmgRLc3H57Exq7EZQi4tH`. Clés passées dans le chat (rk/pk Karria, whsec) : à renouveler
+un jour par hygiène.
 
 ### Session du 2026-11-04, suite (Stripe **en live** sur le compte partagé avec Zoumani — Fable) — EN PRODUCTION, ALLUMÉ
 
