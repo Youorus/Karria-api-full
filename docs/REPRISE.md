@@ -5,6 +5,17 @@
 
 **Dernière mise à jour : 2026-11-04**
 
+### 2026-11-04, tard — feuille de route de l'atelier CV (Fable) — À VALIDER PAR MARC
+
+`docs/atelier-cv-feuille-de-route.md` : rendu temps réel (option C hybride recommandée :
+HTML serveur avec ancres `data-chemin` + patch local à la frappe + re-rendu au repos),
+choix du modèle avec ses données, atelier « toucher pour modifier », Karria propose /
+la personne décide (règle absolue), adapter à une offre, finaliser (ATS motivant,
+PDF/DOCX natifs, envoi e-mail borné), photo pro (3 rendus, contrôle d'identité,
+galerie), publicité native sur tout le parcours (emplacements + compteur). Quatre
+décisions attendues de Marc (fin du document). Rien n'est construit tant qu'il n'a pas
+tranché.
+
 ### Session du 2026-11-04 (soir) — suggestions à la saisie du CV (ADR-0028 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : proposer des valeurs connues quand on tape un poste, une entreprise, une
