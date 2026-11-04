@@ -20,7 +20,12 @@ Ce qu'il expose, et pour qui :
   `scripts/companies.py` (entreprises de la V1, rattrapage, logos) ;
 - `build_offer_vocabulary` — les intitulés, entreprises et villes
   distincts de l'index, que `bootstrap/worker.py` passe au module `cv`
-  comme son port `OfferVocabulary` (suggestions à la saisie).
+  comme son port `OfferVocabulary` (suggestions à la saisie) ;
+- `GetOfferForUser`, `get_get_offer`, `Offer`, `LogoUrl`, `get_logo_url`,
+  `UpdateOfferState`, `StateChanges`, `build_update_state` — la fiche d'une
+  offre, l'adresse de son logo et l'état « candidaté », que
+  `bootstrap/wiring.py` donne au module `applications` (dossiers de
+  candidature, ADR-0029).
 """
 
 from karria.modules.offers.api import router
@@ -38,12 +43,21 @@ from karria.modules.offers.api.dependencies import (
     build_refresh_targets,
     build_search_offers,
     build_sync_index,
+    build_update_state,
     ensure_indexes,
+    get_get_offer,
+    get_logo_url,
     get_user_notifier,
 )
+from karria.modules.offers.api.schemas import LogoUrl
 from karria.modules.offers.api.tasks import fetch_logos_within, register_tasks
-from karria.modules.offers.application import UserNotifier
-from karria.modules.offers.domain import RawPosting, SearchCriteria
+from karria.modules.offers.application import (
+    GetOfferForUser,
+    StateChanges,
+    UpdateOfferState,
+    UserNotifier,
+)
+from karria.modules.offers.domain import Offer, RawPosting, SearchCriteria
 from karria.modules.offers.domain.companies import (
     CompanySighting,
     company_domain,
@@ -62,8 +76,13 @@ MODULE = ModuleDescriptor(
 __all__ = [
     "MODULE",
     "CompanySighting",
+    "GetOfferForUser",
+    "LogoUrl",
+    "Offer",
     "RawPosting",
     "SearchCriteria",
+    "StateChanges",
+    "UpdateOfferState",
     "UserNotifier",
     "build_apply_criteria",
     "build_attach_companies",
@@ -78,10 +97,13 @@ __all__ = [
     "build_refresh_targets",
     "build_search_offers",
     "build_sync_index",
+    "build_update_state",
     "company_domain",
     "company_key",
     "ensure_indexes",
     "fetch_logos_within",
+    "get_get_offer",
+    "get_logo_url",
     "get_user_notifier",
     "plausible_domain",
     "register_tasks",

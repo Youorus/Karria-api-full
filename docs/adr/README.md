@@ -61,3 +61,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0026](0026-parler-a-l-equipe-et-temps-reel.md) | « Parler à l'équipe » : un fil par compte, un flux WebSocket réveillé par `LISTEN`/`NOTIFY`, push et courriel sans doublon | Proposée |
 | [0027](0027-tri-du-fil-et-session-expiree.md) | Le tri du fil (pertinence, date, distance haversine) en base dans les deux modes ; un jeton présenté mais refusé répond 401 au lieu de valoir un visiteur | Proposée |
 | [0028](0028-suggestions-a-la-saisie-du-cv.md) | Suggestions à la saisie du CV : vocabulaire de l'index d'offres matérialisé par le worker, listes de référence embarquées, port entre modules | Proposée |
+| [0033](0033-dossiers-de-candidature.md) | Dossiers de candidature : copie figée du CV, propositions réversibles, lettre liée à une offre, offre figée, purge | Proposée |

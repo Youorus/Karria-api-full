@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from karria.modules.applications import MODULE as APPLICATIONS_MODULE
 from karria.modules.cv import MODULE as CV_MODULE
 from karria.modules.devices import MODULE as DEVICES_MODULE
 from karria.modules.documents import MODULE as DOCUMENTS_MODULE
@@ -38,6 +39,7 @@ ENABLED_MODULES: Final[tuple[ModuleDescriptor, ...]] = (
     DOCUMENTS_MODULE,
     PAYMENTS_MODULE,
     SUPPORT_MODULE,
+    APPLICATIONS_MODULE,
 )
 
 

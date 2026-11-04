@@ -501,6 +501,18 @@ def build_forget_user() -> ForgetUser:
     )
 
 
+def build_update_state() -> UpdateOfferState:
+    """Le même geste qu'`UpdateOfferState` en requête, hors requête, pour le pont des candidatures."""
+    return UpdateOfferState(
+        offers=get_offer_repository(),
+        feed=get_feed_repository(),
+        states=get_state_repository(),
+        clock=get_clock(),
+        criteria=get_criteria_repository(),
+        log=get_interaction_log(),
+    )
+
+
 def build_update_memory(settings: Settings) -> UpdateKarriaMemory:
     """La mise à jour de la mémoire, pour le travail `offers.update_memory`."""
     return UpdateKarriaMemory(

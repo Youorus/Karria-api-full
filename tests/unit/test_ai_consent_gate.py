@@ -72,6 +72,14 @@ class TestLesRoutesDIaRefusentSansConsentement:
             ("POST", "/api/v1/voice/transcribe", {"files": AUDIO}),
             ("POST", "/api/v1/cv/photo", {"files": IMAGE, "data": {"enhance": "true"}}),
             ("POST", "/api/v1/cv/me/generated-cvs", {"json": {"template_id": str(uuid4())}}),
+            ("POST", "/api/v1/applications", {"json": {"offer_id": str(uuid4())}}),
+            ("POST", f"/api/v1/applications/{uuid4()}/adapt", {}),
+            ("POST", f"/api/v1/applications/{uuid4()}/letter", {}),
+            (
+                "POST",
+                f"/api/v1/applications/{uuid4()}/letter/paragraphs/0/regenerate",
+                {"json": {}},
+            ),
         ],
     )
     async def test_403_ai_consent_required(

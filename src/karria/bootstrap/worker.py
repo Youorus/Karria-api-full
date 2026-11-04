@@ -20,6 +20,7 @@ from typing import Final
 
 from karria.bootstrap.orm import TORTOISE_ORM
 from karria.bootstrap.wiring import build_user_notifier
+from karria.modules.applications import register_tasks as register_applications_tasks
 from karria.modules.cv import register_tasks as register_cv_tasks
 from karria.modules.documents import register_tasks as register_documents_tasks
 from karria.modules.offers import build_offer_vocabulary
@@ -87,6 +88,9 @@ def build_worker_app() -> App:
     # l'index d'offres (ADR-0028) ; sans ce branchement, les suggestions
     # `title|company|city` resteraient vides — dégradé, pas cassé.
     register_cv_tasks(app, vocabulary=build_offer_vocabulary)
+    # `applications` finit sur la file l'adaptation d'un CV qui a dépassé le
+    # temps de la requête (ADR-0033).
+    register_applications_tasks(app)
     return app
 
 

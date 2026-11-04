@@ -360,6 +360,7 @@ containers = [
     "karria.modules.documents",
     "karria.modules.payments",
     "karria.modules.support",
+    "karria.modules.applications",
 ]
 
 [[tool.importlinter.contracts]]
@@ -374,6 +375,7 @@ source_modules = [
     "karria.modules.documents.domain",
     "karria.modules.payments.domain",
     "karria.modules.support.domain",
+    "karria.modules.applications.domain",
 ]
 forbidden_modules = [
     "fastapi",
@@ -405,6 +407,7 @@ modules = [
     "karria.modules.documents",
     "karria.modules.payments",
     "karria.modules.support",
+    "karria.modules.applications",
 ]
 # Les modules communiquent par le bus d'événements. Toute exception à cette
 # règle doit être justifiée par une ADR et déclarée ici en `ignore_imports`.

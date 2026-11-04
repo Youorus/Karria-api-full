@@ -473,6 +473,10 @@ class LlmTaskRoutes(BaseModel):
     #: explication d'un score ATS déjà calculé.
     template_extract: str = ""
     ats_explain: str = ""
+    #: Dossiers de candidature (ADR-0033) : adapter le CV à une offre, écrire
+    #: la lettre (et réécrire un paragraphe).
+    cv_adapt: str = ""
+    letter_draft: str = ""
 
 
 class LlmSettings(BaseModel):
@@ -694,6 +698,8 @@ class Settings(BaseSettings):
             "memory",
             "template_extract",
             "ats_explain",
+            "cv_adapt",
+            "letter_draft",
         ):
             if not getattr(self.llm.tasks, task).strip():
                 setattr(self.llm.tasks, task, text)

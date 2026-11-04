@@ -22,8 +22,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from doubles import CollectingBus, DevicesEnv, IdentityEnv, SupportEnv
+from doubles import ApplicationsEnv, CollectingBus, DevicesEnv, IdentityEnv, SupportEnv
 from karria.bootstrap.app import create_app
+from karria.modules.applications.api import dependencies as applications_deps
 from karria.modules.devices.api import dependencies as devices_deps
 from karria.modules.identity.api import dependencies as identity_deps
 from karria.modules.support.api import dependencies as support_deps
@@ -218,6 +219,36 @@ def support_env(app: FastAPI) -> Iterator[SupportEnv]:
         support_deps.get_account_directory: lambda: env.directory,
         support_deps.get_conversation_feed: lambda: env.feed,
         support_deps.get_clock: lambda: env.clock,
+        get_unit_of_work: NullUnitOfWork,
+    }
+    app.dependency_overrides.update(overrides)
+    yield env
+    for key in overrides:
+        app.dependency_overrides.pop(key, None)
+
+
+@pytest.fixture
+def applications_env(app: FastAPI) -> Iterator[ApplicationsEnv]:
+    """Installe les doublures d'`applications` sur l'application.
+
+    Les routes, les cas d'usage, la validation et les règles du dossier sont
+    exercés pour de vrai ; seuls le dépôt, les ports vers les autres modules,
+    le modèle de langage, la file et l'horloge sont remplacés.
+    """
+    env = ApplicationsEnv.build()
+    overrides = {
+        applications_deps.get_dossier_repository: lambda: env.dossiers,
+        applications_deps.get_offer_reader: lambda: env.offers,
+        applications_deps.get_base_cv_reader: lambda: env.base_cvs,
+        applications_deps.get_cv_validator: lambda: env.validator,
+        applications_deps.get_template_checker: lambda: env.templates,
+        applications_deps.get_cv_adapter: lambda: env.adapter,
+        applications_deps.get_letter_writer: lambda: env.writer,
+        applications_deps.get_dossier_jobs: lambda: env.jobs,
+        applications_deps.get_logo_url: lambda: (
+            lambda digest: f"https://logos.test/{digest}/128.webp"
+        ),
+        applications_deps.get_clock: lambda: env.clock,
         get_unit_of_work: NullUnitOfWork,
     }
     app.dependency_overrides.update(overrides)

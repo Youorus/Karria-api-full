@@ -58,6 +58,8 @@ class AiPurpose(StrEnum):
     PHOTO_ENHANCEMENT = "photo_enhancement"
     #: L'explication du score ATS d'un export.
     TEMPLATE_ANALYSIS = "template_analysis"
+    #: Les dossiers de candidature : adapter le CV à une offre, écrire la lettre.
+    APPLICATION = "application"
 
 
 #: Les tâches du routage (`LLM__TASKS__<TACHE>`) qui servent chaque usage.
@@ -70,6 +72,7 @@ PURPOSE_TASKS: Final[Mapping[AiPurpose, tuple[str, ...]]] = {
     AiPurpose.CV_IMPORT: ("cv_extract",),
     AiPurpose.PHOTO_ENHANCEMENT: ("portrait",),
     AiPurpose.TEMPLATE_ANALYSIS: ("ats_explain",),
+    AiPurpose.APPLICATION: ("cv_adapt", "letter_draft"),
 }
 
 #: Le nom lisible de chaque fournisseur du routage (`shared/llm/ports.py::Provider`).

@@ -51,6 +51,7 @@ Nommés par Marc, module par module. Le reste du découpage n'est pas écrit.
 | `devices` | Appareils et notifications push : `/devices/*` | 0012 |
 | `cv` | Le CV en conversation : `/cv/*`, `/voice/transcribe` | 0013, 0014 |
 | `support` | « Parler à l'équipe » : `/support/me*` (dont le WebSocket `/support/me/stream`), `/internal/support/*` et la console | 0026 |
+| `applications` | Les dossiers de candidature : `/applications*` (CV adapté à une offre, propositions, lettre, « j'ai candidaté ») | 0033 |
 
 ## Ce qui est déjà fixé, quelle que soit la découpe
 

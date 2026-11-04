@@ -312,3 +312,22 @@ le WebSocket `wss://api.karria.fr/api/v1/support/me/stream` passe tel quel.
 conteneur ponctuel (image ci-dessus, `--env-file /root/karria-api.env`,
 `-v /root/karria-eval/out:/out --out /out/<nom>.jsonl`). Rien n'est écrit en
 base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
+
+## Dossiers de candidature (ADR-0033 — 2026-11-05)
+
+- **Migration 16** (`dossiers_de_candidature` : table `applications_dossiers`) :
+  `aerich upgrade` dans un conteneur ponctuel, **avant** le code (sans la table,
+  `POST /applications` et `GET /applications` répondent 500).
+- **Variables** (facultatives, par défaut Gemini comme les autres tâches) :
+  `LLM__TASKS__CV_ADAPT`, `LLM__TASKS__LETTER_DRAFT` (`fournisseur:modèle`), et
+  leurs replis `LLM__FALLBACKS__*`. Aucun bucket.
+- Le **worker** (même image) exécute `applications.adapt_cv` quand l'adaptation
+  dépasse dix secondes dans la requête ; sans worker, un dossier peut rester
+  `en_cours` — `POST /applications/{id}/adapt` ne relance qu'après un échec.
+- **Consentement à l'IA** : l'usage `application` s'ajoute à l'information ; la
+  version change et toute personne redonne son accord une fois (ADR-0025).
+- **Vérifier** : `/health/ready` 200 ; `GET /api/v1/applications` sans jeton →
+  401 ; avec une session et un CV : `POST /api/v1/applications {offer_id}` → 201,
+  `adaptation: faite` (journal `applications.cv_adapted`) ou `en_cours` puis
+  `applications.adapt_deferred` et, côté worker, `applications.cv_adapted`.
+

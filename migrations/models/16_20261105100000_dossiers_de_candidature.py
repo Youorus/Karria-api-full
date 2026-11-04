@@ -2,7 +2,7 @@ from tortoise import BaseDBAsyncClient
 
 RUN_IN_TRANSACTION = True
 
-# Module `applications` (ADR-0029) : les dossiers de candidature. Une table,
+# Module `applications` (ADR-0033) : les dossiers de candidature. Une table,
 # un dossier par (compte, offre) : l'offre figée en JSON (`offer_snapshot`,
 # lisible même si l'offre quitte l'index), la copie adaptée du CV, les
 # propositions de Karria avec leur état, la lettre, la couverture des

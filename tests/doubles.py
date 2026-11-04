@@ -14,13 +14,19 @@ fournisseur de modèle factice — dans le commit qui le crée.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any
 from uuid import UUID, uuid4
 
+from karria.modules.applications.application import BaseCv, OfferCard
+from karria.modules.applications.domain import AdaptationOutput, OfferSnapshot
+from karria.modules.applications.domain import CvInvalidError as ApplicationsCvInvalidError
+from karria.modules.applications.domain import Dossier as ApplicationDossier
+from karria.modules.applications.domain import Letter as ApplicationLetter
 from karria.modules.cv.application import GeneratedImage, Interpretation
 from karria.modules.cv.domain import (
     AudioInfo,
@@ -1099,4 +1105,334 @@ class SupportEnv:
             directory=StaticAccountDirectory(),
             feed=RecordingFeed(broker),
             clock=FakeClock(),
+        )
+
+
+# ---------------------------------------------------------------------
+# Module `applications` : dossiers de candidature
+# ---------------------------------------------------------------------
+
+
+class InMemoryDossierRepository:
+    """Implémente `DossierRepository` en mémoire."""
+
+    def __init__(self) -> None:
+        self.rows: dict[UUID, ApplicationDossier] = {}
+
+    async def find(self, dossier_id: UUID, *, user_id: UUID) -> ApplicationDossier | None:
+        found = self.rows.get(dossier_id)
+        return found if found is not None and found.user_id == user_id else None
+
+    async def find_any(self, dossier_id: UUID) -> ApplicationDossier | None:
+        return self.rows.get(dossier_id)
+
+    async def find_by_offer(self, user_id: UUID, offer_id: UUID) -> ApplicationDossier | None:
+        return next(
+            (
+                d
+                for d in self.rows.values()
+                if d.user_id == user_id and d.offer.offer_id == offer_id
+            ),
+            None,
+        )
+
+    async def list_by_user(self, user_id: UUID, *, applied_only: bool) -> list[ApplicationDossier]:
+        rows = [d for d in self.rows.values() if d.user_id == user_id]
+        if applied_only:
+            rows = [d for d in rows if d.applied_at is not None]
+        return sorted(rows, key=lambda d: d.updated_at, reverse=True)
+
+    async def save(self, dossier: ApplicationDossier) -> None:
+        self.rows[dossier.id] = dossier
+
+    async def delete(self, dossier_id: UUID) -> None:
+        self.rows.pop(dossier_id, None)
+
+    async def delete_by_user(self, user_id: UUID) -> int:
+        ids = [d.id for d in self.rows.values() if d.user_id == user_id]
+        for dossier_id in ids:
+            del self.rows[dossier_id]
+        return len(ids)
+
+
+def sample_offer_card(offer_id: UUID | None = None, **overrides: Any) -> OfferCard:
+    """Une offre telle qu'`applications` la reçoit d'`offers`."""
+    values: dict[str, Any] = {
+        "offer_id": offer_id or uuid4(),
+        "title": "Conseillère de vente prêt-à-porter",
+        "description": (
+            "Nous recherchons une conseillère de vente pour notre boutique de prêt-à-porter. "
+            "Missions : accueil client, conseil, encaissement, merchandising, gestion de stock. "
+            "Vous maîtrisez la relation client et le logiciel de caisse. Expérience en vente exigée."
+        ),
+        "company": "Maison Lemaire",
+        "logo_hash": "abc123",
+        "website": "https://lemaire.example",
+        "city": "Lyon 3e",
+        "contract": "cdi",
+        "contract_label": "CDI",
+        "source_url": "https://jobs.example/123",
+        "published_at": datetime(2026, 11, 1, tzinfo=UTC),
+    }
+    values.update(overrides)
+    return OfferCard(**values)
+
+
+def sample_base_cv() -> dict[str, Any]:
+    """Un CV de base au format `GET /cv/me`, sans photo."""
+    return {
+        "identity": {"first_name": "Awa", "last_name": "Diallo", "headline": "Vendeuse"},
+        "contact": {
+            "email": "awa@example.com",
+            "phone": "06 12 34 56 78",
+            "city": "Lyon",
+            "links": [],
+        },
+        "summary": "Vendeuse depuis trois ans, j'aime le contact client.",
+        "experiences": [
+            {
+                "id": "11111111-1111-4111-8111-111111111111",
+                "position": "Vendeuse",
+                "company": "Zara",
+                "location": "Lyon",
+                "start_date": "2023-01",
+                "end_date": None,
+                "is_current": True,
+                "missions": ["Accueillir les clients", "Tenir la caisse", "Ranger le rayon"],
+                "description": None,
+            },
+            {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "position": "Hôtesse de caisse",
+                "company": "Carrefour",
+                "location": "Lyon",
+                "start_date": "2021-06",
+                "end_date": "2022-12",
+                "is_current": False,
+                "missions": ["Encaisser", "Renseigner"],
+                "description": None,
+            },
+        ],
+        "educations": [
+            {
+                "id": "33333333-3333-4333-8333-333333333333",
+                "degree": "Bac pro commerce",
+                "school": "Lycée Ampère",
+                "location": "Lyon",
+                "start_date": "2018-09",
+                "end_date": "2021-06",
+                "is_in_progress": False,
+                "description": None,
+            }
+        ],
+        "skills": [
+            {
+                "id": "44444444-4444-4444-8444-444444444444",
+                "name": "Caisse",
+                "level": "advanced",
+                "category": None,
+            },
+            {
+                "id": "55555555-5555-4555-8555-555555555555",
+                "name": "Merchandising",
+                "level": "intermediate",
+                "category": None,
+            },
+            {
+                "id": "66666666-6666-4666-8666-666666666666",
+                "name": "Relation client",
+                "level": "expert",
+                "category": None,
+            },
+        ],
+        "languages": [],
+        "interests": [],
+        "projects": [],
+    }
+
+
+class FakeOfferReader:
+    """Implémente `OfferReader` sur un dictionnaire."""
+
+    def __init__(self, *cards: OfferCard) -> None:
+        self.cards = {card.offer_id: card for card in cards}
+
+    async def read(self, offer_id: UUID) -> OfferCard | None:
+        return self.cards.get(offer_id)
+
+
+class FakeBaseCvReader:
+    """Implémente `BaseCvReader` : le même CV pour tout le monde, ou aucun."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self.data = data
+        self.updated_at = datetime(2026, 10, 30, tzinfo=UTC)
+
+    async def read(self, user_id: UUID) -> BaseCv | None:
+        return None if self.data is None else BaseCv(data=self.data, updated_at=self.updated_at)
+
+
+class PermissiveCvValidator:
+    """Implémente `CvValidator` : rend le CV tel quel, sauf si `invalid` est posé."""
+
+    def __init__(self, *, invalid: bool = False) -> None:
+        self.invalid = invalid
+
+    def validate(self, cv: Mapping[str, Any]) -> dict[str, Any]:
+        if self.invalid:
+            raise ApplicationsCvInvalidError([{"field": "summary", "message": "trop long"}])
+        return dict(cv)
+
+
+class FakeTemplateChecker:
+    """Implémente `TemplateChecker` : utilisable sauf les identifiants verrouillés."""
+
+    def __init__(self, *locked: UUID) -> None:
+        self.locked = set(locked)
+
+    async def usable(self, user_id: UUID, template_id: UUID) -> bool:
+        return template_id not in self.locked
+
+
+class FakeCvAdapter:
+    """Implémente `CvAdapter` : rend une sortie préparée, ou lève, ou traîne."""
+
+    def __init__(
+        self,
+        output: AdaptationOutput | None = None,
+        *,
+        error: Exception | None = None,
+        delay: float = 0.0,
+    ) -> None:
+        self.output = output or sample_adaptation_output()
+        self.error = error
+        self.delay = delay
+        self.calls: list[tuple[OfferSnapshot, dict[str, Any]]] = []
+
+    async def adapt(self, offer: OfferSnapshot, cv: Mapping[str, Any]) -> AdaptationOutput:
+        self.calls.append((offer, dict(cv)))
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error is not None:
+            raise self.error
+        return self.output
+
+
+def sample_adaptation_output() -> AdaptationOutput:
+    """Ce que le modèle propose sur `sample_base_cv` pour `sample_offer_card`."""
+    return AdaptationOutput.model_validate(
+        {
+            "headline": {"text": "Conseillère de vente", "reason": "L'offre nomme le poste ainsi."},
+            "summary": {
+                "text": "Conseillère de vente depuis trois ans, j'aime le conseil et la relation client.",
+                "reason": "Les mots de l'offre, les mêmes faits.",
+            },
+            "experiences": [
+                {
+                    "index": 0,
+                    "position": {"text": "Conseillère de vente", "reason": "Même métier."},
+                    "missions": [
+                        {
+                            "index": 0,
+                            "text": "Accueillir et conseiller les clients",
+                            "reason": "Conseil.",
+                        }
+                    ],
+                }
+            ],
+            "skills_order": {"order": [2, 0, 1], "reason": "La relation client d'abord."},
+            "experiences_order": None,
+        }
+    )
+
+
+class FakeLetterWriter:
+    """Implémente `LetterWriter` : une lettre préparée, un paragraphe réécrit, ou une panne."""
+
+    def __init__(
+        self, *, error: Exception | None = None, rewritten: str = "Paragraphe réécrit."
+    ) -> None:
+        self.error = error
+        self.rewritten = rewritten
+        self.instructions: list[str | None] = []
+
+    async def draft(self, offer: OfferSnapshot, cv: Mapping[str, Any]) -> ApplicationLetter:
+        if self.error is not None:
+            raise self.error
+        return ApplicationLetter.validated(sample_letter_json(offer.title))
+
+    async def rewrite_paragraph(
+        self,
+        offer: OfferSnapshot,
+        cv: Mapping[str, Any],
+        letter: ApplicationLetter,
+        index: int,
+        instruction: str | None,
+    ) -> str:
+        if self.error is not None:
+            raise self.error
+        self.instructions.append(instruction)
+        return self.rewritten
+
+
+def sample_letter_json(title: str = "Conseillère de vente") -> dict[str, Any]:
+    """Une lettre au format du contrat."""
+    return {
+        "recipient": "Madame, Monsieur,",
+        "subject": f"Candidature au poste de {title}",
+        "paragraphs": [
+            {"kind": "interet_entreprise", "text": "Votre boutique de prêt-à-porter m'intéresse."},
+            {"kind": "interet_poste", "text": "Le poste de conseillère correspond à mon parcours."},
+            {"kind": "competences", "text": "Trois ans de vente, caisse et merchandising."},
+            {
+                "kind": "pourquoi_moi",
+                "text": "Disponible immédiatement, je serai ravie d'en parler.",
+            },
+        ],
+        "closing": "Je vous prie d'agréer, Madame, Monsieur, mes salutations distinguées.",
+    }
+
+
+class RecordingDossierJobs:
+    """Implémente `DossierJobs` : garde ce qui a été différé, ou refuse."""
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.deferred: list[UUID] = []
+        self.error = error
+
+    async def defer_adaptation(self, dossier_id: UUID) -> None:
+        if self.error is not None:
+            raise self.error
+        self.deferred.append(dossier_id)
+
+
+@dataclass
+class ApplicationsEnv:
+    """Toutes les doublures du module `applications`, câblées ensemble."""
+
+    dossiers: InMemoryDossierRepository
+    offers: FakeOfferReader
+    base_cvs: FakeBaseCvReader
+    validator: PermissiveCvValidator
+    templates: FakeTemplateChecker
+    adapter: FakeCvAdapter
+    writer: FakeLetterWriter
+    jobs: RecordingDossierJobs
+    clock: FakeClock
+    offer: OfferCard
+
+    @classmethod
+    def build(cls) -> ApplicationsEnv:
+        offer = sample_offer_card()
+        return cls(
+            dossiers=InMemoryDossierRepository(),
+            offers=FakeOfferReader(offer),
+            base_cvs=FakeBaseCvReader(sample_base_cv()),
+            validator=PermissiveCvValidator(),
+            templates=FakeTemplateChecker(),
+            adapter=FakeCvAdapter(),
+            writer=FakeLetterWriter(),
+            jobs=RecordingDossierJobs(),
+            clock=FakeClock(),
+            offer=offer,
         )

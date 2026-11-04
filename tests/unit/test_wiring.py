@@ -36,6 +36,7 @@ from karria.bootstrap.wiring import (
     token_resolver_from_identity,
     user_notifier_from_devices,
 )
+from karria.modules.applications import DossierApplied, DossierUnapplied
 from karria.modules.devices.application import GetMainDevice, RegisterDevice, SendPushToUser
 from karria.modules.documents import PremiumTemplate, TemplateShop
 from karria.modules.identity import (
@@ -91,13 +92,20 @@ class TestMainDeviceLookup:
         assert await lookup.main_device_of(uuid4()) is None
 
 
-def test_les_ponts_abonnent_six_modules_a_la_suppression_de_compte() -> None:
-    """`devices`, `cv`, `offers`, `documents`, `payments` et `support` oublient la personne."""
+def test_les_ponts_abonnent_sept_modules_a_la_suppression_de_compte() -> None:
+    """`devices`, `cv`, `offers`, `documents`, `payments`, `support` et `applications` oublient la personne.
+
+    Et « j'ai candidaté » depuis un dossier remonte au fil d'offres.
+    """
     bus = CollectingBus()
 
     subscribe_bridges(bus, storage=InMemoryObjectStorage(StorageSettings()))
 
-    assert bus.subscriptions() == {AccountDeleted.__name__: 6}
+    assert bus.subscriptions() == {
+        AccountDeleted.__name__: 7,
+        DossierApplied.__name__: 1,
+        DossierUnapplied.__name__: 1,
+    }
 
 
 class TestUserNotifier:

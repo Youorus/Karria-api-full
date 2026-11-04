@@ -59,6 +59,13 @@ Les branchements d'aujourd'hui
   dégradé, pas cassé — le direct et le non-lu restent.
 - `support.get_account_directory` ← `identity.GetCurrentUser`. Sans lui, la
   console de l'équipe montre « compte inconnu » à la place des adresses.
+- `applications.get_offer_reader` ← `offers.GetOfferForUser`,
+  `applications.get_logo_url` ← `offers.get_logo_url`,
+  `applications.get_base_cv_reader` ← `cv.GetMyCv`,
+  `applications.get_cv_validator` ← les schémas de `cv`,
+  `applications.get_template_checker` ← `documents.TemplateShop` (ADR-0033).
+  Sans eux : `offer_not_found`, initiales, `cv_missing`, 503 à la retouche,
+  `template_locked` — les refus par défaut du module.
 
 Les ponts du bus
 ----------------
@@ -70,17 +77,56 @@ appareils, `cv` oublie brouillon, CV et photos, `offers` oublie critères,
 fil, états et conversations, `documents` oublie exports (fichiers compris),
 modèles possédés et choix (ADR-0015), `payments` supprime le client Stripe (ce
 qui résilie l'abonnement) et efface projection et achats (ADR-0024),
-`support` efface le fil avec l'équipe, fichiers compris.
+`support` efface le fil avec l'équipe, fichiers compris, `applications`
+efface les dossiers de candidature ; `applications.DossierApplied` /
+`DossierUnapplied` → `offers` pose ou retire « candidaté » sur l'offre du fil.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Annotated, Any, Final
 from uuid import UUID
 
 from fastapi import Depends, Request
+from pydantic import BaseModel, ValidationError
 
-from karria.modules.cv import CurriculumVitae, GetMyCv, build_forget_user, get_get_my_cv
+from karria.modules.applications import (
+    BaseCv,
+    BaseCvReader,
+    CvInvalidError,
+    CvValidator,
+    DossierApplied,
+    DossierUnapplied,
+    OfferCard,
+    OfferReader,
+    TemplateChecker,
+    get_base_cv_reader,
+    get_cv_validator,
+    get_offer_reader,
+    get_template_checker,
+)
+from karria.modules.applications import (
+    LogoUrl as ApplicationsLogoUrl,
+)
+from karria.modules.applications import build_forget_user as build_forget_user_applications
+from karria.modules.applications import (
+    get_logo_url as get_applications_logo_url,
+)
+from karria.modules.cv import (
+    Contact,
+    CurriculumVitae,
+    Education,
+    Experience,
+    GetMyCv,
+    Identity,
+    Interest,
+    Language,
+    Project,
+    Skill,
+    build_forget_user,
+    get_get_my_cv,
+)
 from karria.modules.devices import (
     GetMainDevice,
     SendPushToUser,
@@ -110,7 +156,13 @@ from karria.modules.identity import (
     get_resolve_session,
 )
 from karria.modules.offers import (
+    GetOfferForUser,
+    LogoUrl,
+    StateChanges,
     UserNotifier,
+    build_update_state,
+    get_get_offer,
+    get_logo_url,
     get_user_notifier,
 )
 from karria.modules.offers import (
@@ -148,6 +200,7 @@ from karria.shared.auth import (
     resolve_principal,
 )
 from karria.shared.config import get_settings
+from karria.shared.errors import EntityNotFoundError
 from karria.shared.logging import get_logger
 from karria.shared.push import PushMessage
 
@@ -390,6 +443,177 @@ def support_account_directory_from_identity(
     return IdentityAccountDirectory(reader)
 
 
+class OffersOfferReader:
+    """Implémente le port `OfferReader` d'`applications` avec `offers.GetOfferForUser`.
+
+    Lit l'offre seule (sans compte : ni place dans le fil ni état) et la
+    traduit dans les termes d'`applications` — le condensat du logo, jamais
+    l'adresse chez la source.
+    """
+
+    def __init__(self, get_offer: GetOfferForUser) -> None:
+        self._get_offer = get_offer
+
+    async def read(self, offer_id: UUID) -> OfferCard | None:
+        """L'offre, même inactive, ou `None` si l'index ne la connaît pas."""
+        try:
+            item = await self._get_offer.execute(None, offer_id)
+        except EntityNotFoundError:
+            return None
+        offer = item.offer
+        location = offer.location
+        return OfferCard(
+            offer_id=offer.id,
+            title=offer.title,
+            description=offer.description,
+            company=offer.company.name if offer.company else None,
+            logo_hash=offer.company.logo_hash if offer.company else None,
+            website=offer.company.website if offer.company else None,
+            city=location.label if location else None,
+            contract=offer.contract_type.value if offer.contract_type else None,
+            contract_label=offer.contract_type.label if offer.contract_type else None,
+            source_url=offer.apply_url or offer.origin_url,
+            published_at=offer.published_at,
+        )
+
+
+def offer_reader_from_offers(
+    get_offer: Annotated[GetOfferForUser, Depends(get_get_offer)],
+) -> OfferReader:
+    """La réponse du module `offers` au besoin d'`applications`."""
+    return OffersOfferReader(get_offer)
+
+
+def applications_logo_url_from_offers(
+    logo_url: Annotated[LogoUrl, Depends(get_logo_url)],
+) -> ApplicationsLogoUrl:
+    """L'adresse du logo en 128 px, calculée par `offers`."""
+
+    def url(logo_hash: str) -> str:
+        return logo_url(logo_hash, 128)
+
+    return url
+
+
+class CvBaseCvReader:
+    """Implémente le port `BaseCvReader` d'`applications` avec `cv.GetMyCv`."""
+
+    def __init__(self, get_my_cv: GetMyCv) -> None:
+        self._get_my_cv = get_my_cv
+
+    async def read(self, user_id: UUID) -> BaseCv | None:
+        """Le CV de base au format `GET /cv/me`, ou `None` s'il est encore vide."""
+        cv = await self._get_my_cv.execute(user_id)
+        if cv.is_blank:
+            return None
+        return BaseCv(data=cv_as_json(cv), updated_at=cv.updated_at)
+
+
+def base_cv_reader_from_cv(
+    get_my_cv: Annotated[GetMyCv, Depends(get_get_my_cv)],
+) -> BaseCvReader:
+    """La réponse du module `cv` au besoin d'`applications`."""
+    return CvBaseCvReader(get_my_cv)
+
+
+class CvModuleValidator:
+    """Implémente le port `CvValidator` d'`applications` avec les schémas de `cv`.
+
+    Une seule définition de ce qu'est un CV (`cv/domain/schemas.py`) : le CV
+    d'un dossier, retouché par la personne, est jugé par les mêmes règles
+    que le CV de base. Les clés inconnues sont ignorées, pas refusées.
+    """
+
+    _LISTS: Final[dict[str, type[BaseModel]]] = {
+        "experiences": Experience,
+        "educations": Education,
+        "skills": Skill,
+        "languages": Language,
+        "interests": Interest,
+        "projects": Project,
+    }
+
+    def validate(self, cv: Mapping[str, Any]) -> dict[str, Any]:
+        """Le CV normalisé par les schémas de `cv`.
+
+        Raises:
+            CvInvalidError: Une section ne respecte pas sa forme.
+        """
+        errors: list[dict[str, Any]] = []
+        out: dict[str, Any] = {"identity": None, "contact": None, "summary": None}
+        for name, model in (("identity", Identity), ("contact", Contact)):
+            value = cv.get(name)
+            if value is not None:
+                try:
+                    out[name] = model.model_validate(value).model_dump(mode="json")
+                except ValidationError as exc:
+                    errors.extend(_fields_of(name, exc))
+        summary = cv.get("summary")
+        if summary is not None:
+            text = str(summary).strip()
+            if len(text) > _SUMMARY_MAX_LENGTH:
+                errors.append({"field": "summary", "message": "Résumé trop long."})
+            out["summary"] = text or None
+        for name, list_model in self._LISTS.items():
+            raw = cv.get(name) or []
+            if not isinstance(raw, list):
+                errors.append({"field": name, "message": "Une liste est attendue."})
+                continue
+            items: list[dict[str, Any]] = []
+            for index, item in enumerate(raw):
+                try:
+                    items.append(list_model.model_validate(item).model_dump(mode="json"))
+                except ValidationError as exc:
+                    errors.extend(_fields_of(f"{name}.{index}", exc))
+            out[name] = items
+        if errors:
+            raise CvInvalidError(errors)
+        return out
+
+
+#: La borne du « à propos » (`cv/domain/schemas.py::Summary`).
+_SUMMARY_MAX_LENGTH: Final = 1500
+
+
+def _fields_of(prefix: str, exc: ValidationError) -> list[dict[str, Any]]:
+    return [
+        {
+            "field": ".".join([prefix, *(str(p) for p in e["loc"])]),
+            "message": e["msg"],
+        }
+        for e in exc.errors()
+    ]
+
+
+def cv_validator_from_cv() -> CvValidator:
+    """La réponse du module `cv` au besoin d'`applications` (sans dépendance : des règles pures)."""
+    return CvModuleValidator()
+
+
+class DocumentsTemplateChecker:
+    """Implémente le port `TemplateChecker` d'`applications` avec `documents.TemplateShop`.
+
+    Un modèle est utilisable s'il est possédé, ou s'il n'est pas en vente
+    (gratuit). `documents` reste l'autorité au rendu : un identifiant
+    inconnu y répond 404, pas ici.
+    """
+
+    def __init__(self, shop: TemplateShop) -> None:
+        self._shop = shop
+
+    async def usable(self, user_id: UUID, template_id: UUID) -> bool:
+        if await self._shop.owns(user_id, template_id):
+            return True
+        return await self._shop.premium_offer(template_id) is None
+
+
+def template_checker_from_documents(
+    shop: Annotated[TemplateShop, Depends(get_template_shop)],
+) -> TemplateChecker:
+    """La réponse du module `documents` au besoin d'`applications`."""
+    return DocumentsTemplateChecker(shop)
+
+
 def build_user_notifier() -> UserNotifier:
     """Le même branchement, hors requête, pour `scripts/offers_worker.py`."""
     from karria.modules.devices.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
@@ -447,8 +671,16 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_support_account_directory] = (
         support_account_directory_from_identity
     )
+    # Sans ces lignes : aucun dossier de candidature ne s'ouvre (`offer_not_found`
+    # ou `cv_missing`), les logos manquent, la retouche répond 503 et tout
+    # modèle est verrouillé — les refus par défaut d'`applications`.
+    app.dependency_overrides[get_offer_reader] = offer_reader_from_offers
+    app.dependency_overrides[get_applications_logo_url] = applications_logo_url_from_offers
+    app.dependency_overrides[get_base_cv_reader] = base_cv_reader_from_cv
+    app.dependency_overrides[get_cv_validator] = cv_validator_from_cv
+    app.dependency_overrides[get_template_checker] = template_checker_from_documents
 
-    logger.debug("bootstrap.modules_wired", bindings=10)
+    logger.debug("bootstrap.modules_wired", bindings=15)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
@@ -470,6 +702,8 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     forget_documents = build_forget_user_documents(storage)
     forget_payments = build_forget_user_payments(get_settings())
     forget_support = build_forget_user_support(storage)
+    forget_applications = build_forget_user_applications()
+    update_state = build_update_state()
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -489,6 +723,15 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def support_forget(event: AccountDeleted) -> None:
         await forget_support.execute(event.user_id)
 
+    async def applications_forget(event: AccountDeleted) -> None:
+        await forget_applications.execute(event.user_id)
+
+    async def offer_applied(event: DossierApplied) -> None:
+        await update_state.execute(event.user_id, event.offer_id, StateChanges(applied=True))
+
+    async def offer_unapplied(event: DossierUnapplied) -> None:
+        await update_state.execute(event.user_id, event.offer_id, StateChanges(applied=False))
+
     # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
     # photos, ses critères et ses conversations — c'est-à-dire exactement
     # ce que la personne a demandé d'effacer.
@@ -501,4 +744,10 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     # Sans cette ligne : un compte supprimé laisse son fil avec l'équipe,
     # vocaux et captures compris.
     bus.subscribe(AccountDeleted, support_forget)
-    logger.debug("bootstrap.bridges_subscribed", bridges=6)
+    # Sans cette ligne : un compte supprimé laisse ses dossiers de candidature.
+    bus.subscribe(AccountDeleted, applications_forget)
+    # Sans ces lignes : « j'ai candidaté » depuis un dossier ne se voit pas sur
+    # la carte de l'offre dans le fil — dégradé, pas cassé.
+    bus.subscribe(DossierApplied, offer_applied)
+    bus.subscribe(DossierUnapplied, offer_unapplied)
+    logger.debug("bootstrap.bridges_subscribed", bridges=9)

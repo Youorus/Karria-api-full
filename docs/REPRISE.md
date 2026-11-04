@@ -3,7 +3,47 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-04**
+**Dernière mise à jour : 2026-11-05**
+
+### Session du 2026-11-05 — dossiers de candidature, module `applications` (ADR-0033 — Fable) — EN COURS DE DÉPLOIEMENT
+
+**Demande de Marc** : depuis la fiche d'une offre, « Adapter mon CV à cette offre » : un
+dossier lié à l'offre, une **copie** du CV adaptée d'abord par Karria (propositions
+acceptables / refusables / réversibles, rien d'inventé), retouchée ensuite dans l'atelier ;
+puis la lettre de motivation (uniquement liée à une offre) ; enfin « as-tu candidaté ? ». Un
+autre agent travaillait en même temps sur `documents` (rendu ancré, lettre comme document,
+envoi e-mail : ADR-0029 à 0032, migration 17) — d'où **ADR-0033** pour ce module.
+
+**Livré** (module `applications`, routes `/api/v1/applications*`, contrat
+`docs/contrat-api-candidatures.md`) :
+
+- Table `applications_dossiers` (**migration 16**, un dossier par compte et par offre, JSONB :
+  `offer_snapshot` avec mots-clés et condensat du logo, `cv` copié, `cv_base_hash`,
+  `propositions`, `letter`, `coverage`, `status`, `adaptation`, `applied_at`).
+- Cas d'usage : création (copie + offre figée + adaptation **synchrone bornée à 10 s**, puis
+  file `applications.adapt_cv` avec verrou par dossier, état `en_cours|faite|echouee`),
+  relance après échec (`POST /{id}/adapt`), décision par proposition
+  (`accepter|refuser|revenir`), retouche du CV (revalidée par les schémas de `cv` via le port
+  `CvValidator`, couverture recalculée), lettre (ébauche LLM 4 paragraphes typés, édition,
+  réécriture d'un paragraphe avec consigne), candidaté / non candidaté (événements
+  `DossierApplied` / `DossierUnapplied` relayés au fil d'offres → `applied`), liste, lecture
+  (`base_changed`), suppression, purge à la suppression du compte.
+- Garde « rien d'inventé » : intitulé et « à propos » appliqués d'office (`acceptee`, `before`
+  gardé), le reste `proposee` ; un texte proposé qui introduit un **nombre** absent du CV est
+  écarté, de même qu'un index hors liste ou un ordre qui n'est pas une permutation.
+- Ports branchés dans `bootstrap/wiring.py` : `OfferReader`+`LogoUrl` ← `offers`
+  (exports ajoutés : `GetOfferForUser`, `get_get_offer`, `get_logo_url`, `build_update_state`),
+  `BaseCvReader`+`CvValidator` ← `cv`, `TemplateChecker` ← `documents.TemplateShop`.
+- Routage LLM : tâches `cv_adapt` et `letter_draft` (`LLM__TASKS__*`, défaut Gemini) ; usage
+  de consentement `application` ajouté (`identity`) → **la version du consentement change,
+  l'app redemande une fois** ; l'app filtre déjà les usages inconnus (`ceQuiPart`).
+- Tests : domaine, cas d'usage, adaptateurs LLM, câblage, tâches, e2e HTTP, intégration
+  PostgreSQL du dépôt ; `make check` vert (3 204 tests, 96 %).
+
+**Reste** : voir la fin de cette section une fois le déploiement vérifié ; côté app : libellé
+de l'usage `application`, écran atelier (propositions avant/après), lettre, espace
+Candidatures ; valider l'ADR-0033 ; mesurer la qualité réelle des propositions sur de vrais
+CV/offres (aucun appel réel au modèle n'a été fait dans cette session).
 
 ### 2026-11-04, tard — feuille de route de l'atelier CV (Fable) — À VALIDER PAR MARC
 
@@ -71,6 +111,7 @@ font foi : `karria_app/docs/contrat-api-*.md`.
 | `documents` | **en production** (ADR-0020 acceptée le 2026-10-24) | `GET /templates/`, `GET /templates/{id}`, `POST /templates/{id}/view\|preview`, `GET /templates/{id}/reviews`, `GET/POST /user-templates/me`, `GET/PUT /user-templates/me/selected`, `POST/GET /cv/me/generated-cvs`, `GET/DELETE /cv/me/generated-cvs/{id}`, internes `POST/GET /internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`) ; travaux `documents.ingest_template`, `documents.explain_ats` ; commande `python -m scripts.templates` |
 | `payments` | **en production, ALLUMÉ en live depuis le 2026-11-04** (ADR-0023 + **ADR-0024** « Proposées » ; compte Stripe **dédié « Karria »** (`acct_…SbjB6`, SEYA LABS) depuis le 2026-11-04 soir, objets étiquetés `app=karria`, `lookup_key` `karria_*`, libellé `KARRIA` posé par le code, pas de `PAYMENTS__PORTAL_CONFIGURATION` (portail par défaut du compte) ; version d'API `2026-09-30.endive` alignée SDK/webhook ; sans `PAYMENTS__SECRET_KEY` → 503 et `enabled: false`) | `GET /payments/catalog`, `POST /payments/checkout-session`, `GET /payments/status/{id}`, `GET /payments/me`, `POST /payments/portal-session` (session requise), `GET /payments/return` (page publique), `POST /payments/webhook` (signature Stripe) |
 | `support`  | **en production** (ADR-0026 « Proposée ») | `GET /support/me`, `GET /support/me/unread`, `POST /support/me/messages`, `POST /support/me/messages/media`, `POST /support/me/read`, WebSocket `GET /support/me/stream` ; équipe `GET /internal/support/conversations`, `GET /internal/support/conversations/{id}`, `POST …/{id}/messages`, `POST …/{id}/messages/media`, console `GET /internal/support/console` (jeton `SUPPORT__ADMIN_TOKEN`) |
+| `applications` | **livré le 2026-11-05** (ADR-0033 « Proposée ») | `POST/GET /applications`, `GET/DELETE /applications/{id}`, `POST …/{id}/adapt`, `PUT …/{id}/cv`, `POST …/{id}/propositions/{pid}`, `POST/PUT …/{id}/letter`, `POST …/{id}/letter/paragraphs/{i}/regenerate`, `POST/DELETE …/{id}/applied` ; travail `applications.adapt_cv` |
 | `offers`   | **en production** (ADR-0016/0017 validées par Marc le 2026-10-22, ADR-0018 et 0021 « Proposées ») | `GET /job-matches…`, `POST /assistant/messages`, `GET/DELETE /assistant/memory`, `GET/PUT/DELETE /search/criteria`, `PUT /search/criteria/alerts`, routes internes `/internal/offers/targets` et `/batches` ; worker `scripts/worker.py` ; collecteur `python -m karria.collector` |
 
 ### Session du 2026-11-04, fin (Stripe bascule sur le **compte Karria dédié** — Fable) — EN PRODUCTION
