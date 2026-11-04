@@ -62,6 +62,16 @@ _NOT_FOUND = "resource_missing"
 #: 5 à 22 caractères latins, au moins une lettre.
 STATEMENT_DESCRIPTOR: Final = "KARRIA"
 
+#: Sur le compte partagé, chaque objet créé par Karria porte `app=karria` :
+#: dans le tableau Stripe, le filtre « métadonnées » sépare Karria de Zoumani.
+APP_TAG: Final[dict[str, str]] = {"app": "karria"}
+
+
+def _tagged(metadata: dict[str, str] | None = None) -> dict[str, str]:
+    """Les métadonnées données, plus l'étiquette de l'application."""
+    return {**(metadata or {}), **APP_TAG}
+
+
 #: Les notifications traitées. Tout le reste s'acquitte sans effet.
 _EVENT_KINDS: Final[dict[str, BillingEventKind]] = {
     "checkout.session.completed": BillingEventKind.CHECKOUT_COMPLETED,
@@ -256,7 +266,10 @@ class StripeGateway:
 
     async def ensure_customer(self, user_id: UUID, email: str | None) -> str:
         """`customers.create`, rejouable 24 h : deux premiers appuis ne créent qu'un client."""
-        params: dict[str, Any] = {"metadata": {"user_id": str(user_id)}}
+        params: dict[str, Any] = {
+            "metadata": _tagged({"user_id": str(user_id)}),
+            "description": "Karria",
+        }
         if email:
             params["email"] = email
         customer = await self._call(
@@ -291,8 +304,9 @@ class StripeGateway:
                 "product_data": {
                     "name": spec.product_name,
                     "statement_descriptor": STATEMENT_DESCRIPTOR,
+                    "metadata": _tagged(),
                 },
-                "metadata": {"lookup_key": spec.lookup_key},
+                "metadata": _tagged({"lookup_key": spec.lookup_key}),
             }
             if spec.interval is not None:
                 params["recurring"] = {"interval": spec.interval}
@@ -314,20 +328,21 @@ class StripeGateway:
 
     async def open_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         """`checkout.sessions.create`."""
+        metadata = _tagged(request.metadata)
         params: dict[str, Any] = {
             "mode": request.mode,
             "customer": request.customer_id,
             "line_items": [{"price": request.price_id, "quantity": 1}],
             "success_url": request.success_url,
             "cancel_url": request.cancel_url,
-            "metadata": request.metadata,
+            "metadata": metadata,
             "automatic_tax": {"enabled": self._automatic_tax},
         }
         if request.mode == "subscription":
-            params["subscription_data"] = {"metadata": request.metadata}
+            params["subscription_data"] = {"metadata": metadata}
         else:
             params["payment_intent_data"] = {
-                "metadata": request.metadata,
+                "metadata": metadata,
                 "statement_descriptor_suffix": STATEMENT_DESCRIPTOR,
             }
         if self._automatic_tax:

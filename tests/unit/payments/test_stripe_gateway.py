@@ -100,7 +100,12 @@ class TestClient:
         user = uuid4()
         assert await gateway(client).ensure_customer(user, "toi@exemple.fr") == "cus_1"
         (params,), options = client.customers_create.calls[0]
-        assert params == {"metadata": {"user_id": str(user)}, "email": "toi@exemple.fr"}
+        # Compte partagé : `app=karria` et la description séparent nos clients de ceux de Zoumani.
+        assert params == {
+            "metadata": {"user_id": str(user), "app": "karria"},
+            "description": "Karria",
+            "email": "toi@exemple.fr",
+        }
         assert options == {"options": {"idempotency_key": f"karria-customer:{user}"}}
 
     async def test_sans_adresse_le_client_nait_quand_meme(self) -> None:
@@ -161,8 +166,9 @@ class TestPrices:
             "product_data": {
                 "name": "2 cafés pour l'équipe Karria",
                 "statement_descriptor": "KARRIA",
+                "metadata": {"app": "karria"},
             },
-            "metadata": {"lookup_key": "karria_coffee_2"},
+            "metadata": {"lookup_key": "karria_coffee_2", "app": "karria"},
         }
         assert options == {"options": {"idempotency_key": "karria-price:karria_coffee_2:499"}}
 
@@ -210,12 +216,12 @@ class TestCheckout:
             "line_items": [{"price": "price_1", "quantity": 1}],
             "success_url": "https://api.karria.fr/r?status=success",
             "cancel_url": "https://api.karria.fr/r?status=cancelled",
-            "metadata": {"user_id": "u", "kind": "coffee"},
+            "metadata": {"user_id": "u", "kind": "coffee", "app": "karria"},
             "automatic_tax": {"enabled": False},
             # Carte : Stripe n'accepte qu'un suffixe, concaténé au libellé court
             # du compte partagé (« ZOUMANI* KARRIA »).
             "payment_intent_data": {
-                "metadata": {"user_id": "u", "kind": "coffee"},
+                "metadata": {"user_id": "u", "kind": "coffee", "app": "karria"},
                 "statement_descriptor_suffix": "KARRIA",
             },
         }
@@ -226,7 +232,9 @@ class TestCheckout:
         await gateway(client, tax=True).open_checkout(request("subscription"))
         (params,), _ = client.sessions_create.calls[0]
         assert params["mode"] == "subscription"
-        assert params["subscription_data"] == {"metadata": {"user_id": "u", "kind": "coffee"}}
+        assert params["subscription_data"] == {
+            "metadata": {"user_id": "u", "kind": "coffee", "app": "karria"}
+        }
         assert params["automatic_tax"] == {"enabled": True}
         assert params["customer_update"] == {"address": "auto"}
         assert "payment_intent_data" not in params
