@@ -5,6 +5,41 @@
 
 **Dernière mise à jour : 2026-11-04**
 
+### Session du 2026-11-04 (soir) — suggestions à la saisie du CV (ADR-0028 — Fable) — EN PRODUCTION
+
+**Demande de Marc** : proposer des valeurs connues quand on tape un poste, une entreprise, une
+ville, une école, un diplôme, une compétence, une langue dans l'éditeur de CV de l'app
+(`karria_app` commits `340d934`, `611587f`, `462a1ec`).
+
+**Livré** (commits `1b6e70c`, `1eb0164` sur `main`, déployés par le webhook) :
+
+- `GET /api/v1/cv/suggestions?kind=title|company|city|school|degree|skill|language&q=…`
+  (session requise, 8 au plus, préfixe du libellé ou d'un mot, casse et accents indifférents,
+  `422` famille inconnue ou > 60 caractères, vide pour une saisie vide). Pas de limite de débit
+  propre : les routes de session n'en portent pas.
+- **Table `cv_suggestions`** (migration 15, index `varchar_pattern_ops`), remplie par famille
+  depuis l'index d'offres via le port `OfferVocabulary` ← `offers.build_offer_vocabulary`
+  (branché dans `bootstrap/worker.py`, règle 4). Nettoyage dans `cv/domain/suggestions.py`
+  (« H/F », séparateurs, majuscules, doublons à l'accent près, seuil 2 occurrences, clé pliée
+  bornée à 150). Travail `cv.refresh_suggestions` **chaque nuit à 4 h 20** (verrou) ; à la
+  demande : `python -m scripts.suggestions refresh`. Un échec sur une famille n'empêche pas les
+  autres (revue de sécurité).
+- **Listes embarquées** `cv/domain/references/{degrees,languages,skills,schools}.txt` (une
+  valeur par ligne, en français, l'ordre fait le poids) pour `school|degree|skill|language`.
+
+**En production** : migration 15 appliquée **avant** le code (fichier monté dans l'image
+courante, comme la 13) ; `/health/ready` 200 ; `GET /cv/suggestions` sans jeton → 401 (la route
+existe) ; première matérialisation faite à 22:04 UTC : **city 17 070, company 19 959,
+title 22 855** ; sondage direct de la table depuis un conteneur ponctuel : `city par` → Paris,
+Paris 9e… (22 ms à froid), `title dev` → Développeur, Développeur JAVA… (14 ms), `company carr`
+→ Carrefour, Carrefour Market… (10 ms). **Non vérifié par HTTP avec une session** (pas de compte
+de test sous la main ; la route e2e est couverte par les tests).
+
+**Reste** : valider l'ADR-0028 ; des intitulés d'annonces restent moches après nettoyage
+(« Rayon Surgele Employe (E) Libre Service », « Carro Rh ») — durcir `clean_label` ou monter le
+seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
+jour 50 ms.
+
 ## Où on en est
 
 Nouvelle API de Karria, « très similaire à la V1, écrite parfaitement ».
