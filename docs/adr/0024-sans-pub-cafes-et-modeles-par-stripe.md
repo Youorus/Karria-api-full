@@ -121,3 +121,88 @@ des notifications traitées une fois.
 - **Des prix en ligne (`price_data`) comme Zoumani** : possible, mais le
   portail et les rapports Stripe gagnent à voir des prix nommés ; la clé de
   recherche donne le même « rien à saisir » tout en gardant l'historique.
+
+## 2026-11-05 — le merci d'un paiement : courriel et notification, hors transaction (complète la décision 3 ; revient sur « Karria n'envoie aucun courriel de paiement »)
+
+**Statut :** Proposée — 2026-11-05 (à valider par Marc)
+
+### Le problème
+
+Le 2026-11-05 à 08:15, un vrai café de 2,99 € est encaissé par Stripe. Le
+webhook et `GET /status/{id}` répondent 500 (`StripeObject` non itérable,
+corrigé en `cfa9e5f`) ; l'app dit « reviens plus tard » et la personne ne
+reçoit **rien** : ni courriel, ni notification. Même sans l'incident, elle
+n'aurait rien reçu non plus — la décision ci-dessus laissait à Stripe le reçu
+et à l'app seule le « merci ». Marc : « mon client doit recevoir des
+remerciements par mail et par notification push à la validation de son
+paiement. »
+
+### La décision
+
+1. **Chaque livraison vaut un merci**, par courriel **et** par notification :
+   un achat enregistré (`_fulfill` : café, modèle) et un abonnement « sans
+   pub » qui **naît** (`_sync` : d'aucun abonnement vivant à `ACTIVE`,
+   `BillingAccount.activated_from`). Un renouvellement, une carte corrigée
+   (`PAST_DUE` → `ACTIVE`) ou une relecture sans changement n'en valent pas :
+   Stripe envoie déjà ses reçus.
+2. **Hors transaction, jamais bloquant.** Le `ThankYou` naît dans la
+   transaction du webhook et est remis à `ThankForPurchase` **après** elle.
+   Ce cas d'usage ne lève jamais : un SMTP coupé, Expo injoignable, un compte
+   sans adresse se journalisent (`payments.thanks_email_failed`,
+   `payments.thanks_push_failed`, `payments.thanks_email_skipped_no_address`)
+   et le webhook répond 200 — un rejeu de Stripe pour un courriel
+   recompterait un café. Courriel et notification sont indépendants.
+3. **Une fois par livraison, par construction** : le rejeu s'arrête au
+   registre des événements, le jumeau à `PurchaseRepository.add` (unicité de
+   la session), l'abonnement à la transition d'état. Aucune table nouvelle.
+4. **Ports et adaptateurs (règle 4), comme `support`** : `payments` déclare
+   `UserNotifier` (push), branché dans `bootstrap/wiring.py` sur
+   `devices.SendPushToUser` par le même `DevicesUserNotifier` qu'`offers` et
+   `support` ; le refus par défaut (`NoUserNotifier`) rend 0 et journalise
+   `payments.notifier_unwired`. Le courriel passe par `shared/mail` (socle,
+   pas module) derrière le port `ThankYouMailer`, implémenté dans
+   `infrastructure/mail.py`. L'adresse vient du port `AccountDirectory` déjà
+   branché sur `identity`, le nom du modèle du port `TemplateStore` déjà
+   branché sur `documents`.
+5. **Trois messages au registre** (`PURCHASE_COFFEE`, `PURCHASE_TEMPLATE`,
+   `SUBSCRIPTION_STARTED`), objets **fixes**, contexte réduit à des valeurs
+   produites par Karria (montant formaté, nombre de cafés, nom du modèle tel
+   que `documents` le vend) — aucun texte ni lien venu de la personne, et le
+   rendu échappe tout de toute façon (revues de sécurité de l'ADR-0031).
+   Gabarits dans la ligne de l'ADR-0032 (sobres, sombre/clair, logo).
+6. **Un type push `purchase`** (ADR-0022, canal `compte`) : sans `id`, l'app
+   ouvre le profil (soutien) ; avec `id` (le modèle acheté), le modèle.
+   Titres courts, sans emoji ni montant (l'écran verrouillé n'est pas à nous).
+7. **Rejeu d'exploitation** : `scripts/payments_thanks.py <purchase_id> --send`
+   remet le merci d'un achat par le même chemin, une seule fois (événement
+   synthétique `thanks:<purchase_id>` dans `payments_webhook_events`). Écrit
+   pour l'achat du 2026-11-05 au matin.
+
+### Alternatives écartées
+
+- **Un événement de domaine `PurchaseFulfilled` consommé par `devices` et par
+  un abonné mail** : le bus n'est pas durable et, surtout, il disperse « ce
+  qu'on dit après un paiement » dans deux modules qui n'ont pas à connaître
+  le café ni le modèle. Le port garde la décision dans `payments`, où elle
+  se teste sans base.
+- **Envoyer dans la transaction** : un SMTP lent retarderait la réponse à
+  Stripe, et un SMTP en panne ferait rejouer un café déjà compté.
+- **Une tâche de file (`shared/queue`)** : plus robuste à une panne longue,
+  mais le worker n'a pas les variables `PAYMENTS__*` et un merci qui arrive
+  avec dix minutes de retard vaut moins qu'un merci immédiat ; une panne
+  courte est couverte par le script de rejeu. À revoir si les échecs
+  journalisés se multiplient (`PLUS-TARD.md`).
+- **Remercier aussi à chaque mensualité** : du bruit ; Stripe envoie la facture.
+
+### Conséquences
+
+- `bootstrap/wiring.py` : un 17e branchement, `payments.get_user_notifier`
+  ← `devices.SendPushToUser`, et `build_thank_for_purchase_wired()` pour le
+  script. Aucune variable d'environnement nouvelle (SMTP et Expo existent).
+- `PurchaseRepository.find(purchase_id)` ; `ThankYou`, `format_amount`,
+  `BillingAccount.activated_from` dans le domaine.
+- Contrat app : `karria_app/docs/contrat-notifications.md` (type `purchase`)
+  et `contrat-api-paiements.md` (§ merci). L'app revérifie d'elle-même un
+  achat « en attente » au retour au premier plan et au lancement.
+- `PLUS-TARD.md` § « Aucun courriel de Karria autour d'un paiement » est
+  caduc pour le merci ; reste vrai pour le prélèvement en échec.

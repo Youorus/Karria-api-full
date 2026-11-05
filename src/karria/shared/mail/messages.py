@@ -132,6 +132,14 @@ class MailMessage(StrEnum):
     #: l'adresse qu'elle a choisie — la sienne ou une autre (ADR-0031).
     #: Signé de son nom ; aucun texte libre.
     DOCUMENTS_SENT = "documents_sent"
+    #: Un café (ou plusieurs) vient d'être encaissé : le merci de Karria
+    #: (module `payments`, ADR-0024 § 2026-11-05). Part **après** la
+    #: transaction qui enregistre l'achat, une fois par achat.
+    PURCHASE_COFFEE = "purchase_coffee"
+    #: Un modèle de CV Premium vient d'être payé et remis.
+    PURCHASE_TEMPLATE = "purchase_template"
+    #: L'abonnement « Karria sans pub » vient de s'activer.
+    SUBSCRIPTION_STARTED = "subscription_started"
 
 
 #: Le registre. Une entrée par message, et rien de plus à toucher ailleurs.
@@ -220,6 +228,77 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
             Language.EN: (
                 "You receive this message because $sender_name chose your address to send "
                 "their documents from Karria. Nothing else will follow."
+            ),
+        },
+    ),
+    # Les trois remerciements d'un paiement (ADR-0024 § 2026-11-05). Objets
+    # **fixes** : aucune valeur n'y entre. Le contexte ne porte que des
+    # valeurs produites par Karria (nombre de cafés, montant formaté, nom du
+    # modèle tel que `documents` le vend) — jamais un texte ou un lien venu
+    # de la personne ; le rendu les échappe de toute façon.
+    MailMessage.PURCHASE_COFFEE: MailTemplate(
+        subject={
+            Language.FR: "Merci pour le café",
+            Language.EN: "Thank you for the coffee",
+        },
+        template="purchase_coffee",
+        category=MailCategory.NOTIFICATION,
+        preview={
+            Language.FR: "Votre soutien de $amount est bien arrivé. Voici ce qu'il permet.",
+            Language.EN: "Your $amount support has arrived. Here is what it makes possible.",
+        },
+        footer_note={
+            Language.FR: (
+                "Vous recevez ce message parce que vous venez d&rsquo;offrir un café à Karria. "
+                "Le reçu vous est envoyé séparément par Stripe."
+            ),
+            Language.EN: (
+                "You receive this message because you just bought Karria a coffee. "
+                "Your receipt is sent separately by Stripe."
+            ),
+        },
+    ),
+    MailMessage.PURCHASE_TEMPLATE: MailTemplate(
+        subject={
+            Language.FR: "Votre modèle de CV est à vous",
+            Language.EN: "Your CV template is yours",
+        },
+        template="purchase_template",
+        category=MailCategory.ACTION,
+        preview={
+            Language.FR: "Le modèle $template_label est débloqué. Ouvrez l'atelier pour l'utiliser.",
+            Language.EN: "The $template_label template is unlocked. Open the workshop to use it.",
+        },
+        footer_note={
+            Language.FR: (
+                "Vous recevez ce message parce que vous venez d&rsquo;acheter un modèle de CV "
+                "dans Karria. Le reçu vous est envoyé séparément par Stripe."
+            ),
+            Language.EN: (
+                "You receive this message because you just bought a CV template in Karria. "
+                "Your receipt is sent separately by Stripe."
+            ),
+        },
+    ),
+    MailMessage.SUBSCRIPTION_STARTED: MailTemplate(
+        subject={
+            Language.FR: "Karria sans pub est actif",
+            Language.EN: "Karria ad-free is active",
+        },
+        template="subscription_started",
+        category=MailCategory.ACTION,
+        preview={
+            Language.FR: "Plus aucune publicité dans l'app. Voici comment gérer votre abonnement.",
+            Language.EN: "No more ads in the app. Here is how to manage your subscription.",
+        },
+        footer_note={
+            Language.FR: (
+                "Vous recevez ce message parce que vous venez de souscrire « Karria sans pub ». "
+                "Les reçus et factures vous sont envoyés séparément par Stripe."
+            ),
+            Language.EN: (
+                "You receive this message because you just subscribed to Karria ad-free. "
+                "Receipts and invoices are sent separately by Stripe."
             ),
         },
     ),

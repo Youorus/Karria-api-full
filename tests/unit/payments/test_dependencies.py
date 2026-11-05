@@ -10,16 +10,18 @@ from pydantic import SecretStr
 from karria.modules.payments.api.dependencies import (
     NoAccountDirectory,
     NoTemplateStore,
+    NoUserNotifier,
     build_forget_user,
     build_gateway,
     build_handle_webhook,
+    build_thank_for_purchase,
     get_account_repository,
     get_platform_flags,
     get_purchase_repository,
     get_webhook_ledger,
 )
-from karria.modules.payments.application import ForgetUser, HandleWebhook
-from karria.modules.payments.domain import PaymentsUnavailableError
+from karria.modules.payments.application import ForgetUser, HandleWebhook, ThankForPurchase
+from karria.modules.payments.domain import PaymentsUnavailableError, ThankYou
 from karria.modules.payments.infrastructure import (
     StripeGateway,
     TortoiseBillingAccountRepository,
@@ -28,7 +30,7 @@ from karria.modules.payments.infrastructure import (
 )
 from karria.shared.config import Settings
 from karria.shared.config.settings import PaymentsSettings
-from payments.fakes import FakeTemplateStore
+from payments.fakes import FakeDirectory, FakeNotifier, FakeTemplateStore
 
 pytestmark = pytest.mark.unit
 
@@ -44,6 +46,11 @@ def settings(secret: str = "", *, ios: bool = True, android: bool = True) -> Set
 class TestReplis:
     async def test_sans_annuaire_aucune_adresse(self) -> None:
         assert await NoAccountDirectory().email_of(uuid4()) is None
+
+    async def test_sans_devices_aucune_notification_mais_pas_d_echec(self) -> None:
+        """Le merci ne doit jamais faire rejouer le webhook : le refus par défaut rend 0."""
+        thanks = ThankYou.for_subscription(uuid4(), amount_cents=499, currency="eur")
+        assert await NoUserNotifier().notify(thanks.user_id, thanks.push()) == 0
 
     async def test_sans_vitrine_rien_en_vente_et_la_remise_refuse(self) -> None:
         store = NoTemplateStore()
@@ -75,7 +82,16 @@ class TestConfiguration:
 
     def test_les_assemblages_hors_requete(self) -> None:
         assert isinstance(build_forget_user(settings()), ForgetUser)
-        assert isinstance(build_handle_webhook(settings(), FakeTemplateStore()), HandleWebhook)
+        thanks = build_thank_for_purchase(
+            settings(),
+            directory=FakeDirectory(),
+            notifier=FakeNotifier(),
+            templates=FakeTemplateStore(),
+        )
+        assert isinstance(thanks, ThankForPurchase)
+        assert isinstance(
+            build_handle_webhook(settings(), FakeTemplateStore(), thanks), HandleWebhook
+        )
 
     def test_les_depots_reels_sont_ceux_de_tortoise(self) -> None:
         assert isinstance(get_account_repository(), TortoiseBillingAccountRepository)

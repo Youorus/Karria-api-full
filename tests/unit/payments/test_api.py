@@ -19,6 +19,8 @@ from karria.modules.payments.api.dependencies import (
     get_platform_flags,
     get_purchase_repository,
     get_template_store,
+    get_thank_you_mailer,
+    get_user_notifier,
     get_webhook_ledger,
 )
 from karria.modules.payments.application import BillingEventKind, PlatformFlags
@@ -32,7 +34,9 @@ from payments.fakes import (
     NOW,
     FakeDirectory,
     FakeGateway,
+    FakeNotifier,
     FakeTemplateStore,
+    FakeThankYouMailer,
     InMemoryAccounts,
     InMemoryLedger,
     InMemoryPurchases,
@@ -59,6 +63,9 @@ class Harness:
         self.ledger = InMemoryLedger()
         self.templates = FakeTemplateStore()
         self.directory = FakeDirectory()
+        self.directory.emails[USER] = "awa@exemple.fr"
+        self.notifier = FakeNotifier()
+        self.mailer = FakeThankYouMailer()
         self.clock = FakeClock(NOW)
         settings = Settings(
             app=AppSettings(environment=Environment.TEST, public_url="https://api.karria.fr"),
@@ -73,6 +80,8 @@ class Harness:
         app.dependency_overrides[get_webhook_ledger] = lambda: self.ledger
         app.dependency_overrides[get_template_store] = lambda: self.templates
         app.dependency_overrides[get_account_directory] = lambda: self.directory
+        app.dependency_overrides[get_user_notifier] = lambda: self.notifier
+        app.dependency_overrides[get_thank_you_mailer] = lambda: self.mailer
         app.dependency_overrides[get_clock] = lambda: self.clock
         app.dependency_overrides[get_unit_of_work] = NullUnitOfWork
         if flags is not None:
@@ -368,6 +377,52 @@ class TestWebhook:
         )
         assert response.status_code == 200
         assert response.json() == {"received": True, "type": "ignored", "applied": False}
+
+    async def test_un_cafe_encaisse_est_remercie_une_fois_meme_rejoue(self) -> None:
+        """Le cas du 2026-11-05 au matin : un vrai café, et la personne n'avait rien reçu."""
+        gateway = FakeGateway()
+        h = Harness(gateway)
+        opened = await h.http.post(
+            "/api/v1/payments/checkout-session", json={"payment_type": "coffee", "coffee_count": 1}
+        )
+        session_id = opened.json()["session_id"]
+        gateway.pay(session_id)
+        gateway.event(
+            "a", BillingEventKind.CHECKOUT_COMPLETED, event_id="evt_a", session_id=session_id
+        )
+
+        first = await h.http.post(
+            "/api/v1/payments/webhook", content=b"{}", headers={"stripe-signature": "a"}
+        )
+        replay = await h.http.post(
+            "/api/v1/payments/webhook", content=b"{}", headers={"stripe-signature": "a"}
+        )
+
+        assert (first.status_code, first.json()["applied"]) == (200, True)
+        assert (replay.status_code, replay.json()["applied"]) == (200, False)
+        assert [to for to, _ in h.mailer.sent] == ["awa@exemple.fr"]
+        assert [m.data["type"] for _, m in h.notifier.sent] == ["purchase"]
+        status = await h.http.get(f"/api/v1/payments/status/{session_id}")
+        assert status.json()["fulfilled"] is True
+
+    async def test_un_merci_en_panne_laisse_le_webhook_repondre_200(self) -> None:
+        gateway = FakeGateway()
+        h = Harness(gateway)
+        h.mailer.down = True
+        h.notifier.down = True
+        opened = await h.http.post(
+            "/api/v1/payments/checkout-session", json={"payment_type": "coffee", "coffee_count": 1}
+        )
+        session_id = opened.json()["session_id"]
+        gateway.pay(session_id)
+        gateway.event("a", BillingEventKind.CHECKOUT_COMPLETED, session_id=session_id)
+
+        response = await h.http.post(
+            "/api/v1/payments/webhook", content=b"{}", headers={"stripe-signature": "a"}
+        )
+
+        assert (response.status_code, response.json()["applied"]) == (200, True)
+        assert len(h.purchases.rows) == 1
 
     async def test_sans_signature_422(self) -> None:
         h = Harness(FakeGateway(), authenticated=False)

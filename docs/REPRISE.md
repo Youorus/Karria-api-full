@@ -5,6 +5,32 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 (après-midi) — le merci d'un paiement : courriel + notification push (ADR-0024 § 2026-11-05 — Fable) — EN PRODUCTION
+
+**Incident du matin** : un vrai café de 2,99 € encaissé à 08:15 ; webhook et statut en 500
+(`StripeObject` non itérable, corrigé en `cfa9e5f`) ; la personne n'a reçu **ni e-mail ni
+notification** — la fonction n'existait pas. Marc : « mon client doit recevoir des remerciements
+par mail et par notification push à la validation de son paiement. »
+
+**Livré** (`make check` vert, 3 507 tests) : à chaque **livraison** — achat enregistré (café,
+modèle) ou abonnement « sans pub » qui **naît** (`BillingAccount.activated_from`) — un
+`ThankYou` (domaine) remis à `ThankForPurchase` **après** la transaction du webhook : courriel
+(`PURCHASE_COFFEE`, `PURCHASE_TEMPLATE`, `SUBSCRIPTION_STARTED`, gabarits FR/EN sobres, objets
+fixes, contexte sans donnée tierce) + push `type: purchase` (sans `id` → profil ; `id` du modèle
+→ ce modèle). Ne lève jamais (SMTP/Expo en panne = journal `payments.thanks_*_failed`, webhook
+200, Stripe ne rejoue pas) ; une fois par livraison par construction (registre + unicité de
+session + transition d'état ; tests unitaires et HTTP du rejeu). Règle 4 : port `UserNotifier`
+← `devices` (17e branchement de `wiring.py`), `ThankYouMailer` sur `shared/mail`, adresse par
+`AccountDirectory`, nom du modèle par `TemplateStore`. **`scripts/payments_thanks.py <purchase_id>
+--send`** rejoue le merci d'un achat une seule fois (événement `thanks:<id>` dans
+`payments_webhook_events`) — écrit pour le café du matin. Docs : ADR-0024 § 2026-11-05,
+ADR-0022 § `purchase`, README `payments`, `scripts/README.md`, `DEPLOIEMENT.md`, `PLUS-TARD.md`,
+contrats app (`contrat-notifications.md`, `contrat-api-paiements.md`).
+
+**Reste** : valider la section d'ADR ; côté app, la revérification d'un achat « en attente » et
+l'ouverture du push `purchase` (session de l'après-midi, `karria_app/docs/REPRISE.md`).
+
+
 ### Session du 2026-11-05 (matin) — le modèle de CV d'un dossier se change à tout moment (ADR-0033 § 2026-11-05 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : pouvoir passer d'un modèle à l'autre dans l'atelier, sur tout son catalogue,

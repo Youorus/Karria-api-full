@@ -1,5 +1,6 @@
 """Infrastructure du module `payments` : Stripe et les dépôts."""
 
+from karria.modules.payments.infrastructure.mail import MailThankYouMailer
 from karria.modules.payments.infrastructure.repositories import (
     TortoiseBillingAccountRepository,
     TortoisePurchaseRepository,
@@ -8,6 +9,7 @@ from karria.modules.payments.infrastructure.repositories import (
 from karria.modules.payments.infrastructure.stripe_gateway import StripeGateway
 
 __all__ = [
+    "MailThankYouMailer",
     "StripeGateway",
     "TortoiseBillingAccountRepository",
     "TortoisePurchaseRepository",

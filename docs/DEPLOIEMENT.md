@@ -181,6 +181,13 @@ sert `/opt/karria/models/e5-base-int8`, produit par
 
 ## Encaissements Stripe (ADR-0023, ADR-0024 — 2026-10-29)
 
+- **Merci d'un paiement** (ADR-0024 § 2026-11-05) : courriel + notification,
+  sans variable nouvelle (SMTP `MAIL__*` et Expo existent). Un achat qui n'en
+  a pas reçu (panne, ou antérieur au 2026-11-05) se rattrape depuis un
+  conteneur ponctuel de l'API :
+  `docker run --rm --network dokploy-network --env-file /root/karria-api.env karria-api-ujqvaj:latest python -m scripts.payments_thanks <purchase_id> --send`
+  (une seule fois par achat, registre `payments_webhook_events`).
+
 - **Migration 12** (`encaissements_stripe` : `payments_accounts`,
   `payments_purchases`, `payments_webhook_events`) : `aerich upgrade` dans un
   conteneur ponctuel (voir § État réel). Sans clé Stripe, le code ne lit pas ces

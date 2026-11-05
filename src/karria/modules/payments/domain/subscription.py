@@ -133,6 +133,16 @@ class BillingAccount:
             synced_at=at,
         )
 
+    def activated_from(self, previous: BillingAccount) -> bool:
+        """L'abonnement vient-il de **naître** — d'aucun abonnement vivant à `ACTIVE` ?
+
+        C'est ce qui vaut un merci, une seule fois. Un renouvellement
+        (`ACTIVE` → `ACTIVE`), une carte corrigée (`PAST_DUE` → `ACTIVE`) ou
+        une relecture sans changement n'en sont pas : Stripe envoie déjà
+        ses reçus, et un merci à chaque mensualité serait du bruit.
+        """
+        return self.status is SubscriptionStatus.ACTIVE and not previous.status.is_alive
+
     def payment_failed(self, *, at: datetime) -> BillingAccount:
         """Constate un prélèvement en échec ; la grâce part du **premier**."""
         if self.past_due_since is not None:

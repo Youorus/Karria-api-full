@@ -51,6 +51,8 @@ def _message(
         (PushKind.TEMPLATES, None, "karria://modeles", PushChannel.DOCUMENTS),
         (PushKind.ACCOUNT, None, "karria://parametres", PushChannel.COMPTE),
         (PushKind.SUPPORT, None, "karria://equipe", PushChannel.COMPTE),
+        (PushKind.PURCHASE, None, "karria://profil", PushChannel.COMPTE),
+        (PushKind.PURCHASE, ID, f"karria://modele/{ID}", PushChannel.COMPTE),
     ],
 )
 def test_chaque_type_porte_sa_version_son_lien_et_son_canal(
@@ -91,6 +93,7 @@ def test_un_type_qui_designe_une_chose_exige_son_identifiant(kind: PushKind) -> 
         PushKind.CV_READY,
         PushKind.TEMPLATES,
         PushKind.ACCOUNT,
+        PushKind.SUPPORT,
     ],
 )
 def test_un_type_general_refuse_un_identifiant(kind: PushKind) -> None:

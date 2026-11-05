@@ -533,11 +533,16 @@ Un travail `payments.reconcile` nocturne dans le worker (`subscriptions.list`
 par client, `BillingAccount.synced`) ; le worker recevrait alors les variables
 `PAYMENTS__*`.
 
-### Aucun courriel de Karria autour d'un paiement
+### Aucun courriel de Karria autour d'un paiement — sauf le merci
 
-Les reçus sont ceux de Stripe (à activer dans le tableau de bord). Karria ne
-dit rien par e-mail à un prélèvement en échec : la personne le découvre dans
-l'app (« paiement en attente ») et par le reçu d'échec de Stripe.
+Les reçus sont ceux de Stripe (à activer dans le tableau de bord). Depuis le
+2026-11-05, chaque livraison vaut un courriel et une notification de merci
+(ADR-0024 § 2026-11-05), envoyés hors transaction et jamais rejoués par
+Stripe : un échec se lit dans le journal (`payments.thanks_*_failed`) et se
+rattrape à la main (`scripts/payments_thanks.py`). Si ces échecs se
+multiplient, passer le merci par la file durable. Karria ne dit toujours rien
+par e-mail à un prélèvement en échec : la personne le découvre dans l'app
+(« paiement en attente ») et par le reçu d'échec de Stripe.
 
 **Déclencheur :** une plainte, ou l'ouverture du compte de messagerie
 transactionnel de Karria pour d'autres usages.

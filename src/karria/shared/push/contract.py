@@ -21,8 +21,8 @@ Le format (miroir de `karria_app/docs/contrat-notifications.md`)
 
 - `v` — `"1"`, toujours ;
 - `type` — l'une des valeurs de `PushKind` ;
-- `id` — obligatoire pour `offer` et `template`, permis pour `cv_export`,
-  refusé ailleurs ;
+- `id` — obligatoire pour `offer` et `template`, permis pour `cv_export` et
+  `purchase` (l'identifiant du modèle acheté), refusé ailleurs ;
 - `count` — permis pour `offer`, `offers_feed`, `search_results` ;
 - `campaign` — étiquette libre bornée, pour la mesure ;
 - `url` — le chemin équivalent, pour les versions de l'app qui ne lisent
@@ -69,6 +69,10 @@ class PushKind(StrEnum):
     ACCOUNT = "account"
     #: L'équipe Karria a répondu dans « Parler à l'équipe ».
     SUPPORT = "support"
+    #: Un paiement a été livré : café, modèle de CV (`id`) ou « sans pub »
+    #: (ADR-0024 § 2026-11-05). Sans `id`, ouvre le profil (soutien) ;
+    #: avec, le modèle acheté.
+    PURCHASE = "purchase"
 
 
 class PushChannel(StrEnum):
@@ -94,12 +98,13 @@ _CHANNEL: Final[dict[PushKind, PushChannel]] = {
     PushKind.TEMPLATES: PushChannel.DOCUMENTS,
     PushKind.ACCOUNT: PushChannel.COMPTE,
     PushKind.SUPPORT: PushChannel.COMPTE,
+    PushKind.PURCHASE: PushChannel.COMPTE,
 }
 
 #: Les types qui désignent une chose précise : sans `id`, ils n'ouvrent rien.
 _ID_REQUIRED: Final = frozenset({PushKind.OFFER, PushKind.TEMPLATE})
 #: Ceux qui l'acceptent sans l'exiger.
-_ID_ALLOWED: Final = _ID_REQUIRED | {PushKind.CV_EXPORT}
+_ID_ALLOWED: Final = _ID_REQUIRED | {PushKind.CV_EXPORT, PushKind.PURCHASE}
 #: Ceux qui annoncent un nombre d'offres.
 _COUNT_ALLOWED: Final = frozenset({PushKind.OFFER, PushKind.OFFERS_FEED, PushKind.SEARCH_RESULTS})
 
@@ -117,6 +122,13 @@ _PATH: Final[dict[PushKind, str]] = {
     PushKind.TEMPLATES: "modeles",
     PushKind.ACCOUNT: "parametres",
     PushKind.SUPPORT: "equipe",
+    PushKind.PURCHASE: "profil",
+}
+
+#: Le chemin quand le type **porte** un identifiant et qu'il change la
+#: destination : un achat avec `id` ouvre le modèle acheté, pas le profil.
+_PATH_WITH_ID: Final[dict[PushKind, str]] = {
+    PushKind.PURCHASE: "modele/{id}",
 }
 
 
@@ -174,7 +186,10 @@ class PushMessage:
     @property
     def url(self) -> str:
         """Le lien équivalent, pour les versions de l'app qui ne lisent que lui."""
-        return APP_SCHEME + _PATH[self.kind].format(id=self.target_id)
+        path = _PATH[self.kind]
+        if self.target_id is not None:
+            path = _PATH_WITH_ID.get(self.kind, path)
+        return APP_SCHEME + path.format(id=self.target_id)
 
     @property
     def data(self) -> dict[str, str]:

@@ -63,6 +63,9 @@ class TestAchats:
         assert await repo.has_session("cs_1") is True
         assert await repo.has_session("cs_2") is False
         assert await repo.of_user(user) == [purchase]
+        # Par identifiant : ce que `scripts/payments_thanks.py` relit pour rejouer un merci.
+        assert await repo.find(purchase.id) == purchase
+        assert await repo.find(uuid4()) is None
 
         await repo.delete_for_user(user)
         assert await repo.of_user(user) == []

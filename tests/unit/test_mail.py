@@ -69,6 +69,10 @@ CONTEXTE: Final[dict[str, Any]] = {
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf\n- Lettre de motivation - Acme.pdf",
     "count": 2,
+    # Ce que `payments` passe pour dire merci (ADR-0024 § 2026-11-05).
+    "amount": "2,99\u00a0€",
+    "coffee_label": "un café",
+    "template_label": "Meridian",
 }
 
 
@@ -236,6 +240,9 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.SMTP_TEST: "Test SMTP Karria",
     MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
     MailMessage.DOCUMENTS_SENT: "Des documents envoyés depuis Karria",
+    MailMessage.PURCHASE_COFFEE: "Merci pour le café",
+    MailMessage.PURCHASE_TEMPLATE: "Votre modèle de CV est à vous",
+    MailMessage.SUBSCRIPTION_STARTED: "Karria sans pub est actif",
 }
 
 #: Ce qui trahit une variable mal rendue, quelle que soit sa syntaxe.

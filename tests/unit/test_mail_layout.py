@@ -24,6 +24,9 @@ CONTEXTE = {
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf",
     "count": 1,
+    "amount": "2,99\u00a0€",
+    "coffee_label": "un café",
+    "template_label": "Meridian",
 }
 
 

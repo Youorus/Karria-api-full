@@ -11,6 +11,8 @@ from karria.modules.payments.application.ports import (
     CheckoutSession,
     PurchaseRepository,
     TemplateStore,
+    ThankYouMailer,
+    UserNotifier,
     WebhookLedger,
     WebhookSignatureError,
 )
@@ -27,6 +29,8 @@ from karria.modules.payments.application.use_cases import (
     OpenPortal,
     PaymentStatus,
     PlatformFlags,
+    ThankForPurchase,
+    ThankYouDelivery,
     WebhookOutcome,
 )
 
@@ -53,6 +57,10 @@ __all__ = [
     "PlatformFlags",
     "PurchaseRepository",
     "TemplateStore",
+    "ThankForPurchase",
+    "ThankYouDelivery",
+    "ThankYouMailer",
+    "UserNotifier",
     "WebhookLedger",
     "WebhookOutcome",
     "WebhookSignatureError",

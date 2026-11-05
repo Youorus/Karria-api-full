@@ -60,6 +60,9 @@ Les branchements d'aujourd'hui
 - `support.get_user_notifier` ← `devices.SendPushToUser`. Sans lui, une
   réponse de l'équipe n'est pas notifiée (`support.notifier_unwired`) :
   dégradé, pas cassé — le direct et le non-lu restent.
+- `payments.get_user_notifier` ← `devices.SendPushToUser`. Sans lui, le
+  merci d'un paiement n'arrive que par courriel (`payments.notifier_unwired`) :
+  dégradé, pas cassé — le webhook livre quand même (ADR-0024 § 2026-11-05).
 - `support.get_account_directory` ← `identity.GetCurrentUser`. Sans lui, la
   console de l'équipe montre « compte inconnu » à la place des adresses.
 - `applications.get_offer_reader` ← `offers.GetOfferForUser`,
@@ -181,10 +184,14 @@ from karria.modules.payments import (
     AccountDirectory,
     PremiumOffer,
     TemplateStore,
+    ThankForPurchase,
+    build_thank_for_purchase,
     get_account_directory,
     get_template_store,
 )
+from karria.modules.payments import UserNotifier as PaymentsUserNotifier
 from karria.modules.payments import build_forget_user as build_forget_user_payments
+from karria.modules.payments import get_user_notifier as get_payments_user_notifier
 from karria.modules.support import (
     AccountDirectory as SupportAccountDirectory,
 )
@@ -445,6 +452,13 @@ def support_user_notifier_from_devices(
     return DevicesUserNotifier(send)
 
 
+def payments_user_notifier_from_devices(
+    send: Annotated[SendPushToUser, Depends(get_send_push_to_user)],
+) -> PaymentsUserNotifier:
+    """La réponse du module `devices` au besoin de `payments` (le merci d'un paiement)."""
+    return DevicesUserNotifier(send)
+
+
 def support_account_directory_from_identity(
     reader: Annotated[GetCurrentUser, Depends(get_current_user_reader)],
 ) -> SupportAccountDirectory:
@@ -676,6 +690,35 @@ def build_user_notifier() -> UserNotifier:
     )
 
 
+def build_thank_for_purchase_wired() -> ThankForPurchase:
+    """Le merci d'un paiement, hors requête, pour `scripts/payments_thanks.py`.
+
+    Les mêmes branchements qu'en requête : l'adresse par `identity`, le nom
+    du modèle par `documents`, la notification par `devices`.
+    """
+    from karria.modules.documents.api.dependencies import (  # noqa: PLC0415 - assemblage hors requête
+        get_clock as get_documents_clock,
+    )
+    from karria.modules.documents.api.dependencies import (  # noqa: PLC0415
+        get_template_repository,
+        get_user_template_repository,
+    )
+    from karria.modules.identity.api.dependencies import (  # noqa: PLC0415
+        get_user_repository,
+    )
+
+    return build_thank_for_purchase(
+        get_settings(),
+        directory=IdentityAccountDirectory(get_current_user_reader(get_user_repository())),
+        notifier=build_user_notifier(),
+        templates=DocumentsTemplateStore(
+            get_template_shop(
+                get_template_repository(), get_user_template_repository(), get_documents_clock()
+            )
+        ),
+    )
+
+
 def wire_modules(app: FastAPI) -> None:
     """Branche les ports inter-modules sur leurs implémentations réelles.
 
@@ -707,6 +750,8 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_token_resolver] = token_resolver_from_identity
     # Sans cette ligne : une réponse de l'équipe n'est jamais notifiée.
     app.dependency_overrides[get_support_user_notifier] = support_user_notifier_from_devices
+    # Sans cette ligne : le merci d'un paiement n'arrive que par courriel.
+    app.dependency_overrides[get_payments_user_notifier] = payments_user_notifier_from_devices
     # Sans cette ligne : la console de l'équipe ne montre aucune adresse.
     app.dependency_overrides[get_support_account_directory] = (
         support_account_directory_from_identity
@@ -725,7 +770,7 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_cv_validator] = cv_validator_from_cv
     app.dependency_overrides[get_template_checker] = template_checker_from_documents
 
-    logger.debug("bootstrap.modules_wired", bindings=16)
+    logger.debug("bootstrap.modules_wired", bindings=17)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:

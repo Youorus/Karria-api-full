@@ -33,6 +33,9 @@ CONTEXT: Final[dict[str, Any]] = {
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf\n- Lettre de motivation - Acme.pdf",
     "count": 2,
+    "amount": "2,99\u00a0€",
+    "coffee_label": "un café",
+    "template_label": "Meridian",
 }
 
 

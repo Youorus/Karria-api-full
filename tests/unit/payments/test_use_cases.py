@@ -20,6 +20,7 @@ from karria.modules.payments.application import (
     OpenCheckout,
     OpenPortal,
     PlatformFlags,
+    ThankForPurchase,
 )
 from karria.modules.payments.domain import (
     GRACE_PERIOD,
@@ -32,6 +33,7 @@ from karria.modules.payments.domain import (
     SubscriptionStatus,
     TemplateAlreadyOwnedError,
     TemplateOfferNotFoundError,
+    ThankYou,
 )
 from karria.shared.database import NullUnitOfWork
 from karria.shared.errors.exceptions import EntityNotFoundError, InvalidInputError
@@ -39,7 +41,9 @@ from payments.fakes import (
     NOW,
     FakeDirectory,
     FakeGateway,
+    FakeNotifier,
     FakeTemplateStore,
+    FakeThankYouMailer,
     InMemoryAccounts,
     InMemoryLedger,
     InMemoryPurchases,
@@ -59,8 +63,21 @@ class Env:
     ledger: InMemoryLedger = field(default_factory=InMemoryLedger)
     templates: FakeTemplateStore = field(default_factory=FakeTemplateStore)
     directory: FakeDirectory = field(default_factory=FakeDirectory)
+    notifier: FakeNotifier = field(default_factory=FakeNotifier)
+    mailer: FakeThankYouMailer = field(default_factory=FakeThankYouMailer)
     clock: FakeClock = field(default_factory=lambda: FakeClock(NOW))
     user: UUID = field(default_factory=uuid4)
+
+    def __post_init__(self) -> None:
+        self.directory.emails[self.user] = "awa@exemple.fr"
+
+    def thanks(self) -> ThankForPurchase:
+        return ThankForPurchase(
+            directory=self.directory,
+            mailer=self.mailer,
+            notifier=self.notifier,
+            templates=self.templates,
+        )
 
     def open(self, gateway: FakeGateway | None = None, *, configured: bool = True) -> OpenCheckout:
         return OpenCheckout(
@@ -97,6 +114,7 @@ class Env:
             purchases=self.purchases,
             ledger=self.ledger,
             templates=self.templates,
+            thanks=self.thanks(),
             clock=self.clock,
             uow=NullUnitOfWork(),
         )
@@ -428,6 +446,143 @@ class TestWebhook:
         assert outcome.applied is True
         assert env.templates.granted == [(env.user, offer.template_id)]
         assert await env.templates.owns(env.user, offer.template_id)
+
+    async def test_un_cafe_livre_vaut_un_merci_par_courriel_et_sur_le_telephone(
+        self, env: Env
+    ) -> None:
+        opened = await env.open().execute(
+            env.user, CheckoutOrder(ProductKind.COFFEE, 1), return_url=APP, return_page=RETURN_PAGE
+        )
+        env.gateway.pay(opened.session.id)
+        env.gateway.event("a", BillingEventKind.CHECKOUT_COMPLETED, session_id=opened.session.id)
+
+        await env.webhook().execute(b"{}", "a")
+
+        assert [(to, t.kind, t.amount) for to, t in env.mailer.sent] == [
+            ("awa@exemple.fr", ProductKind.COFFEE, "2,99\u00a0€")
+        ]
+        assert [(u, m.data["type"]) for u, m in env.notifier.sent] == [(env.user, "purchase")]
+
+    async def test_le_rejeu_et_le_jumeau_ne_remercient_pas_deux_fois(self, env: Env) -> None:
+        opened = await env.open().execute(
+            env.user, CheckoutOrder(ProductKind.COFFEE, 2), return_url=APP, return_page=RETURN_PAGE
+        )
+        env.gateway.pay(opened.session.id)
+        env.gateway.event(
+            "a", BillingEventKind.CHECKOUT_COMPLETED, event_id="evt_a", session_id=opened.session.id
+        )
+        env.gateway.event(
+            "b", BillingEventKind.CHECKOUT_COMPLETED, event_id="evt_b", session_id=opened.session.id
+        )
+
+        await env.webhook().execute(b"{}", "a")
+        await env.webhook().execute(b"{}", "a")
+        await env.webhook().execute(b"{}", "b")
+
+        assert len(env.mailer.sent) == 1
+        assert len(env.notifier.sent) == 1
+
+    async def test_un_modele_livre_dit_son_nom_et_ouvre_le_modele(self, env: Env) -> None:
+        offer = env.templates.sell("Meridian")
+        opened = await env.open().execute(
+            env.user,
+            CheckoutOrder(ProductKind.TEMPLATE, template_id=offer.template_id),
+            return_url=APP,
+            return_page=RETURN_PAGE,
+        )
+        env.gateway.pay(opened.session.id)
+        env.gateway.event("ok", BillingEventKind.CHECKOUT_COMPLETED, session_id=opened.session.id)
+
+        await env.webhook().execute(b"{}", "ok")
+
+        (_, thanks), *_ = env.mailer.sent
+        assert (thanks.kind, thanks.template_label) == (ProductKind.TEMPLATE, "Meridian")
+        (_, push), *_ = env.notifier.sent
+        assert push.data["id"] == str(offer.template_id)
+
+    async def test_un_abonnement_qui_nait_vaut_un_merci_mais_pas_ses_relectures(
+        self, env: Env
+    ) -> None:
+        await env.subscribe()
+        assert [t.kind for _, t in env.mailer.sent] == [ProductKind.AD_FREE]
+        assert len(env.notifier.sent) == 1
+
+        # `customer.subscription.updated` suit presque toujours : rien de neuf.
+        env.gateway.event(
+            "upd",
+            BillingEventKind.SUBSCRIPTION_CHANGED,
+            event_id="evt_upd",
+            subscription_id="sub_1",
+        )
+        await env.webhook().execute(b"{}", "upd")
+        # Le renouvellement du mois suivant non plus.
+        env.gateway.subscription(
+            "sub_1", "cus_1", period_end=NOW + timedelta(days=60), user_id=env.user
+        )
+        env.gateway.event(
+            "ren",
+            BillingEventKind.SUBSCRIPTION_CHANGED,
+            event_id="evt_ren",
+            subscription_id="sub_1",
+        )
+        await env.webhook().execute(b"{}", "ren")
+
+        assert len(env.mailer.sent) == 1
+        assert len(env.notifier.sent) == 1
+
+    async def test_un_merci_qui_echoue_ne_fait_pas_echouer_le_webhook(self, env: Env) -> None:
+        env.mailer.down = True
+        env.notifier.down = True
+        opened = await env.open().execute(
+            env.user, CheckoutOrder(ProductKind.COFFEE), return_url=APP, return_page=RETURN_PAGE
+        )
+        env.gateway.pay(opened.session.id)
+        env.gateway.event("a", BillingEventKind.CHECKOUT_COMPLETED, session_id=opened.session.id)
+
+        outcome = await env.webhook().execute(b"{}", "a")
+
+        assert outcome.applied is True
+        assert len(env.purchases.rows) == 1
+        assert env.mailer.sent == []
+        assert env.notifier.sent == []
+
+    async def test_le_courriel_part_meme_si_la_notification_tombe_et_inversement(
+        self, env: Env
+    ) -> None:
+        env.notifier.down = True
+        thanks = env.thanks()
+        delivery = await thanks.execute(
+            ThankYou.for_subscription(env.user, amount_cents=499, currency="eur")
+        )
+        assert (delivery.emailed, delivery.pushed) == (True, 0)
+
+        env.notifier.down = False
+        env.mailer.down = True
+        delivery = await thanks.execute(
+            ThankYou.for_subscription(env.user, amount_cents=499, currency="eur")
+        )
+        assert (delivery.emailed, delivery.pushed) == (False, 1)
+
+    async def test_sans_adresse_le_courriel_est_saute_pas_la_notification(self, env: Env) -> None:
+        stranger = uuid4()
+        delivery = await env.thanks().execute(
+            ThankYou.for_subscription(stranger, amount_cents=499, currency="eur")
+        )
+        assert (delivery.emailed, delivery.pushed) == (False, 1)
+        assert env.mailer.sent == []
+
+    async def test_un_modele_disparu_du_catalogue_est_remercie_sans_nom(self, env: Env) -> None:
+        delivery = await env.thanks().execute(
+            ThankYou(
+                user_id=env.user,
+                kind=ProductKind.TEMPLATE,
+                amount_cents=499,
+                currency="eur",
+                template_id=uuid4(),
+            )
+        )
+        assert delivery.emailed is True
+        assert env.mailer.sent[0][1].template_label is None
 
     async def test_une_session_non_payee_ne_livre_rien(self, env: Env) -> None:
         opened = await env.open().execute(

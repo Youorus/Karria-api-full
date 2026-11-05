@@ -109,6 +109,10 @@ class TortoisePurchaseRepository:
     async def has_session(self, session_id: str) -> bool:
         return await PurchaseModel.filter(session_id=session_id).exists()
 
+    async def find(self, purchase_id: UUID) -> Purchase | None:
+        row = await PurchaseModel.get_or_none(id=purchase_id)
+        return _purchase(row) if row is not None else None
+
     async def of_user(self, user_id: UUID) -> list[Purchase]:
         rows = await PurchaseModel.filter(user_id=user_id).order_by("-paid_at")
         return [_purchase(r) for r in rows]

@@ -1,9 +1,11 @@
 """Câblage du module `payments` : la configuration → le prestataire → les cas d'usage.
 
-Deux ports regardent vers d'autres modules et **refusent** par défaut :
+Trois ports regardent vers d'autres modules et **refusent** par défaut :
 `get_account_directory` (← `identity`) ne connaît aucune adresse,
-`get_template_store` (← `documents`) ne vend rien et ne remet rien. C'est
-`bootstrap/wiring.py` qui les branche (règle 4).
+`get_template_store` (← `documents`) ne vend rien et ne remet rien,
+`get_user_notifier` (← `devices`) ne notifie personne. C'est
+`bootstrap/wiring.py` qui les branche (règle 4). Le courriel de merci passe
+par `shared/mail` directement (socle, pas module).
 """
 
 from __future__ import annotations
@@ -28,19 +30,28 @@ from karria.modules.payments.application import (
     PlatformFlags,
     PurchaseRepository,
     TemplateStore,
+    ThankForPurchase,
+    ThankYouMailer,
+    UserNotifier,
     WebhookLedger,
 )
 from karria.modules.payments.domain import PaymentsUnavailableError, PremiumOffer
 from karria.modules.payments.infrastructure import (
+    MailThankYouMailer,
     StripeGateway,
     TortoiseBillingAccountRepository,
     TortoisePurchaseRepository,
     TortoiseWebhookLedger,
 )
 from karria.shared.clock import Clock, SystemClock
-from karria.shared.config import Settings
+from karria.shared.config import Settings, get_settings
 from karria.shared.database import TortoiseUnitOfWork
 from karria.shared.http.dependencies import SettingsDep, UnitOfWorkDep
+from karria.shared.logging import get_logger
+from karria.shared.mail import Mailer, build_mailer
+from karria.shared.push import PushMessage
+
+logger = get_logger(__name__)
 
 
 class NoAccountDirectory:
@@ -72,6 +83,18 @@ class NoTemplateStore:
     async def grant(self, user_id: UUID, template_id: UUID) -> None:
         del user_id, template_id
         raise PaymentsUnavailableError("template_store_unwired")
+
+
+class NoUserNotifier:
+    """Le refus par défaut : aucune notification ne part, et le journal le dit.
+
+    Rend 0 plutôt que lever : un merci qui ne part pas ne doit pas faire
+    rejouer le webhook (`ThankForPurchase` n'échoue jamais).
+    """
+
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
+        logger.warning("payments.notifier_unwired", user_id=str(user_id), kind=message.kind.value)
+        return 0
 
 
 @lru_cache(maxsize=2)
@@ -139,6 +162,25 @@ def get_template_store() -> TemplateStore:
     return NoTemplateStore()
 
 
+def get_user_notifier() -> UserNotifier:
+    """Point de substitution : `bootstrap` le branche sur `devices.SendPushToUser`."""
+    return NoUserNotifier()
+
+
+@lru_cache(maxsize=1)
+def _mailer_for(provider: str, host: str, sender: str) -> Mailer:
+    """Mémorise l'adaptateur d'envoi ; les arguments ne servent qu'à la clé (même idiome que `support`)."""
+    _ = (provider, host, sender)
+    return build_mailer(get_settings().mail)
+
+
+def get_thank_you_mailer(settings: SettingsDep) -> ThankYouMailer:
+    """Le courriel de merci, par le centre d'e-mails du socle."""
+    return MailThankYouMailer(
+        _mailer_for(settings.mail.provider.value, settings.mail.host, settings.mail.sender)
+    )
+
+
 GatewayDep = Annotated[BillingGateway | None, Depends(get_payment_gateway)]
 FlagsDep = Annotated[PlatformFlags, Depends(get_platform_flags)]
 ClockDep = Annotated[Clock, Depends(get_clock)]
@@ -147,6 +189,8 @@ PurchasesDep = Annotated[PurchaseRepository, Depends(get_purchase_repository)]
 LedgerDep = Annotated[WebhookLedger, Depends(get_webhook_ledger)]
 DirectoryDep = Annotated[AccountDirectory, Depends(get_account_directory)]
 TemplateStoreDep = Annotated[TemplateStore, Depends(get_template_store)]
+NotifierDep = Annotated[UserNotifier, Depends(get_user_notifier)]
+ThankYouMailerDep = Annotated[ThankYouMailer, Depends(get_thank_you_mailer)]
 
 
 def get_get_catalog(templates: TemplateStoreDep) -> GetCatalog:
@@ -183,6 +227,20 @@ def get_open_portal(gateway: GatewayDep, accounts: AccountsDep) -> OpenPortal:
     return OpenPortal(gateway=gateway, accounts=accounts)
 
 
+def get_thank_for_purchase(
+    directory: DirectoryDep,
+    mailer: ThankYouMailerDep,
+    notifier: NotifierDep,
+    templates: TemplateStoreDep,
+) -> ThankForPurchase:
+    return ThankForPurchase(
+        directory=directory, mailer=mailer, notifier=notifier, templates=templates
+    )
+
+
+ThankForPurchaseDep = Annotated[ThankForPurchase, Depends(get_thank_for_purchase)]
+
+
 def get_handle_webhook(
     *,
     gateway: GatewayDep,
@@ -190,6 +248,7 @@ def get_handle_webhook(
     purchases: PurchasesDep,
     ledger: LedgerDep,
     templates: TemplateStoreDep,
+    thanks: ThankForPurchaseDep,
     clock: ClockDep,
     uow: UnitOfWorkDep,
 ) -> HandleWebhook:
@@ -199,6 +258,7 @@ def get_handle_webhook(
         purchases=purchases,
         ledger=ledger,
         templates=templates,
+        thanks=thanks,
         clock=clock,
         uow=uow,
     )
@@ -213,7 +273,25 @@ def build_forget_user(settings: Settings) -> ForgetUser:
     )
 
 
-def build_handle_webhook(settings: Settings, templates: TemplateStore) -> HandleWebhook:
+def build_thank_for_purchase(
+    settings: Settings,
+    *,
+    directory: AccountDirectory,
+    notifier: UserNotifier,
+    templates: TemplateStore,
+) -> ThankForPurchase:
+    """Le merci hors requête (`scripts/payments_thanks.py`) : `bootstrap` fournit les ports voisins."""
+    return ThankForPurchase(
+        directory=directory,
+        mailer=MailThankYouMailer(build_mailer(settings.mail)),
+        notifier=notifier,
+        templates=templates,
+    )
+
+
+def build_handle_webhook(
+    settings: Settings, templates: TemplateStore, thanks: ThankForPurchase
+) -> HandleWebhook:
     """Le traitement d'une notification hors requête (scripts, rejeu)."""
     return HandleWebhook(
         gateway=build_gateway(settings),
@@ -221,6 +299,7 @@ def build_handle_webhook(settings: Settings, templates: TemplateStore) -> Handle
         purchases=get_purchase_repository(),
         ledger=get_webhook_ledger(),
         templates=templates,
+        thanks=thanks,
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
     )

@@ -22,10 +22,13 @@ from karria.modules.payments.application.ports import (
     CheckoutSession,
     PurchaseRepository,
     TemplateStore,
+    ThankYouMailer,
+    UserNotifier,
     WebhookLedger,
     WebhookSignatureError,
 )
 from karria.modules.payments.domain import (
+    AD_FREE_PLAN,
     BillingAccount,
     BillingAccountNotFoundError,
     Catalog,
@@ -38,6 +41,7 @@ from karria.modules.payments.domain import (
     SubscriptionAlreadyActiveError,
     SubscriptionStatus,
     TemplateAlreadyOwnedError,
+    ThankYou,
     catalog,
     gratitude,
     price,
@@ -325,11 +329,117 @@ class OpenPortal:
 
 
 @dataclass(frozen=True, slots=True)
+class ThankYouDelivery:
+    """Ce qui est parti : le courriel (et où, pour le journal), les appareils qui ont accepté."""
+
+    emailed: bool
+    pushed: int
+
+
+class ThankForPurchase:
+    """Dit merci — par courriel et sur le téléphone — pour une livraison (ADR-0024 § 2026-11-05).
+
+    Ne lève **jamais** : appelé après la transaction du webhook, un échec
+    d'envoi se journalise et ne fait pas rejouer le prestataire (qui
+    recompterait un café ou re-remettrait un modèle pour un courriel). Le
+    courriel et la notification sont indépendants : l'un part même si
+    l'autre échoue. Sans adresse (compte supprimé entre-temps), le courriel
+    est sauté ; sans appareil joignable, `devices` rend 0.
+
+    Pourquoi `Exception` et non une liste de pannes : la seule garantie qui
+    compte ici est « le webhook répond 200 ». Un gabarit auquel une variable
+    manque (`KeyError`), un SMTP coupé (`MailDeliveryError`), Expo injoignable
+    (`DependencyUnavailableError`) : aucune ne doit remonter, et toutes se
+    lisent dans le journal.
+    """
+
+    def __init__(
+        self,
+        *,
+        directory: AccountDirectory,
+        mailer: ThankYouMailer,
+        notifier: UserNotifier,
+        templates: TemplateStore,
+    ) -> None:
+        self._directory = directory
+        self._mailer = mailer
+        self._notifier = notifier
+        self._templates = templates
+
+    async def execute(self, thanks: ThankYou) -> ThankYouDelivery:
+        """Complète le nom du modèle, envoie le courriel, puis la notification."""
+        thanks = await self._with_label(thanks)
+        emailed = await self._email(thanks)
+        pushed = await self._push(thanks)
+        logger.info(
+            "payments.thanks_sent",
+            user_id=str(thanks.user_id),
+            kind=thanks.kind.value,
+            emailed=emailed,
+            pushed=pushed,
+        )
+        return ThankYouDelivery(emailed=emailed, pushed=pushed)
+
+    async def _with_label(self, thanks: ThankYou) -> ThankYou:
+        if thanks.kind is not ProductKind.TEMPLATE or thanks.template_id is None:
+            return thanks
+        try:
+            offer = await self._templates.premium_offer(thanks.template_id)
+        except Exception as exc:  # voir la docstring : rien ne remonte
+            logger.warning("payments.thanks_label_failed", error=type(exc).__name__)
+            return thanks
+        return replace(thanks, template_label=offer.label if offer is not None else None)
+
+    async def _email(self, thanks: ThankYou) -> bool:
+        try:
+            to = await self._directory.email_of(thanks.user_id)
+            if to is None:
+                logger.warning(
+                    "payments.thanks_email_skipped_no_address", user_id=str(thanks.user_id)
+                )
+                return False
+            await self._mailer.send(to=to, thanks=thanks)
+        except Exception as exc:  # voir la docstring : rien ne remonte
+            logger.warning(
+                "payments.thanks_email_failed",
+                user_id=str(thanks.user_id),
+                kind=thanks.kind.value,
+                error=type(exc).__name__,
+            )
+            return False
+        return True
+
+    async def _push(self, thanks: ThankYou) -> int:
+        try:
+            return await self._notifier.notify(thanks.user_id, thanks.push())
+        except Exception as exc:  # voir la docstring : rien ne remonte
+            logger.warning(
+                "payments.thanks_push_failed",
+                user_id=str(thanks.user_id),
+                kind=thanks.kind.value,
+                error=type(exc).__name__,
+            )
+            return 0
+
+
+@dataclass(frozen=True, slots=True)
 class WebhookOutcome:
     """Ce qu'une notification a produit."""
 
     event: BillingEvent
     applied: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _Effect:
+    """Ce qu'une notification a changé dans la transaction, et le merci qu'elle doit."""
+
+    applied: bool
+    thanks: ThankYou | None = None
+
+    @classmethod
+    def nothing(cls) -> _Effect:
+        return cls(applied=False)
 
 
 class HandleWebhook:
@@ -350,6 +460,15 @@ class HandleWebhook:
       compté, ou modèle remis par `TemplateStore.grant`) ;
     - un abonnement créé, modifié ou supprimé → la projection est resynchronisée ;
     - un prélèvement en échec → le départ de la grâce est posé.
+
+    Le merci
+    --------
+    Un achat enregistré ou un abonnement qui vient de s'activer produit un
+    `ThankYou`, remis à `ThankForPurchase` **après** la transaction : un
+    courriel et une notification ne doivent ni retarder ni faire échouer la
+    réponse au prestataire. Une fois par livraison, par construction : le
+    rejeu s'arrête au registre, le doublon à `PurchaseRepository.add`, et
+    une relecture d'abonnement qui ne change rien ne produit rien.
     """
 
     def __init__(
@@ -360,6 +479,7 @@ class HandleWebhook:
         purchases: PurchaseRepository,
         ledger: WebhookLedger,
         templates: TemplateStore,
+        thanks: ThankForPurchase,
         clock: Clock,
         uow: UnitOfWork,
     ) -> None:
@@ -368,6 +488,7 @@ class HandleWebhook:
         self._purchases = purchases
         self._ledger = ledger
         self._templates = templates
+        self._thanks = thanks
         self._clock = clock
         self._uow = uow
 
@@ -391,39 +512,42 @@ class HandleWebhook:
             if not await self._ledger.record(event.event_id, event.type):
                 logger.info("payments.webhook_replayed", event_id=event.event_id, type=event.type)
                 return WebhookOutcome(event, applied=False)
-            applied = await self._apply(event)
+            effect = await self._apply(event)
 
         logger.info(
             "payments.webhook_received",
             event_id=event.event_id,
             type=event.type,
             kind=event.kind.value,
-            applied=applied,
+            applied=effect.applied,
         )
-        return WebhookOutcome(event, applied=applied)
+        if effect.thanks is not None:
+            # Hors transaction, et sans jamais lever : voir `ThankForPurchase`.
+            await self._thanks.execute(effect.thanks)
+        return WebhookOutcome(event, applied=effect.applied)
 
-    async def _apply(self, event: BillingEvent) -> bool:
+    async def _apply(self, event: BillingEvent) -> _Effect:
         if event.kind is BillingEventKind.CHECKOUT_COMPLETED:
             return await self._on_checkout_completed(event.session_id)
         if event.kind is BillingEventKind.SUBSCRIPTION_CHANGED:
             return await self._sync(event.subscription_id)
         if event.kind is BillingEventKind.INVOICE_PAYMENT_FAILED:
             return await self._on_payment_failed(event.subscription_id)
-        return False
+        return _Effect.nothing()
 
-    async def _on_checkout_completed(self, session_id: str | None) -> bool:
+    async def _on_checkout_completed(self, session_id: str | None) -> _Effect:
         """Une session close : livrer un paiement unique, ou relire l'abonnement né."""
         assert self._gateway is not None  # noqa: S101 - vérifié par `execute`
         if not session_id:
-            return False
+            return _Effect.nothing()
         record = await self._gateway.retrieve_checkout(session_id)
         if record is None:
-            return False
+            return _Effect.nothing()
         if record.mode == "subscription":
             return await self._sync(record.subscription_id)
         return await self._fulfill(record)
 
-    async def _on_payment_failed(self, subscription_id: str | None) -> bool:
+    async def _on_payment_failed(self, subscription_id: str | None) -> _Effect:
         """Un prélèvement en échec : l'état est relu, puis la grâce part du premier échec."""
         synced = await self._sync(subscription_id)
         account = await self._account_of_subscription(subscription_id)
@@ -434,12 +558,12 @@ class HandleWebhook:
             return synced
         await self._accounts.save(failed)
         logger.info("payments.payment_failed", user_id=str(account.user_id))
-        return True
+        return _Effect(applied=True, thanks=synced.thanks)
 
-    async def _fulfill(self, record: CheckoutRecord) -> bool:
+    async def _fulfill(self, record: CheckoutRecord) -> _Effect:
         """Un paiement unique : compte le café ou remet le modèle, une seule fois."""
         if not record.paid or record.user_id is None or record.kind is None:
-            return False
+            return _Effect.nothing()
         purchase = Purchase(
             id=uuid4(),
             user_id=record.user_id,
@@ -452,7 +576,7 @@ class HandleWebhook:
             template_id=record.template_id,
         )
         if not await self._purchases.add(purchase):
-            return False
+            return _Effect.nothing()
         if purchase.kind is ProductKind.TEMPLATE and purchase.template_id is not None:
             await self._templates.grant(purchase.user_id, purchase.template_id)
         logger.info(
@@ -463,13 +587,13 @@ class HandleWebhook:
             coffee_count=purchase.coffee_count,
             template_id=str(purchase.template_id) if purchase.template_id else None,
         )
-        return True
+        return _Effect(applied=True, thanks=ThankYou.for_purchase(purchase))
 
-    async def _sync(self, subscription_id: str | None) -> bool:
+    async def _sync(self, subscription_id: str | None) -> _Effect:
         """Relit l'abonnement chez le prestataire et recopie son état."""
         assert self._gateway is not None  # noqa: S101 - vérifié par `execute`
         if not subscription_id:
-            return False
+            return _Effect.nothing()
         remote = await self._gateway.fetch_subscription(subscription_id)
         account = await self._accounts.find_by_customer(remote.customer_id, lock=True)
         if account is None and remote.user_id is not None:
@@ -479,11 +603,11 @@ class HandleWebhook:
             # l'ouverture d'une session. Une notification sans ligne vient
             # d'ailleurs (un autre environnement sur le même compte Stripe).
             logger.warning("payments.webhook_unknown_customer", customer_id=remote.customer_id)
-            return False
+            return _Effect.nothing()
         updated = account.synced(remote, at=self._clock.now())
         if replace(updated, synced_at=account.synced_at) == account:
             # Rien n'a bougé : on n'écrit pas pour une date de relecture.
-            return False
+            return _Effect.nothing()
         await self._accounts.save(updated)
         logger.info(
             "payments.subscription_synced",
@@ -491,7 +615,16 @@ class HandleWebhook:
             status=updated.status.value,
             cancel_at_period_end=updated.cancel_at_period_end,
         )
-        return True
+        thanks = (
+            ThankYou.for_subscription(
+                updated.user_id,
+                amount_cents=AD_FREE_PLAN.amount_cents,
+                currency=AD_FREE_PLAN.currency,
+            )
+            if updated.activated_from(account)
+            else None
+        )
+        return _Effect(applied=True, thanks=thanks)
 
     async def _account_of_subscription(self, subscription_id: str | None) -> BillingAccount | None:
         assert self._gateway is not None  # noqa: S101 - vérifié par `execute`

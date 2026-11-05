@@ -10,17 +10,32 @@ Ce fichier est la **seule** porte d'entrée du module (règle 3).
 - `TemplateStore`, `PremiumOffer`, `get_template_store` — le port « quels
   modèles sont en vente, qui les possède, remets celui-ci », branché sur
   `documents` ;
-- `build_forget_user` — la réaction à la suppression d'un compte (ADR-0015).
+- `UserNotifier`, `get_user_notifier` — le port « préviens cette personne sur
+  son téléphone », branché sur `devices` (le merci d'un paiement, ADR-0024
+  § 2026-11-05) ;
+- `build_forget_user` — la réaction à la suppression d'un compte (ADR-0015) ;
+- `build_thank_for_purchase`, `get_purchase_repository`, `get_webhook_ledger`,
+  `ThankYou` — ce que `scripts/payments_thanks.py` assemble pour rejouer un merci.
 """
 
 from karria.modules.payments.api.dependencies import (
     build_forget_user,
+    build_thank_for_purchase,
     get_account_directory,
+    get_purchase_repository,
     get_template_store,
+    get_user_notifier,
+    get_webhook_ledger,
 )
 from karria.modules.payments.api.routers import router
-from karria.modules.payments.application import AccountDirectory, ForgetUser, TemplateStore
-from karria.modules.payments.domain import PremiumOffer
+from karria.modules.payments.application import (
+    AccountDirectory,
+    ForgetUser,
+    TemplateStore,
+    ThankForPurchase,
+    UserNotifier,
+)
+from karria.modules.payments.domain import PremiumOffer, ThankYou
 from karria.shared.module import ModuleDescriptor
 
 MODULE = ModuleDescriptor(
@@ -35,7 +50,14 @@ __all__ = [
     "ForgetUser",
     "PremiumOffer",
     "TemplateStore",
+    "ThankForPurchase",
+    "ThankYou",
+    "UserNotifier",
     "build_forget_user",
+    "build_thank_for_purchase",
     "get_account_directory",
+    "get_purchase_repository",
     "get_template_store",
+    "get_user_notifier",
+    "get_webhook_ledger",
 ]

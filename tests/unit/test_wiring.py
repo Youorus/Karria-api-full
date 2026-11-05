@@ -49,7 +49,13 @@ from karria.modules.identity import (
 )
 from karria.modules.identity.domain import EmailAddress
 from karria.modules.offers import get_user_notifier
-from karria.modules.payments import PremiumOffer, get_account_directory, get_template_store
+from karria.modules.payments import (
+    PremiumOffer,
+    ThankForPurchase,
+    get_account_directory,
+    get_template_store,
+)
+from karria.modules.payments import get_user_notifier as get_payments_user_notifier
 from karria.modules.support import get_account_directory as get_support_account_directory
 from karria.modules.support import get_user_notifier as get_support_user_notifier
 from karria.shared.auth import get_ai_consent_gate, get_token_resolver, resolve_principal
@@ -162,6 +168,14 @@ class TestPaymentsPorts:
 
         assert app.dependency_overrides[get_account_directory] is account_directory_from_identity
         assert app.dependency_overrides[get_template_store] is template_store_from_documents
+        assert (
+            app.dependency_overrides[get_payments_user_notifier]
+            is wiring.payments_user_notifier_from_devices
+        )
+
+    def test_le_merci_hors_requete_s_assemble_avec_les_memes_branchements(self) -> None:
+        """`scripts/payments_thanks.py` obtient le même merci que le webhook (sans ouvrir la base)."""
+        assert isinstance(wiring.build_thank_for_purchase_wired(), ThankForPurchase)
 
     async def test_l_adresse_vient_du_compte_ou_de_rien(self) -> None:
         user = uuid4()

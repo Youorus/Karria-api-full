@@ -20,9 +20,11 @@ from karria.modules.payments.domain import (
     SubscriptionStatus,
     TemplateOfferNotFoundError,
     TemplateRequiredError,
+    ThankYou,
     UnknownCoffeeTierError,
     catalog,
     coffee_price,
+    format_amount,
     gratitude,
     price,
     template_price,
@@ -30,6 +32,7 @@ from karria.modules.payments.domain import (
     with_query,
 )
 from karria.shared.errors.exceptions import InvalidInputError
+from karria.shared.push import PushChannel, PushKind
 from payments.fakes import NOW
 
 pytestmark = pytest.mark.unit
@@ -249,6 +252,81 @@ class TestMerci:
         assert thanks.coffees == 4
         assert thanks.total_cents == 1098
         assert thanks.last_at == NOW + timedelta(days=1)
+
+
+class TestRemerciement:
+    """Ce qu'on dit après un paiement, et par quel canal (ADR-0024 § 2026-11-05)."""
+
+    def test_un_cafe_ouvre_le_profil_sans_citer_le_montant(self) -> None:
+        purchase = Purchase(
+            uuid4(), uuid4(), ProductKind.COFFEE, "cs_1", 799, "eur", NOW, coffee_count=3
+        )
+        thanks = ThankYou.for_purchase(purchase)
+        push = thanks.push()
+
+        assert thanks.amount == "7,99\u00a0€"
+        assert thanks.coffee_label == "3 cafés"
+        assert push.kind is PushKind.PURCHASE
+        assert push.channel is PushChannel.COMPTE
+        assert push.data == {"v": "1", "type": "purchase", "url": "karria://profil"}
+        assert "7,99" not in push.body
+        assert "☕" not in push.title
+
+    def test_un_seul_cafe_se_dit_au_singulier(self) -> None:
+        purchase = Purchase(uuid4(), uuid4(), ProductKind.COFFEE, "cs_1", 299, "eur", NOW)
+        assert ThankYou.for_purchase(purchase).coffee_label == "un café"
+
+    def test_un_modele_ouvre_le_modele_achete(self) -> None:
+        template = uuid4()
+        purchase = Purchase(
+            uuid4(), uuid4(), ProductKind.TEMPLATE, "cs_1", 499, "eur", NOW, template_id=template
+        )
+        push = ThankYou.for_purchase(purchase).push()
+
+        assert push.data == {
+            "v": "1",
+            "type": "purchase",
+            "id": str(template),
+            "url": f"karria://modele/{template}",
+        }
+
+    def test_le_sans_pub_ouvre_le_profil(self) -> None:
+        thanks = ThankYou.for_subscription(uuid4(), amount_cents=499, currency="eur")
+        assert thanks.kind is ProductKind.AD_FREE
+        assert thanks.amount == "4,99\u00a0€"
+        assert thanks.push().data["url"] == "karria://profil"
+
+    @pytest.mark.parametrize(
+        ("cents", "currency", "expected"),
+        [(299, "eur", "2,99\u00a0€"), (1000, "EUR", "10,00\u00a0€"), (5, "usd", "0,05\u00a0USD")],
+    )
+    def test_le_montant_s_ecrit_a_la_francaise(self, cents: int, currency: str, expected: str):
+        assert format_amount(cents, currency) == expected
+
+    def test_un_abonnement_ne_nait_qu_une_fois(self) -> None:
+        user = uuid4()
+        opened = BillingAccount.opened(user_id=user, customer_id="cus_1")
+
+        def remote(status: SubscriptionStatus) -> ProviderSubscription:
+            return ProviderSubscription(
+                subscription_id="sub_1",
+                customer_id="cus_1",
+                status=status,
+                current_period_ends_at=NOW + timedelta(days=30),
+                cancel_scheduled=False,
+                ends_at=None,
+                user_id=user,
+            )
+
+        active = opened.synced(remote(SubscriptionStatus.ACTIVE), at=NOW)
+        assert active.activated_from(opened) is True
+        # Renouvellement, carte corrigée, relecture : pas un nouveau merci.
+        assert active.activated_from(active) is False
+        past_due = active.payment_failed(at=NOW)
+        assert active.activated_from(past_due) is False
+        # Résilié puis repris : un abonnement neuf, un merci.
+        canceled = active.synced(remote(SubscriptionStatus.CANCELED), at=NOW)
+        assert canceled.synced(remote(SubscriptionStatus.ACTIVE), at=NOW).activated_from(canceled)
 
 
 class TestRetour:

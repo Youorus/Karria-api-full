@@ -39,3 +39,14 @@ n'ouvrait rien.** Rien n'empêchait un quatrième format au prochain émetteur.
 - Changer la forme (`v` = 2) se fait additivement : l'app v1 lit encore `url`.
 - Les canaux Android doivent exister sur l'appareil : l'app crée `offres`,
   `documents`, `compte` (un `channelId` inconnu ferait taire la notification).
+
+## 2026-11-05 — le type `purchase` (ADR-0024 § 2026-11-05)
+
+Un paiement livré (café, modèle de CV, « sans pub ») vaut une notification
+`purchase`, canal `compte`, sans pastille. `id` y est **facultatif** : absent,
+l'app ouvre le profil (`karria://profil`, la carte de soutien) ; présent,
+c'est l'identifiant du modèle acheté et l'app ouvre ce modèle
+(`karria://modele/{id}`). C'est le premier type dont le chemin dépend de la
+présence de l'identifiant (`_PATH_WITH_ID`) ; la table de l'app
+(`routeur-notifications.ts`) fait de même. Émis par `payments` à travers son
+port `UserNotifier`, branché sur `devices.SendPushToUser`.

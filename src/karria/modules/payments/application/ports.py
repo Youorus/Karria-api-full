@@ -1,6 +1,6 @@
 """Ce dont l'encaissement a besoin de l'extérieur — sans nommer qui le fournit.
 
-Cinq besoins :
+Sept besoins :
 
 - **le prestataire de paiement** (`BillingGateway`) — Stripe aujourd'hui.
   Aucun type `stripe.*` ne franchit ce fichier ;
@@ -11,7 +11,12 @@ Cinq besoins :
 - **les modèles de CV en vente et leur possession** (`TemplateStore`), qui
   vivent dans `documents` : branchés de même. Un modèle payé est remis par
   ce port, **dans la même transaction** que l'enregistrement de l'achat —
-  jamais par le bus, qui n'est pas durable (`shared/events/bus.py`).
+  jamais par le bus, qui n'est pas durable (`shared/events/bus.py`) ;
+- **le merci** après une livraison (ADR-0024 § 2026-11-05) : la notification
+  (`UserNotifier`, qui vit dans `devices`, branché de même) et le courriel
+  (`ThankYouMailer`, implémenté dans `infrastructure/mail.py` sur
+  `shared/mail`). Tous deux partent **hors** transaction et n'échouent jamais
+  le webhook.
 """
 
 from __future__ import annotations
@@ -28,7 +33,9 @@ from karria.modules.payments.domain import (
     PriceSpec,
     ProviderSubscription,
     Purchase,
+    ThankYou,
 )
+from karria.shared.push import PushMessage
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +172,10 @@ class PurchaseRepository(Protocol):
 
     async def has_session(self, session_id: str) -> bool: ...
 
+    async def find(self, purchase_id: UUID) -> Purchase | None:
+        """Un achat par son identifiant — pour rejouer son merci (`scripts/payments_thanks.py`)."""
+        ...
+
     async def of_user(self, user_id: UUID) -> list[Purchase]: ...
 
     async def delete_for_user(self, user_id: UUID) -> None: ...
@@ -197,4 +208,20 @@ class TemplateStore(Protocol):
 
     async def grant(self, user_id: UUID, template_id: UUID) -> None:
         """Remet le modèle à la personne. Idempotent."""
+        ...
+
+
+class UserNotifier(Protocol):
+    """Port : une notification push à tous les appareils d'un compte (→ `devices`)."""
+
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
+        """Rend le nombre d'appareils qui ont accepté. Lève si le service ne répond pas."""
+        ...
+
+
+class ThankYouMailer(Protocol):
+    """Port : le courriel de remerciement d'un paiement, à l'adresse du compte."""
+
+    async def send(self, *, to: str, thanks: ThankYou) -> None:
+        """Achemine ; lève `MailDeliveryError` si le serveur refuse."""
         ...

@@ -26,6 +26,7 @@ outil de production.
 | `storage_provision.py` | `make storage-provision` | Crée et configure les buckets déclarés au registre. Idempotent, à relancer à chaque déploiement. |
 | `test_smtp.py` | `uv run python scripts/test_smtp.py <adresse>` | Envoie un vrai message par le chemin de production, pour vérifier la configuration SMTP avant le premier code de connexion. |
 | `migrate_v1.py` | `uv run python -m scripts.migrate_v1 export\|convert\|import` | Reprend les comptes V1 et leurs critères de recherche : export de la sauvegarde V1 (adresse, jeton push, matière des critères — rien d'autre), conversion en `SearchCriteria` V2 (déterministe, `--llm` pour affiner), import **simulé par défaut** (`--apply` pour écrire). Idempotent. |
+| `payments_thanks.py` | `uv run python -m scripts.payments_thanks <purchase_id> [--send]` | Rejoue le merci d'un achat (courriel + notification) par le chemin du webhook, pour un achat qui n'en a pas reçu (ADR-0024 § 2026-11-05). **Simule par défaut** ; `--send` envoie, une seule fois grâce au registre `payments_webhook_events`. |
 | `push_campaign.py` | `uv run python -m scripts.push_campaign --in … --ledger …` | Campagne « Karria est de retour » aux anciens de la V1 qui voulaient des notifications. **Simule par défaut** ; `--send` envoie, une fois par personne grâce au registre local. |
 
 ## Ce qui tourne tout seul — règle à retenir

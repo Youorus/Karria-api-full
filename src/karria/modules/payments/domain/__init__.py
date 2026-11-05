@@ -29,7 +29,13 @@ from karria.modules.payments.domain.errors import (
     TemplateRequiredError,
     UnknownCoffeeTierError,
 )
-from karria.modules.payments.domain.purchases import Gratitude, Purchase, gratitude
+from karria.modules.payments.domain.purchases import (
+    Gratitude,
+    Purchase,
+    ThankYou,
+    format_amount,
+    gratitude,
+)
 from karria.modules.payments.domain.returns import (
     ALLOWED_RETURN_HOSTS,
     APP_SCHEME,
@@ -70,9 +76,11 @@ __all__ = [
     "TemplateAlreadyOwnedError",
     "TemplateOfferNotFoundError",
     "TemplateRequiredError",
+    "ThankYou",
     "UnknownCoffeeTierError",
     "catalog",
     "coffee_price",
+    "format_amount",
     "gratitude",
     "price",
     "template_price",

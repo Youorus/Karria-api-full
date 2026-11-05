@@ -21,7 +21,11 @@ from karria.modules.payments.domain import (
     ProviderSubscription,
     Purchase,
     SubscriptionStatus,
+    ThankYou,
 )
+from karria.shared.errors import DependencyUnavailableError
+from karria.shared.mail import MailDeliveryError
+from karria.shared.push import PushMessage
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 
@@ -199,6 +203,9 @@ class InMemoryPurchases:
     async def has_session(self, session_id: str) -> bool:
         return any(p.session_id == session_id for p in self.rows)
 
+    async def find(self, purchase_id: UUID) -> Purchase | None:
+        return next((p for p in self.rows if p.id == purchase_id), None)
+
     async def of_user(self, user_id: UUID) -> list[Purchase]:
         return [p for p in self.rows if p.user_id == user_id]
 
@@ -254,3 +261,31 @@ class FakeTemplateStore:
     async def grant(self, user_id: UUID, template_id: UUID) -> None:
         self.granted.append((user_id, template_id))
         self.owned.add((user_id, template_id))
+
+
+@dataclass(slots=True)
+class FakeNotifier:
+    """`UserNotifier` : retient les notifications ; `down` fait tomber Expo."""
+
+    sent: list[tuple[UUID, PushMessage]] = field(default_factory=list)
+    accepted: int = 1
+    down: bool = False
+
+    async def notify(self, user_id: UUID, message: PushMessage) -> int:
+        if self.down:
+            raise DependencyUnavailableError("expo_push", "injoignable")
+        self.sent.append((user_id, message))
+        return self.accepted
+
+
+@dataclass(slots=True)
+class FakeThankYouMailer:
+    """`ThankYouMailer` : retient les courriels ; `down` fait refuser le SMTP."""
+
+    sent: list[tuple[str, ThankYou]] = field(default_factory=list)
+    down: bool = False
+
+    async def send(self, *, to: str, thanks: ThankYou) -> None:
+        if self.down:
+            raise MailDeliveryError("smtp", "refusé")
+        self.sent.append((to, thanks))
