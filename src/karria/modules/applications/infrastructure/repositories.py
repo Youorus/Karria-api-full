@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from karria.modules.applications.domain import (
     AdaptationState,
     Coverage,
     Dossier,
+    DossierNotFoundError,
     Letter,
     OfferSnapshot,
     Proposition,
@@ -76,20 +78,31 @@ class TortoiseDossierRepository:
         rows = await query.order_by("-updated_at", "-id")
         return [_to_dossier(row) for row in rows]
 
+    async def insert(self, dossier: Dossier) -> None:
+        """Crée ; `created_at` et `updated_at` sont ceux du domaine, pas ceux de l'ORM."""
+        await ApplicationDossierModel.create(id=dossier.id, **_columns(dossier))
+        # À la création, `auto_now_add` / `auto_now` posent l'instant de la base ;
+        # on remet ceux du domaine pour que les deux horodatages soient les siens.
+        await ApplicationDossierModel.filter(id=dossier.id).update(
+            created_at=dossier.created_at, updated_at=dossier.updated_at
+        )
+
     async def save(self, dossier: Dossier) -> None:
-        """Crée ou remplace ; `updated_at` est celui du domaine, pas celui de l'ORM."""
-        columns = _columns(dossier)
-        updated = await ApplicationDossierModel.filter(id=dossier.id).update(**columns)
+        """Remplace, par `update()` (jamais `save()` : `auto_now` écraserait `updated_at`).
+
+        Zéro ligne : le dossier a été supprimé pendant qu'on y travaillait ; on
+        ne le recrée pas — l'effacement l'emporte (`DossierNotFoundError`).
+        """
+        updated = await ApplicationDossierModel.filter(id=dossier.id).update(**_columns(dossier))
         if updated == 0:
-            # `update()` et non `save()` : `auto_now` écraserait `updated_at`, dont le
-            # cas d'usage se sert pour savoir si la personne a touché le dossier
-            # pendant l'adaptation.
-            await ApplicationDossierModel.create(id=dossier.id, **columns)
-            # À la création, `auto_now_add` / `auto_now` posent l'instant de la base ;
-            # on remet ceux du domaine pour que les deux horodatages soient les siens.
-            await ApplicationDossierModel.filter(id=dossier.id).update(
-                created_at=dossier.created_at, updated_at=dossier.updated_at
-            )
+            raise DossierNotFoundError(dossier.id)
+
+    async def save_if_unchanged(self, dossier: Dossier, *, expected_updated_at: datetime) -> bool:
+        """Le contrôle optimiste : n'écrit que si personne n'a écrit depuis `expected_updated_at`."""
+        updated = await ApplicationDossierModel.filter(
+            id=dossier.id, updated_at=expected_updated_at
+        ).update(**_columns(dossier))
+        return updated == 1
 
     async def delete(self, dossier_id: UUID) -> None:
         await ApplicationDossierModel.filter(id=dossier_id).delete()

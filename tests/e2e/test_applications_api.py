@@ -9,8 +9,10 @@ import pytest
 from httpx import AsyncClient
 
 from doubles import ApplicationsEnv, FakeCvAdapter, FakeLetterWriter, sample_letter_json
+from karria.modules.applications.api import dependencies as deps
 from karria.modules.applications.application import use_cases
 from karria.modules.applications.domain import ModelUnavailableError
+from karria.shared.http import SlidingWindowLimiter
 
 pytestmark = pytest.mark.e2e
 
@@ -331,3 +333,67 @@ class TestCandidature:
         assert back.status_code == 200
         assert back.json()["status"] == "brouillon"
         assert back.json()["applied_at"] is None
+
+
+class TestGardeFous:
+    async def test_les_appels_au_modele_sont_limites_par_compte(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            deps, "_ai_limiter", SlidingWindowLimiter(max_hits=2, window_seconds=60)
+        )
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        assert (await client.post(f"{API}/{dossier['id']}/letter")).status_code == 200
+
+        blocked = await client.post(f"{API}/{dossier['id']}/letter")
+
+        assert blocked.status_code == 429
+        assert blocked.json()["error"]["details"]["reason"] == "ai_rate_limited"
+        assert blocked.json()["error"]["details"]["retry_after"] >= 1
+        # Un autre compte n'est pas concerné, et les routes sans modèle non plus.
+        assert (await client.get(f"{API}/{dossier['id']}")).status_code == 200
+        authenticate(uuid4())
+        assert (
+            await client.post(API, json={"offer_id": str(applications_env.offer.offer_id)})
+        ).status_code == 201
+
+    async def test_un_corps_de_cv_trop_lourd_est_refuse(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        heavy = {**dossier["cv"], "summary": "x" * (256 * 1024)}
+
+        response = await client.put(f"{API}/{dossier['id']}/cv", json={"cv": heavy})
+
+        assert response.status_code == 422
+        assert response.json()["error"]["details"]["reason"] == "cv_too_large"
+
+    async def test_une_proposition_invalide_ne_s_applique_pas(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        skills = next(p for p in dossier["propositions"] if p["path"] == "skills")
+        applications_env.validator.invalid = True
+
+        response = await client.post(
+            f"{API}/{dossier['id']}/propositions/{skills['id']}", json={"decision": "accepter"}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["error"]["details"]["reason"] == "proposition_invalid"

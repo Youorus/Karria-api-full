@@ -26,6 +26,9 @@ from karria.modules.applications.application import BaseCv, OfferCard
 from karria.modules.applications.domain import AdaptationOutput, OfferSnapshot
 from karria.modules.applications.domain import CvInvalidError as ApplicationsCvInvalidError
 from karria.modules.applications.domain import Dossier as ApplicationDossier
+from karria.modules.applications.domain import (
+    DossierNotFoundError as ApplicationsDossierNotFoundError,
+)
 from karria.modules.applications.domain import Letter as ApplicationLetter
 from karria.modules.cv.application import GeneratedImage, Interpretation
 from karria.modules.cv.domain import (
@@ -1142,8 +1145,23 @@ class InMemoryDossierRepository:
             rows = [d for d in rows if d.applied_at is not None]
         return sorted(rows, key=lambda d: d.updated_at, reverse=True)
 
-    async def save(self, dossier: ApplicationDossier) -> None:
+    async def insert(self, dossier: ApplicationDossier) -> None:
+        assert dossier.id not in self.rows
         self.rows[dossier.id] = dossier
+
+    async def save(self, dossier: ApplicationDossier) -> None:
+        if dossier.id not in self.rows:
+            raise ApplicationsDossierNotFoundError(dossier.id)
+        self.rows[dossier.id] = dossier
+
+    async def save_if_unchanged(
+        self, dossier: ApplicationDossier, *, expected_updated_at: datetime
+    ) -> bool:
+        current = self.rows.get(dossier.id)
+        if current is None or current.updated_at != expected_updated_at:
+            return False
+        self.rows[dossier.id] = dossier
+        return True
 
     async def delete(self, dossier_id: UUID) -> None:
         self.rows.pop(dossier_id, None)

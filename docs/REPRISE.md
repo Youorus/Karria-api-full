@@ -5,6 +5,21 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### 2026-11-05, suite — revue de sécurité du module `applications` (Fable) — EN PRODUCTION
+
+Quatre points corrigés après revue automatique : (1) dépôt : `insert` explicite à
+l'ouverture, `save` par `update` seul (0 ligne → `DossierNotFoundError`, un dossier supprimé
+ne renaît plus), `save_if_unchanged(expected_updated_at)` autour des appels LLM (adaptation
+rejouée sur l'état courant, `before` rafraîchi ; lettre/paragraphe → `409 dossier_conflict`) ;
+(2) sortie du modèle traitée comme donnée : blocs offre/CV/lettre/consigne encodés en JSON
+avec `<`/`>` échappés, bornes par chemin (`domain/bounds.py`) et `CvValidator` avant toute
+écriture — sinon la proposition reste `proposee` (`409 proposition_invalid` à l'acceptation) ;
+l'auto-application intitulé + à-propos voulue par Marc est **gardée** ; (3) `CvModuleValidator`
+par chapitres (`SkillsChapter`, `InterestsChapter`, `Summary`) + plafonds 30/20/20, corps de
+`PUT /cv` borné à 256 Kio (`422 cv_too_large`) ; (4) `SlidingWindowLimiter` par compte sur les
+quatre routes LLM : 30 appels / 10 min, `429 ai_rate_limited` avec `retry_after`. Contrat mis
+à jour. Le worker reçoit le validateur de `cv` par `bootstrap/worker.py`.
+
 ### Session du 2026-11-05 — dossiers de candidature, module `applications` (ADR-0033 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : depuis la fiche d'une offre, « Adapter mon CV à cette offre » : un

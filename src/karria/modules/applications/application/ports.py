@@ -50,8 +50,25 @@ class DossierRepository(Protocol):
         """Les dossiers, du plus récemment modifié au plus ancien."""
         ...
 
+    async def insert(self, dossier: Dossier) -> None:
+        """Crée le dossier. Jamais un remplacement : un dossier supprimé ne renaît pas."""
+        ...
+
     async def save(self, dossier: Dossier) -> None:
-        """Crée ou remplace le dossier."""
+        """Remplace le dossier existant.
+
+        Raises:
+            DossierNotFoundError: Le dossier a été supprimé entre-temps — rien n'est écrit.
+        """
+        ...
+
+    async def save_if_unchanged(self, dossier: Dossier, *, expected_updated_at: datetime) -> bool:
+        """Remplace seulement si `updated_at` en base vaut encore `expected_updated_at`.
+
+        Le contrôle optimiste autour des appels au modèle : vrai si écrit,
+        faux si le dossier a changé ou disparu pendant l'appel — l'appelant
+        relit et rejoue, il n'écrase jamais.
+        """
         ...
 
     async def delete(self, dossier_id: UUID) -> None:

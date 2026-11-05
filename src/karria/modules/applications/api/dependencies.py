@@ -11,11 +11,11 @@ de ces ports ; un test ne les remplace jamais.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import Depends
+from fastapi import Depends, Request
 
 from karria.modules.applications.application import (
     AdaptCv,
@@ -44,20 +44,63 @@ from karria.modules.applications.application import (
     UpdateDossierCv,
     UpdateLetter,
 )
+from karria.modules.applications.domain import (
+    AI_RATE_LIMIT,
+    AI_RATE_WINDOW_SECONDS,
+    CV_BODY_MAX_BYTES,
+    CvTooLargeError,
+)
 from karria.modules.applications.infrastructure import (
     LlmCvAdapter,
     LlmLetterWriter,
     ProcrastinateDossierJobs,
     TortoiseDossierRepository,
 )
+from karria.shared.auth import AiConsentedPrincipalDep, Principal
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import Settings
-from karria.shared.errors import DependencyUnavailableError
+from karria.shared.errors import DependencyUnavailableError, RateLimitedError
+from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import EventBusDep, LanguageModelDep, QueueAppDep
 from karria.shared.llm import build_language_model
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# --- Garde-fous des routes ------------------------------------------------
+
+#: Le compteur des appels au modèle (créer, relancer, ébaucher, réécrire), par compte.
+_ai_limiter = SlidingWindowLimiter(max_hits=AI_RATE_LIMIT, window_seconds=AI_RATE_WINDOW_SECONDS)
+
+
+def throttle_ai(principal: AiConsentedPrincipalDep) -> Principal:
+    """Un appel au modèle de plus pour ce compte, ou `429 ai_rate_limited`.
+
+    Après la porte du consentement : on ne compte pas un appel qui n'aurait
+    pas eu lieu.
+    """
+    retry_after = _ai_limiter.hit(f"ai|{principal.subject_id}")
+    if retry_after is not None:
+        raise RateLimitedError(
+            "Karria a déjà beaucoup travaillé pour toi ces dernières minutes. Réessaie dans un instant.",
+            retry_after=retry_after,
+            details={"reason": "ai_rate_limited"},
+        )
+    return principal
+
+
+AiPrincipalDep = Annotated[Principal, Depends(throttle_ai)]
+
+
+async def limit_cv_body(request: Request) -> None:
+    """Refuse un corps plus lourd qu'un CV (`422 cv_too_large`), avant toute lecture JSON."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > CV_BODY_MAX_BYTES:
+        raise CvTooLargeError(int(declared), CV_BODY_MAX_BYTES)
+    body = await request.body()
+    if len(body) > CV_BODY_MAX_BYTES:
+        raise CvTooLargeError(len(body), CV_BODY_MAX_BYTES)
 
 
 # --- Ports : ce que les tests remplacent, ce que bootstrap branche --------
@@ -169,10 +212,14 @@ DossierJobsDep = Annotated[DossierJobs, Depends(get_dossier_jobs)]
 
 
 def get_adapt_cv(
-    dossiers: DossiersDep, adapter: CvAdapterDep, jobs: DossierJobsDep, clock: ClockDep
+    dossiers: DossiersDep,
+    adapter: CvAdapterDep,
+    jobs: DossierJobsDep,
+    validator: CvValidatorDep,
+    clock: ClockDep,
 ) -> AdaptCv:
     """L'adaptation, bornée dans la requête puis différée."""
-    return AdaptCv(dossiers=dossiers, adapter=adapter, jobs=jobs, clock=clock)
+    return AdaptCv(dossiers=dossiers, adapter=adapter, jobs=jobs, validator=validator, clock=clock)
 
 
 AdaptCvDep = Annotated[AdaptCv, Depends(get_adapt_cv)]
@@ -215,8 +262,10 @@ def get_delete_dossier(dossiers: DossiersDep) -> DeleteDossier:
     return DeleteDossier(dossiers)
 
 
-def get_decide_proposition(dossiers: DossiersDep, clock: ClockDep) -> DecideProposition:
-    return DecideProposition(dossiers, clock)
+def get_decide_proposition(
+    dossiers: DossiersDep, validator: CvValidatorDep, clock: ClockDep
+) -> DecideProposition:
+    return DecideProposition(dossiers, validator, clock)
 
 
 def get_update_dossier_cv(
@@ -275,12 +324,17 @@ class _NeverDefers:
         raise RuntimeError(f"adaptation déjà sur la file : {dossier_id}")
 
 
-def build_adapt_cv(settings: Settings) -> AdaptCv:
-    """L'adaptation pour le travail `applications.adapt_cv`."""
+def build_adapt_cv(settings: Settings, validator: Callable[[], CvValidator]) -> AdaptCv:
+    """L'adaptation pour le travail `applications.adapt_cv`.
+
+    Le validateur de CV est celui d'un autre module : `bootstrap/worker.py`
+    le passe (règle 4), le module ne sait pas d'où il vient.
+    """
     return AdaptCv(
         dossiers=get_dossier_repository(),
         adapter=LlmCvAdapter(build_language_model(settings)),
         jobs=_NeverDefers(),
+        validator=validator(),
         clock=get_clock(),
     )
 

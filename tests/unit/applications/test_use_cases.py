@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -10,8 +12,11 @@ from doubles import (
     ApplicationsEnv,
     CollectingBus,
     FakeBaseCvReader,
+    FakeClock,
     FakeCvAdapter,
     FakeLetterWriter,
+    InMemoryDossierRepository,
+    PermissiveCvValidator,
     RecordingDossierJobs,
     sample_letter_json,
     sample_offer_card,
@@ -37,11 +42,13 @@ from karria.modules.applications.application import (
 )
 from karria.modules.applications.domain import (
     AdaptationInProgressError,
+    AdaptationOutput,
     AdaptationState,
     BaseCvMissingError,
     CvInvalidError,
     Decision,
     Dossier,
+    DossierConflictError,
     DossierNotFoundError,
     DossierStatus,
     LetterInvalidError,
@@ -50,6 +57,7 @@ from karria.modules.applications.domain import (
     ModelUnavailableError,
     OfferNotFoundError,
     ParagraphNotFoundError,
+    PropositionInvalidError,
     PropositionState,
     TemplateLockedError,
 )
@@ -62,6 +70,7 @@ def adapt_of(env: ApplicationsEnv, *, inline_seconds: float = 10.0) -> AdaptCv:
         dossiers=env.dossiers,
         adapter=env.adapter,
         jobs=env.jobs,
+        validator=env.validator,
         clock=env.clock,
         inline_seconds=inline_seconds,
     )
@@ -288,7 +297,7 @@ class TestPropositionsEtCv:
         dossier, user = await opened(env)
         skills = next(p for p in dossier.propositions if p.path == "skills")
 
-        decided = await DecideProposition(env.dossiers, env.clock).execute(
+        decided = await DecideProposition(env.dossiers, env.validator, env.clock).execute(
             user, dossier.id, skills.id, Decision.ACCEPTER
         )
 
@@ -391,3 +400,126 @@ def test_l_extrait_coupe_sur_un_mot() -> None:
     long = " ".join(["mot"] * 100)
     assert excerpt_of(long).endswith("…")
     assert len(excerpt_of(long)) <= 281
+
+
+class TestEcrituresSousControle:
+    async def test_une_retouche_pendant_l_appel_inline_est_rejouee_pas_ecrasee(self) -> None:
+        env = ApplicationsEnv.build()
+        later = FakeClock(env.clock.now() + timedelta(seconds=5))
+
+        class TouchingAdapter(FakeCvAdapter):
+            """Pendant l'appel au modèle, la personne retouche le dossier."""
+
+            async def adapt(self, offer: Any, cv: Any) -> Any:
+                pending = next(iter(env.dossiers.rows.values()))
+                touched = pending.with_cv(
+                    {**pending.cv, "summary": "Mon résumé à moi"}, now=later.now()
+                )
+                env.dossiers.rows[pending.id] = touched
+                return await super().adapt(offer, cv)
+
+        env.adapter = TouchingAdapter()
+
+        result = await create_of(env).execute(uuid4(), env.offer.offer_id, None)
+
+        saved = env.dossiers.rows[result.dossier.id]
+        assert saved.adaptation is AdaptationState.FAITE
+        summary = next(p for p in saved.propositions if p.path == "summary")
+        assert summary.before == "Mon résumé à moi"  # rejoué sur l'état retouché
+        assert saved.updated_at == env.clock.now() or saved.updated_at >= later.now()
+
+    async def test_un_dossier_supprime_pendant_l_appel_n_est_pas_recree(self) -> None:
+        env = ApplicationsEnv.build()
+
+        class DeletingAdapter(FakeCvAdapter):
+            async def adapt(self, offer: Any, cv: Any) -> Any:
+                env.dossiers.rows.clear()
+                return await super().adapt(offer, cv)
+
+        env.adapter = DeletingAdapter()
+
+        result = await create_of(env).execute(uuid4(), env.offer.offer_id, None)
+
+        assert result.dossier.adaptation is AdaptationState.FAITE
+        assert env.dossiers.rows == {}
+
+    async def test_la_lettre_n_ecrase_pas_une_retouche_faite_pendant_l_appel(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        later = FakeClock(env.clock.now() + timedelta(seconds=5))
+
+        class TouchingWriter(FakeLetterWriter):
+            async def draft(self, offer: Any, cv: Any) -> Any:
+                current = env.dossiers.rows[dossier.id]
+                env.dossiers.rows[dossier.id] = current.with_cv(
+                    {**current.cv, "summary": "Retouché pendant"}, now=later.now()
+                )
+                return await super().draft(offer, cv)
+
+        env.writer = TouchingWriter()
+
+        drafted = await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+
+        assert drafted.letter is not None
+        assert drafted.cv["summary"] == "Retouché pendant"
+
+    async def test_un_conflit_entre_relecture_et_ecriture_est_dit(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+
+        class Flaky(InMemoryDossierRepository):
+            async def save_if_unchanged(self, d: Any, *, expected_updated_at: Any) -> bool:
+                return False
+
+        flaky = Flaky()
+        flaky.rows = env.dossiers.rows
+        with pytest.raises(DossierConflictError):
+            await DraftLetter(flaky, env.writer, env.clock).execute(user, dossier.id)
+        assert env.dossiers.rows[dossier.id].letter is None
+
+        drafted = await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+        with pytest.raises(DossierConflictError):
+            await RegenerateParagraph(flaky, env.writer, env.clock).execute(
+                user, dossier.id, 0, None
+            )
+        assert env.dossiers.rows[dossier.id].letter == drafted.letter
+
+    async def test_une_proposition_auto_appliquee_hors_bornes_reste_proposee(self) -> None:
+        env = ApplicationsEnv.build()
+        env.adapter = FakeCvAdapter(
+            AdaptationOutput.model_validate(
+                {
+                    "headline": {"text": "Conseillère\nde vente", "reason": "saut de ligne"},
+                    "summary": {"text": "Résumé correct.", "reason": "ok"},
+                }
+            )
+        )
+
+        result = await create_of(env).execute(uuid4(), env.offer.offer_id, None)
+
+        states = {p.path: p.state for p in result.dossier.propositions}
+        assert states["identity.headline"] is PropositionState.PROPOSEE
+        assert states["summary"] is PropositionState.ACCEPTEE
+        assert result.dossier.cv["identity"]["headline"] == "Vendeuse"
+
+    async def test_le_validateur_refuse_l_auto_application_sans_bloquer(self) -> None:
+        env = ApplicationsEnv.build()
+        env.validator = PermissiveCvValidator(invalid=True)
+
+        result = await create_of(env).execute(uuid4(), env.offer.offer_id, None)
+
+        assert result.dossier.adaptation is AdaptationState.FAITE
+        assert all(p.state is PropositionState.PROPOSEE for p in result.dossier.propositions)
+        assert result.dossier.cv["identity"]["headline"] == "Vendeuse"
+
+    async def test_accepter_une_proposition_qui_rend_le_cv_invalide_est_refuse(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        skills = next(p for p in dossier.propositions if p.path == "skills")
+        env.validator.invalid = True
+
+        with pytest.raises(PropositionInvalidError):
+            await DecideProposition(env.dossiers, env.validator, env.clock).execute(
+                user, dossier.id, skills.id, Decision.ACCEPTER
+            )
+        assert env.dossiers.rows[dossier.id].cv["skills"][0]["name"] == "Caisse"

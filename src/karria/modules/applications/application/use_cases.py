@@ -18,7 +18,7 @@ file durable (`DossierJobs`) ; l'app relit le dossier jusqu'à `faite` ou
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 from uuid import UUID
@@ -39,6 +39,7 @@ from karria.modules.applications.domain import (
     BaseCvMissingError,
     Decision,
     Dossier,
+    DossierConflictError,
     DossierNotFoundError,
     Letter,
     LetterMissingError,
@@ -64,6 +65,8 @@ logger = get_logger(__name__)
 ADAPTATION_INLINE_SECONDS: Final = 10.0
 #: Longueur de l'extrait de l'offre gardé pour les cartes.
 EXCERPT_LENGTH: Final = 280
+#: Rejeux d'une écriture sous contrôle optimiste avant d'abandonner.
+SETTLE_ATTEMPTS: Final = 3
 
 
 def excerpt_of(description: str) -> str:
@@ -108,12 +111,14 @@ class AdaptCv:
         dossiers: DossierRepository,
         adapter: CvAdapter,
         jobs: DossierJobs,
+        validator: CvValidator,
         clock: Clock,
         inline_seconds: float | None = None,
     ) -> None:
         self._dossiers = dossiers
         self._adapter = adapter
         self._jobs = jobs
+        self._validator = validator
         self._clock = clock
         # Lu à l'assemblage et non à la définition : un test peut raccourcir la borne.
         self._inline_seconds = (
@@ -148,7 +153,9 @@ class AdaptCv:
             logger.warning("applications.adapt_failed", dossier_id=str(dossier.id), reason=reason)
             return dossier.adaptation_failed(reason, now=self._clock.now())
         conversion = propositions_from(output, dossier.cv)
-        adapted = dossier.adapted(conversion.propositions, now=self._clock.now())
+        adapted = dossier.adapted(
+            conversion.propositions, now=self._clock.now(), check=self._validator.validate
+        )
         logger.info(
             "applications.cv_adapted",
             dossier_id=str(dossier.id),
@@ -160,23 +167,35 @@ class AdaptCv:
         return adapted
 
     async def _settle(self, before: Dossier, after: Dossier) -> Dossier:
-        """Écrit le résultat — sauf si la personne a touché le dossier entre-temps."""
-        current = await self._dossiers.find_any(before.id)
-        if current is None:
-            logger.info("applications.adapt_skipped", dossier_id=str(before.id), why="deleted")
-            return after
-        if current.updated_at != before.updated_at:
-            # Le CV a été retouché pendant l'adaptation : on rejoue sur l'état
-            # courant plutôt que d'écraser une modification de la personne.
+        """Écrit le résultat sous contrôle optimiste : jamais par-dessus une retouche.
+
+        L'écriture n'a lieu que si le dossier n'a pas bougé depuis `before`.
+        Sinon on relit l'état courant et on y **rejoue** les propositions (les
+        chemins disparus sont écartés) ; si le dossier a été supprimé, le
+        résultat est jeté. Deux rejeux au plus : passé cela, la personne
+        écrit plus vite que le modèle, l'adaptation est marquée `echouee`.
+        """
+        expected = before.updated_at
+        for _ in range(SETTLE_ATTEMPTS):
+            if await self._dossiers.save_if_unchanged(after, expected_updated_at=expected):
+                return after
+            current = await self._dossiers.find_any(before.id)
+            if current is None:
+                logger.info("applications.adapt_skipped", dossier_id=str(before.id), why="deleted")
+                return after
+            logger.info("applications.adapt_rebased", dossier_id=str(before.id))
             after = (
-                current.adapted(after.propositions, now=self._clock.now())
-                if not after.is_adapting and after.adaptation_error is None
-                else current.adaptation_failed(
-                    after.adaptation_error or "stale", now=self._clock.now()
+                current.adapted(
+                    after.propositions, now=self._clock.now(), check=self._validator.validate
                 )
+                if after.adaptation_error is None
+                else current.adaptation_failed(after.adaptation_error, now=self._clock.now())
             )
-        await self._dossiers.save(after)
-        return after
+            expected = current.updated_at
+        failed = after.adaptation_failed("stale", now=self._clock.now())
+        if not await self._dossiers.save_if_unchanged(failed, expected_updated_at=expected):
+            logger.warning("applications.adapt_unsettled", dossier_id=str(before.id))
+        return failed
 
     async def _defer(self, dossier: Dossier) -> Dossier:
         try:
@@ -253,7 +272,7 @@ class CreateDossierFromOffer:
             template_id=template_id,
             now=self._clock.now(),
         )
-        await self._dossiers.save(dossier)
+        await self._dossiers.insert(dossier)
         logger.info(
             "applications.dossier_opened",
             dossier_id=str(dossier.id),
@@ -324,17 +343,25 @@ class DeleteDossier:
 
 
 class DecideProposition:
-    """Accepter, refuser ou revenir sur une proposition de Karria."""
+    """Accepter, refuser ou revenir sur une proposition de Karria.
 
-    def __init__(self, dossiers: DossierRepository, clock: Clock) -> None:
+    La valeur écrite passe les bornes de son chemin, et le CV résultant la
+    forme d'un CV (`CvValidator`) : une proposition qui ne tient pas ne
+    s'applique pas (`409 proposition_invalid`).
+    """
+
+    def __init__(self, dossiers: DossierRepository, validator: CvValidator, clock: Clock) -> None:
         self._dossiers = dossiers
+        self._validator = validator
         self._clock = clock
 
     async def execute(
         self, user_id: UUID, dossier_id: UUID, proposition_id: UUID, decision: Decision
     ) -> Dossier:
         dossier = await _owned(self._dossiers, dossier_id, user_id)
-        decided = dossier.decide(proposition_id, decision, now=self._clock.now())
+        decided = dossier.decide(
+            proposition_id, decision, now=self._clock.now(), check=self._validator.validate
+        )
         await self._dossiers.save(decided)
         logger.info(
             "applications.proposition_decided",
@@ -374,8 +401,12 @@ class DraftLetter:
         dossier = await _owned(self._dossiers, dossier_id, user_id)
         dossier.ensure_not_adapting()
         letter = await self._writer.draft(dossier.offer, dossier.cv)
-        updated = dossier.with_letter(letter, now=self._clock.now())
-        await self._dossiers.save(updated)
+        updated = await _commit_after_model(
+            self._dossiers,
+            dossier,
+            user_id,
+            lambda current: current.with_letter(letter, now=self._clock.now()),
+        )
         logger.info(
             "applications.letter_drafted",
             dossier_id=str(dossier_id),
@@ -415,11 +446,17 @@ class RegenerateParagraph:
             raise LetterMissingError(dossier_id)
         if index < 0 or index >= len(dossier.letter.paragraphs):
             raise ParagraphNotFoundError(index)
-        text = await self._writer.rewrite_paragraph(
-            dossier.offer, dossier.cv, dossier.letter, index, instruction
+        text = validated_paragraph(
+            await self._writer.rewrite_paragraph(
+                dossier.offer, dossier.cv, dossier.letter, index, instruction
+            )
         )
-        updated = dossier.with_paragraph(index, validated_paragraph(text), now=self._clock.now())
-        await self._dossiers.save(updated)
+        updated = await _commit_after_model(
+            self._dossiers,
+            dossier,
+            user_id,
+            lambda current: current.with_paragraph(index, text, now=self._clock.now()),
+        )
         logger.info("applications.paragraph_regenerated", dossier_id=str(dossier_id), index=index)
         return updated
 
@@ -483,6 +520,26 @@ class ForgetUser:
         count = await self._dossiers.delete_by_user(user_id)
         logger.info("applications.user_forgotten", user_id=str(user_id), dossiers=count)
         return count
+
+
+async def _commit_after_model(
+    dossiers: DossierRepository,
+    seen: Dossier,
+    user_id: UUID,
+    mutate: Callable[[Dossier], Dossier],
+) -> Dossier:
+    """Écrit le fruit d'un appel au modèle **sur l'état courant**, sous contrôle optimiste.
+
+    Le dossier lu avant l'appel (`seen`) peut avoir été retouché pendant les
+    secondes de l'appel ; on relit, on applique la mutation à l'état relu, et
+    on n'écrit que si rien n'a bougé entre la relecture et l'écriture
+    (`DossierConflictError` sinon : l'app réessaie, rien n'est écrasé).
+    """
+    current = await _owned(dossiers, seen.id, user_id)
+    updated = mutate(current)
+    if not await dossiers.save_if_unchanged(updated, expected_updated_at=current.updated_at):
+        raise DossierConflictError(seen.id)
+    return updated
 
 
 async def _owned(dossiers: DossierRepository, dossier_id: UUID, user_id: UUID) -> Dossier:

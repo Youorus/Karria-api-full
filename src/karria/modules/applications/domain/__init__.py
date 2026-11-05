@@ -6,6 +6,7 @@ from karria.modules.applications.domain.adaptation import (
     invented_figures,
     propositions_from,
 )
+from karria.modules.applications.domain.bounds import BoundsError, check_bounds
 from karria.modules.applications.domain.coverage import (
     MAX_KEYWORDS,
     Coverage,
@@ -15,8 +16,12 @@ from karria.modules.applications.domain.coverage import (
     fold,
 )
 from karria.modules.applications.domain.dossiers import (
+    AI_RATE_LIMIT,
+    AI_RATE_WINDOW_SECONDS,
     AUTO_ACCEPTED_PATHS,
+    CV_BODY_MAX_BYTES,
     AdaptationState,
+    CvCheck,
     Decision,
     Dossier,
     DossierStatus,
@@ -30,6 +35,8 @@ from karria.modules.applications.domain.errors import (
     AdaptationNotFailedError,
     BaseCvMissingError,
     CvInvalidError,
+    CvTooLargeError,
+    DossierConflictError,
     DossierNotFoundError,
     LetterInvalidError,
     LetterMissingError,
@@ -37,6 +44,7 @@ from karria.modules.applications.domain.errors import (
     ModelUnavailableError,
     OfferNotFoundError,
     ParagraphNotFoundError,
+    PropositionInvalidError,
     PropositionNotFoundError,
     PropositionPathError,
     TemplateLockedError,
@@ -56,7 +64,10 @@ from karria.modules.applications.domain.letters import (
 from karria.modules.applications.domain.paths import PathError, is_well_formed, read, write
 
 __all__ = [
+    "AI_RATE_LIMIT",
+    "AI_RATE_WINDOW_SECONDS",
     "AUTO_ACCEPTED_PATHS",
+    "CV_BODY_MAX_BYTES",
     "DRAFT_KINDS",
     "INSTRUCTION_MAX_LENGTH",
     "MAX_KEYWORDS",
@@ -67,11 +78,15 @@ __all__ = [
     "AdaptationOutput",
     "AdaptationState",
     "BaseCvMissingError",
+    "BoundsError",
     "Conversion",
     "Coverage",
+    "CvCheck",
     "CvInvalidError",
+    "CvTooLargeError",
     "Decision",
     "Dossier",
+    "DossierConflictError",
     "DossierNotFoundError",
     "DossierStatus",
     "Letter",
@@ -88,10 +103,12 @@ __all__ = [
     "ParagraphOutput",
     "PathError",
     "Proposition",
+    "PropositionInvalidError",
     "PropositionNotFoundError",
     "PropositionPathError",
     "PropositionState",
     "TemplateLockedError",
+    "check_bounds",
     "coverage",
     "cv_hash",
     "cv_text",

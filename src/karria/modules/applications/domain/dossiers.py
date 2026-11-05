@@ -24,24 +24,30 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from karria.modules.applications.domain.bounds import BoundsError, check_bounds
 from karria.modules.applications.domain.coverage import Coverage, coverage
 from karria.modules.applications.domain.errors import (
     AdaptationInProgressError,
     AdaptationNotFailedError,
     LetterMissingError,
     ParagraphNotFoundError,
+    PropositionInvalidError,
     PropositionNotFoundError,
     PropositionPathError,
 )
 from karria.modules.applications.domain.letters import Letter
 from karria.modules.applications.domain.paths import PathError, read, write
+
+#: Juge un CV entier ; lève si la forme ne tient pas. Fourni par le cas
+#: d'usage (port `CvValidator`), parce que le domaine ne voit pas `cv`.
+CvCheck = Callable[[Mapping[str, Any]], object]
 
 #: Les chemins que Karria applique d'elle-même (marqués `acceptee`, `before`
 #: conservé) : l'intitulé et le « à propos ». La personne voit « mis à jour »
@@ -49,6 +55,14 @@ from karria.modules.applications.domain.paths import PathError, read, write
 AUTO_ACCEPTED_PATHS: Final[frozenset[str]] = frozenset({"identity.headline", "summary"})
 #: Longueur gardée d'une raison de proposition.
 REASON_MAX_LENGTH: Final = 200
+#: Appels au modèle (créer, relancer, ébaucher, réécrire) admis par compte et
+#: par fenêtre : de quoi itérer sur une lettre, pas de quoi faire tourner un
+#: compteur de jetons avec un script.
+AI_RATE_LIMIT: Final = 30
+AI_RATE_WINDOW_SECONDS: Final = 600
+#: Poids maximal du corps d'une retouche de CV : un CV de quarante compétences
+#: et quinze expériences fait quelques dizaines de kilo-octets.
+CV_BODY_MAX_BYTES: Final = 256 * 1024
 
 
 class DossierStatus(StrEnum):
@@ -276,26 +290,43 @@ class Dossier:
             updated_at=now,
         )
 
-    def adapted(self, propositions: Sequence[Proposition], *, now: datetime) -> Dossier:
+    def adapted(
+        self,
+        propositions: Sequence[Proposition],
+        *,
+        now: datetime,
+        check: CvCheck | None = None,
+    ) -> Dossier:
         """Les propositions de Karria arrivent.
 
         Celles qui visent un chemin d'`AUTO_ACCEPTED_PATHS` sont **appliquées**
         et marquées `acceptee`, `before` conservé ; les autres restent
         `proposee`. Une proposition dont le chemin ne désigne plus rien (la
-        personne a retouché le CV entre-temps) est écartée.
+        personne a retouché le CV entre-temps) est écartée. Une valeur hors
+        des bornes de son chemin, ou un CV que `check` refuse une fois la
+        valeur posée, **ne s'écrit pas** : la proposition reste `proposee` —
+        la sortie du modèle est une donnée, pas une décision.
         """
         cv = self.cv
         kept: list[Proposition] = []
         for proposition in propositions:
             try:
-                read(cv, proposition.path)
+                current = read(cv, proposition.path)
             except PathError:
                 continue
+            # `before` est ce qu'il y a **maintenant** : si l'adaptation est rejouée
+            # sur un dossier retouché entre-temps, « revenir » rend la retouche.
+            refreshed = replace(proposition, before=current)
             if proposition.path in AUTO_ACCEPTED_PATHS:
-                cv = write(cv, proposition.path, proposition.after)
-                kept.append(replace(proposition, state=PropositionState.ACCEPTEE))
+                try:
+                    candidate = self._applied(cv, refreshed, refreshed.after, check)
+                except PropositionInvalidError:
+                    kept.append(replace(refreshed, state=PropositionState.PROPOSEE))
+                    continue
+                cv = candidate
+                kept.append(replace(refreshed, state=PropositionState.ACCEPTEE))
             else:
-                kept.append(replace(proposition, state=PropositionState.PROPOSEE))
+                kept.append(replace(refreshed, state=PropositionState.PROPOSEE))
         return replace(
             self,
             cv=cv,
@@ -305,6 +336,23 @@ class Dossier:
             adaptation_error=None,
             updated_at=now,
         )
+
+    @staticmethod
+    def _applied(
+        cv: Mapping[str, Any], proposition: Proposition, value: Any, check: CvCheck | None
+    ) -> dict[str, Any]:
+        """Le CV avec `value` posée au chemin, ou `PropositionInvalidError` / `PathError`."""
+        try:
+            check_bounds(proposition.path, value)
+        except BoundsError as exc:
+            raise PropositionInvalidError(exc.path, exc.why) from exc
+        candidate = write(cv, proposition.path, value)
+        if check is not None:
+            try:
+                check(candidate)
+            except Exception as exc:
+                raise PropositionInvalidError(proposition.path, "cv_invalid") from exc
+        return candidate
 
     def adaptation_failed(self, reason: str, *, now: datetime) -> Dossier:
         """Karria n'a pas pu adapter ; le dossier reste utilisable à la main."""
@@ -317,12 +365,20 @@ class Dossier:
 
     # ------------------------------------------------------------ propositions
 
-    def decide(self, proposition_id: UUID, decision: Decision, *, now: datetime) -> Dossier:
+    def decide(
+        self,
+        proposition_id: UUID,
+        decision: Decision,
+        *,
+        now: datetime,
+        check: CvCheck | None = None,
+    ) -> Dossier:
         """Accepter, refuser ou revenir sur une proposition — et modifier le CV en conséquence.
 
         Raises:
             PropositionNotFoundError: Aucune proposition de cet identifiant.
             PropositionPathError: Le chemin ne désigne plus rien dans le CV.
+            PropositionInvalidError: La valeur n'a pas la forme du chemin, ou `check` refuse le CV.
         """
         index = next((i for i, p in enumerate(self.propositions) if p.id == proposition_id), None)
         if index is None:
@@ -330,7 +386,7 @@ class Dossier:
         proposition = self.propositions[index]
         value = proposition.after if decision is Decision.ACCEPTER else proposition.before
         try:
-            cv = write(self.cv, proposition.path, value)
+            cv = self._applied(self.cv, proposition, value, check)
         except PathError as exc:
             raise PropositionPathError(proposition.path) from exc
         state = {

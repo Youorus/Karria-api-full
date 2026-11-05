@@ -46,6 +46,19 @@
   sert pour savoir si la personne a touché le dossier pendant l'adaptation.
 - **Le logo est un condensat**, jamais une URL en base (AGENTS.md § 6.12) ;
   l'URL est calculée à la lecture par le port `LogoUrl`.
+- **Les écritures ne renaissent pas et n'écrasent pas.** `insert` à l'ouverture,
+  `update` seul ensuite (zéro ligne = dossier supprimé → `dossier_not_found`) ;
+  autour de chaque appel au modèle, un contrôle optimiste sur `updated_at`
+  (`save_if_unchanged`) : l'adaptation se rejoue sur l'état courant, la lettre
+  répond `dossier_conflict`.
+- **La sortie du modèle reste une donnée** : blocs offre / CV / lettre / consigne
+  encodés en JSON dans les prompts (`<` et `>` échappés), bornes par chemin
+  (`domain/bounds.py`) et `CvValidator` avant toute écriture d'une proposition ;
+  ce qui ne tient pas reste `proposee`.
+- **Garde-fous HTTP** : 30 appels au modèle par compte et par 10 minutes
+  (`429 ai_rate_limited`), corps de `PUT /cv` borné à 256 Kio (`422 cv_too_large`),
+  plafonds des listes du CV par les chapitres de `cv` (et 30 expériences,
+  20 formations, 20 projets).
 - **Les ports vers les autres modules refusent par défaut** (`offer_not_found`,
   `cv_missing`, 503 à la retouche, `template_locked`) : un branchement oublié se
   voit.

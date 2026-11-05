@@ -113,6 +113,36 @@ class PropositionPathError(BusinessRuleViolationError):
         )
 
 
+class PropositionInvalidError(BusinessRuleViolationError):
+    """La valeur proposée n'a pas la forme que son chemin attend : elle ne s'écrit pas."""
+
+    def __init__(self, path: str, why: str) -> None:
+        super().__init__(
+            "Cette proposition ne peut pas être appliquée telle quelle.",
+            details={"reason": "proposition_invalid", "path": path, "why": why},
+        )
+
+
+class DossierConflictError(BusinessRuleViolationError):
+    """Le dossier a changé pendant l'appel au modèle : rien n'est écrasé, on recommence."""
+
+    def __init__(self, dossier_id: UUID) -> None:
+        super().__init__(
+            "Le dossier a été modifié entre-temps, réessaie.",
+            details={"reason": "dossier_conflict", "dossier_id": str(dossier_id)},
+        )
+
+
+class CvTooLargeError(InvalidInputError):
+    """Le corps envoyé dépasse ce qu'un CV peut raisonnablement peser."""
+
+    def __init__(self, size: int, limit: int) -> None:
+        super().__init__(
+            "Le CV envoyé est trop volumineux.",
+            details={"reason": "cv_too_large", "size": size, "limit": limit},
+        )
+
+
 class LetterMissingError(DomainError):
     """Le dossier n'a pas encore de lettre : il faut d'abord l'ébaucher."""
 

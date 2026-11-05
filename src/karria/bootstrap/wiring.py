@@ -123,10 +123,10 @@ from karria.modules.cv import (
     Experience,
     GetMyCv,
     Identity,
-    Interest,
-    Language,
+    InterestsChapter,
     Project,
-    Skill,
+    SkillsChapter,
+    Summary,
     build_forget_user,
     get_get_my_cv,
 )
@@ -536,17 +536,25 @@ class CvModuleValidator:
     """Implémente le port `CvValidator` d'`applications` avec les schémas de `cv`.
 
     Une seule définition de ce qu'est un CV (`cv/domain/schemas.py`) : le CV
-    d'un dossier, retouché par la personne, est jugé par les mêmes règles
-    que le CV de base. Les clés inconnues sont ignorées, pas refusées.
+    d'un dossier, retouché par la personne ou par une proposition de Karria,
+    est jugé par les mêmes règles que le CV de base — **par chapitre**, pour
+    que les plafonds des listes (`SkillsChapter` : 40 compétences, 15 langues ;
+    `InterestsChapter` : 20) s'appliquent ; les listes sans chapitre
+    (expériences, formations, projets) ont les plafonds explicites ci-dessous.
+    Les clés inconnues sont ignorées, pas refusées.
     """
 
-    _LISTS: Final[dict[str, type[BaseModel]]] = {
+    #: Plafonds des listes que `cv` ne borne pas par un chapitre : au-delà, ce
+    #: n'est plus un CV d'une ou deux pages, c'est un corps à refuser.
+    LIST_LIMITS: Final[dict[str, int]] = {"experiences": 30, "educations": 20, "projects": 20}
+    _ITEMS: Final[dict[str, type[BaseModel]]] = {
         "experiences": Experience,
         "educations": Education,
-        "skills": Skill,
-        "languages": Language,
-        "interests": Interest,
         "projects": Project,
+    }
+    _CHAPTERS: Final[dict[str, tuple[type[BaseModel], tuple[str, ...]]]] = {
+        "skills": (SkillsChapter, ("skills", "languages")),
+        "interests": (InterestsChapter, ("interests",)),
     }
 
     def validate(self, cv: Mapping[str, Any]) -> dict[str, Any]:
@@ -557,44 +565,60 @@ class CvModuleValidator:
         """
         errors: list[dict[str, Any]] = []
         out: dict[str, Any] = {"identity": None, "contact": None, "summary": None}
-        for name, model in (("identity", Identity), ("contact", Contact)):
+        singles: dict[str, type[BaseModel]] = {"identity": Identity, "contact": Contact}
+        for name, single in singles.items():
             value = cv.get(name)
             if value is not None:
-                try:
-                    out[name] = model.model_validate(value).model_dump(mode="json")
-                except ValidationError as exc:
-                    errors.extend(_fields_of(name, exc))
+                out[name] = self._validated(single, value, name, errors)
         summary = cv.get("summary")
-        if summary is not None:
-            text = str(summary).strip()
-            if len(text) > _SUMMARY_MAX_LENGTH:
-                errors.append({"field": "summary", "message": "Résumé trop long."})
-            out["summary"] = text or None
-        for name, list_model in self._LISTS.items():
-            raw = cv.get(name) or []
-            if not isinstance(raw, list):
-                errors.append({"field": name, "message": "Une liste est attendue."})
-                continue
-            items: list[dict[str, Any]] = []
-            for index, item in enumerate(raw):
-                try:
-                    items.append(list_model.model_validate(item).model_dump(mode="json"))
-                except ValidationError as exc:
-                    errors.extend(_fields_of(f"{name}.{index}", exc))
-            out[name] = items
+        if summary is not None and str(summary).strip():
+            validated = self._validated(Summary, {"summary": summary}, "", errors)
+            out["summary"] = validated["summary"] if validated else None
+        for name, (chapter, fields) in self._CHAPTERS.items():
+            payload = {f: self._as_list(cv.get(f), f, errors) for f in fields}
+            validated = self._validated(chapter, payload, name, errors)
+            for f in fields:
+                out[f] = validated[f] if validated else []
+        for name, model in self._ITEMS.items():
+            raw = self._as_list(cv.get(name), name, errors)
+            if len(raw) > self.LIST_LIMITS[name]:
+                errors.append(
+                    {"field": name, "message": f"Au plus {self.LIST_LIMITS[name]} éléments."}
+                )
+                raw = []
+            out[name] = [
+                item
+                for index, candidate in enumerate(raw)
+                if (item := self._validated(model, candidate, f"{name}.{index}", errors))
+            ]
         if errors:
             raise CvInvalidError(errors)
         return out
 
+    @staticmethod
+    def _as_list(value: Any, name: str, errors: list[dict[str, Any]]) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        errors.append({"field": name, "message": "Une liste est attendue."})
+        return []
 
-#: La borne du « à propos » (`cv/domain/schemas.py::Summary`).
-_SUMMARY_MAX_LENGTH: Final = 1500
+    @staticmethod
+    def _validated(
+        model: type[BaseModel], value: Any, prefix: str, errors: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        try:
+            return model.model_validate(value).model_dump(mode="json")
+        except ValidationError as exc:
+            errors.extend(_fields_of(prefix, exc))
+            return None
 
 
 def _fields_of(prefix: str, exc: ValidationError) -> list[dict[str, Any]]:
     return [
         {
-            "field": ".".join([prefix, *(str(p) for p in e["loc"])]),
+            "field": ".".join(part for part in [prefix, *(str(p) for p in e["loc"])] if part),
             "message": e["msg"],
         }
         for e in exc.errors()

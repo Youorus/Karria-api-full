@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Final
 
 from karria.bootstrap.orm import TORTOISE_ORM
-from karria.bootstrap.wiring import build_user_notifier
+from karria.bootstrap.wiring import build_user_notifier, cv_validator_from_cv
 from karria.modules.applications import register_tasks as register_applications_tasks
 from karria.modules.cv import register_tasks as register_cv_tasks
 from karria.modules.documents import register_tasks as register_documents_tasks
@@ -90,7 +90,7 @@ def build_worker_app() -> App:
     register_cv_tasks(app, vocabulary=build_offer_vocabulary)
     # `applications` finit sur la file l'adaptation d'un CV qui a dépassé le
     # temps de la requête (ADR-0033).
-    register_applications_tasks(app)
+    register_applications_tasks(app, validator=cv_validator_from_cv)
     return app
 
 

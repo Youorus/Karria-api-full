@@ -212,3 +212,26 @@ async def test_les_ponts_relaient_la_candidature_au_fil(monkeypatch: pytest.Monk
     await bus.publish(DossierUnapplied(user_id=user, offer_id=offer, dossier_id=dossier))
 
     assert seen == [(user, offer, True), (user, offer, False)]
+
+
+class TestCvValidatorPlafonds:
+    def test_les_listes_sont_plafonnees_par_les_chapitres_ou_explicitement(self) -> None:
+        cv = sample_base_cv()
+        cv["skills"] = [{"name": f"c{i}", "level": "advanced"} for i in range(41)]
+        cv["interests"] = [{"name": f"i{i}"} for i in range(21)]
+        cv["experiences"] = [cv["experiences"][0]] * 31
+
+        with pytest.raises(CvInvalidError) as excinfo:
+            cv_validator_from_cv().validate(cv)
+
+        fields = {f["field"] for f in excinfo.value.details["fields"]}
+        assert any(f.startswith("skills") for f in fields)
+        assert any(f.startswith("interests") for f in fields)
+        assert "experiences" in fields
+
+    def test_un_resume_vide_devient_null_et_un_trop_long_est_refuse(self) -> None:
+        validator = cv_validator_from_cv()
+        assert validator.validate({**sample_base_cv(), "summary": "  "})["summary"] is None
+        with pytest.raises(CvInvalidError) as excinfo:
+            validator.validate({**sample_base_cv(), "summary": "x" * 1501})
+        assert excinfo.value.details["fields"][0]["field"].startswith("summary")

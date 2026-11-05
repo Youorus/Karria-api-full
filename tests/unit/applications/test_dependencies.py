@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from doubles import PermissiveCvValidator
 from karria.modules.applications.api.dependencies import (
     UnwiredBaseCvReader,
     UnwiredCvValidator,
@@ -42,7 +43,7 @@ async def test_les_ports_non_branches_refusent() -> None:
 async def test_l_assemblage_hors_requete() -> None:
     settings = Settings(app=AppSettings(environment=Environment.TEST))
 
-    assert isinstance(build_adapt_cv(settings), AdaptCv)
+    assert isinstance(build_adapt_cv(settings, PermissiveCvValidator), AdaptCv)
     assert isinstance(build_forget_user(), ForgetUser)
     with pytest.raises(RuntimeError):
-        await build_adapt_cv(settings)._jobs.defer_adaptation(uuid4())
+        await build_adapt_cv(settings, PermissiveCvValidator)._jobs.defer_adaptation(uuid4())

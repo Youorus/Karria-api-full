@@ -7,8 +7,9 @@ erreurs au format `{ error: { code, message, details: { reason, … } } }`.
 
 Quatre routes confient l'offre et le CV à un modèle et passent par la porte du
 consentement à l'IA (`403 ai_consent_required`, usage `application`) : créer un
-dossier, relancer l'adaptation, ébaucher la lettre, réécrire un paragraphe. Les
-autres n'appellent aucun modèle.
+dossier, relancer l'adaptation, ébaucher la lettre, réécrire un paragraphe. Elles
+sont limitées à **30 appels par 10 minutes et par compte** (`429 ai_rate_limited`,
+`details.retry_after`). Les autres n'appellent aucun modèle.
 
 ## Le parcours, en quatre gestes
 
@@ -97,7 +98,14 @@ autres n'appellent aucun modèle.
   Karria n'ajoute jamais un élément ; elle reformule ou réordonne.
 - **Par défaut Karria applique** l'intitulé et le « à propos » (`acceptee`,
   `before` conservé) : l'app montre « ton à-propos a été mis à jour » avec
-  « revenir ». Le reste arrive `proposee`.
+  « revenir ». Le reste arrive `proposee`. Une valeur proposée hors des bornes
+  de son chemin (intitulé sur une ligne, 150 caractères ; à-propos 1 500 ;
+  mission 300), ou qui rendrait le CV invalide, n'est **pas** appliquée : elle
+  reste `proposee`, et l'accepter répond `409 proposition_invalid`.
+- **Rien n'est écrasé** : une retouche faite pendant que Karria travaille est
+  conservée (les propositions sont rejouées dessus, `before` est la retouche) ;
+  pour la lettre, le serveur répond `409 dossier_conflict` si le dossier a bougé
+  pendant l'appel — relire, réessayer.
 - **`status`** se déduit : `brouillon` tant que l'adaptation court ou qu'une
   proposition est `proposee` ; `pret` ensuite ; `candidate` dès `applied_at`.
 - **`coverage`** : les mots-clés de l'offre qui se lisent (mot entier,
@@ -237,7 +245,11 @@ Retour à `brouillon` ou `pret` ; le fil retire `applied`. Idempotent.
 | 409 | `adaptation_in_progress` | retoucher ou ébaucher pendant l'adaptation |
 | 409 | `adaptation_not_failed` | relancer sans échec |
 | 409 | `proposition_path_invalid` | l'élément visé n'existe plus |
+| 409 | `proposition_invalid` | la valeur ne tient pas dans son chemin (`details.path`, `details.why`), ou rend le CV invalide |
+| 409 | `dossier_conflict` | le dossier a été modifié pendant l'appel au modèle : relire et réessayer |
 | 422 | `cv_invalid`, `letter_invalid` | forme refusée, `details.fields` |
+| 422 | `cv_too_large` | corps de `PUT /{id}/cv` au-delà de 256 Kio (`details.size`, `details.limit`) |
+| 429 | `ai_rate_limited` | plus de 30 appels au modèle en 10 minutes pour ce compte ; `details.retry_after` en secondes |
 | 503 | `ai_unavailable`, `ai_output_invalid` | le modèle ne répond pas, ou hors schéma |
 
 ## Ce que l'app doit prévoir

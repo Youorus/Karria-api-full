@@ -21,6 +21,7 @@ from karria.modules.applications.domain import (
     OfferSnapshot,
     ParagraphNotFoundError,
     Proposition,
+    PropositionInvalidError,
     PropositionNotFoundError,
     PropositionPathError,
     PropositionState,
@@ -230,3 +231,41 @@ class TestCandidature:
         assert back.applied_at is None
         assert back.status is DossierStatus.BROUILLON
         assert back.unmark_applied(now=LATER) is back
+
+
+class TestBornesEtValidation:
+    def test_une_auto_application_hors_bornes_reste_proposee(self) -> None:
+        dossier = open_dossier()
+        bad = Proposition(uuid4(), "identity.headline", "Vendeuse", "x" * 151, "trop long")
+        good = Proposition(uuid4(), "summary", dossier.cv["summary"], "Court.", "ok")
+
+        adapted = dossier.adapted([bad, good], now=LATER)
+
+        states = {p.path: p.state for p in adapted.propositions}
+        assert states["identity.headline"] is PropositionState.PROPOSEE
+        assert states["summary"] is PropositionState.ACCEPTEE
+        assert adapted.cv["identity"]["headline"] == "Vendeuse"
+
+    def test_le_controle_externe_refuse_sans_rien_ecrire(self) -> None:
+        dossier = open_dossier()
+        proposition = Proposition(uuid4(), "summary", dossier.cv["summary"], "Nouveau.", "")
+
+        def refuse(cv: object) -> None:
+            raise ValueError("non")
+
+        adapted = dossier.adapted([proposition], now=LATER, check=refuse)
+        assert adapted.propositions[0].state is PropositionState.PROPOSEE
+        assert adapted.cv["summary"] == dossier.cv["summary"]
+        with pytest.raises(PropositionInvalidError) as excinfo:
+            adapted.decide(proposition.id, Decision.ACCEPTER, now=LATER, check=refuse)
+        assert excinfo.value.details["why"] == "cv_invalid"
+
+    def test_decider_une_valeur_hors_bornes_est_refuse_et_revenir_reste_possible(self) -> None:
+        dossier = open_dossier()
+        bad = Proposition(uuid4(), "identity.headline", "Vendeuse", "Deux\nlignes", "")
+        adapted = dossier.adapted([bad], now=LATER)
+
+        with pytest.raises(PropositionInvalidError):
+            adapted.decide(bad.id, Decision.ACCEPTER, now=LATER)
+        reverted = adapted.decide(bad.id, Decision.REFUSER, now=LATER)
+        assert reverted.cv["identity"]["headline"] == "Vendeuse"

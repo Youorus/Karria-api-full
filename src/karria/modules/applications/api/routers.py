@@ -14,6 +14,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response, status
 
 from karria.modules.applications.api.dependencies import (
+    AiPrincipalDep,
     CreateDossierDep,
     DecidePropositionDep,
     DeleteDossierDep,
@@ -27,6 +28,7 @@ from karria.modules.applications.api.dependencies import (
     UnmarkAppliedDep,
     UpdateDossierCvDep,
     UpdateLetterDep,
+    limit_cv_body,
 )
 from karria.modules.applications.api.schemas import (
     CreateDossierRequest,
@@ -39,7 +41,7 @@ from karria.modules.applications.api.schemas import (
     RegenerateRequest,
 )
 from karria.modules.applications.domain import Dossier
-from karria.shared.auth import AiConsentedPrincipalDep, CurrentPrincipalDep, require_authentication
+from karria.shared.auth import CurrentPrincipalDep, require_authentication
 from karria.shared.errors import ErrorCode, error_responses
 
 router = APIRouter(
@@ -49,7 +51,7 @@ router = APIRouter(
 )
 
 _MUTATION_ERRORS = (ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND, ErrorCode.RULE_VIOLATION)
-_AI_ERRORS = (ErrorCode.FORBIDDEN, ErrorCode.DEPENDENCY_FAILURE)
+_AI_ERRORS = (ErrorCode.FORBIDDEN, ErrorCode.RATE_LIMITED, ErrorCode.DEPENDENCY_FAILURE)
 
 
 def _present(dossier: Dossier, logo_url: LogoUrlDep, *, base_changed: bool = False) -> DossierRead:
@@ -66,13 +68,14 @@ def _present(dossier: Dossier, logo_url: LogoUrlDep, *, base_changed: bool = Fal
         ErrorCode.FORBIDDEN,
         ErrorCode.NOT_FOUND,
         ErrorCode.RULE_VIOLATION,
+        ErrorCode.RATE_LIMITED,
         ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
 async def create_dossier(
     body: CreateDossierRequest,
     response: Response,
-    principal: AiConsentedPrincipalDep,
+    principal: AiPrincipalDep,
     create: CreateDossierDep,
     logo_url: LogoUrlDep,
 ) -> DossierRead:
@@ -83,7 +86,9 @@ async def create_dossier(
     jusqu'à `faite` ou `echouee`. Un dossier existe déjà pour cette offre :
     `200` avec l'existant, rien n'est relancé. `409 cv_missing` sans CV de
     base ; `404 offer_not_found` ; `403 template_locked` pour un modèle
-    Premium non possédé ; `403 ai_consent_required` sans consentement.
+    Premium non possédé ; `403 ai_consent_required` sans consentement ;
+    `429 ai_rate_limited` (`details.retry_after`) au-delà du quota d'appels
+    au modèle par compte.
     """
     result = await create.execute(principal.subject_id, body.offer_id, body.template_id)
     if not result.created:
@@ -145,7 +150,7 @@ async def delete_dossier(
 )
 async def retry_adaptation(
     dossier_id: UUID,
-    principal: AiConsentedPrincipalDep,
+    principal: AiPrincipalDep,
     retry: RetryAdaptationDep,
     logo_url: LogoUrlDep,
 ) -> DossierRead:
@@ -162,6 +167,7 @@ async def retry_adaptation(
     summary="Retoucher le CV du dossier",
     response_model=DossierRead,
     responses=error_responses(*_MUTATION_ERRORS, ErrorCode.INVALID_INPUT),
+    dependencies=[Depends(limit_cv_body)],
 )
 async def update_cv(
     dossier_id: UUID,
@@ -173,8 +179,9 @@ async def update_cv(
     """Le CV entier, revalidé par la forme d'un CV ; la couverture est recalculée.
 
     `409 adaptation_in_progress` tant que Karria travaille ; `422 cv_invalid`
-    avec `fields`. Les propositions gardent leur état : accepter ou revenir
-    s'applique toujours à l'élément visé s'il existe encore.
+    avec `fields` ; `422 cv_too_large` au-delà de 256 Kio. Les propositions
+    gardent leur état : accepter ou revenir s'applique toujours à l'élément
+    visé s'il existe encore.
     """
     return _present(await update.execute(principal.subject_id, dossier_id, body.cv), logo_url)
 
@@ -196,7 +203,8 @@ async def decide_proposition(  # noqa: PLR0917 - FastAPI injecte par position
     """`accepter` applique `after` ; `refuser` et `revenir` remettent `before`.
 
     `404 proposition_not_found` ; `409 proposition_path_invalid` si l'élément
-    visé a été retiré du CV à la main.
+    visé a été retiré du CV à la main ; `409 proposition_invalid` si la valeur
+    ne tient pas dans son chemin ou rend le CV invalide.
     """
     dossier = await decide.execute(principal.subject_id, dossier_id, proposition_id, body.decision)
     return _present(dossier, logo_url)
@@ -210,14 +218,16 @@ async def decide_proposition(  # noqa: PLR0917 - FastAPI injecte par position
 )
 async def draft_letter(
     dossier_id: UUID,
-    principal: AiConsentedPrincipalDep,
+    principal: AiPrincipalDep,
     draft: DraftLetterDep,
     logo_url: LogoUrlDep,
 ) -> DossierRead:
     """Karria écrit la première ébauche à partir de l'offre et du CV adapté.
 
     Remplace la lettre existante s'il y en a une. `409 adaptation_in_progress`
-    tant que Karria adapte le CV ; `503 ai_unavailable` si le modèle ne répond pas.
+    tant que Karria adapte le CV ; `409 dossier_conflict` si le dossier a été
+    modifié pendant l'appel (réessayer) ; `429 ai_rate_limited` ;
+    `503 ai_unavailable` si le modèle ne répond pas.
     """
     return _present(await draft.execute(principal.subject_id, dossier_id), logo_url)
 
@@ -250,7 +260,7 @@ async def regenerate_paragraph(  # noqa: PLR0917 - FastAPI injecte par position
     dossier_id: UUID,
     index: int,
     body: RegenerateRequest,
-    principal: AiConsentedPrincipalDep,
+    principal: AiPrincipalDep,
     regenerate: RegenerateParagraphDep,
     logo_url: LogoUrlDep,
 ) -> DossierRead:
