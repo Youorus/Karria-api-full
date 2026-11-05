@@ -381,3 +381,47 @@ class TestCvRecu:
             await env.export().execute(
                 env.user, template_id=template.id, formats=None, ats_safe=False, offer_id=None
             )
+
+
+class TestCouleurPrincipaleDeLExport:
+    """ADR-0034 : l'export garde la couleur avec laquelle il a été rendu."""
+
+    async def test_l_export_rend_et_retient_la_couleur_choisie(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+
+        generated = await env.export().execute(
+            env.user,
+            template_id=template.id,
+            formats=["pdf"],
+            ats_safe=False,
+            offer_id=None,
+            primary_color="#7B1E2B",
+        )
+
+        assert generated.primary_color == "#7B1E2B"
+        assert env.generated.items[generated.id].primary_color == "#7B1E2B"
+        [call] = env.engine.called("render_pdf")
+        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+
+    async def test_sans_modele_l_export_prend_aussi_la_couleur_du_choix(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+        await env.owned.save_selection(
+            Selection(
+                user_id=env.user,
+                template_id=template.id,
+                ats_safe=False,
+                updated_at=NOW,
+                primary_color="#2E7D32",
+            )
+        )
+
+        generated = await env.export().execute(
+            env.user, template_id=None, formats=["pdf"], ats_safe=None, offer_id=None
+        )
+
+        assert generated.primary_color == "#2E7D32"
+        assert env.engine.called("render_pdf")[0]["spec"]["styles"]["section_title"]["color"] == (
+            "#2E7D32"
+        )

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from karria.modules.applications.api.dependencies import (
     AiPrincipalDep,
+    ChangeColorDep,
     ChangeTemplateDep,
     CreateDossierDep,
     DecidePropositionDep,
@@ -32,6 +33,7 @@ from karria.modules.applications.api.dependencies import (
     limit_cv_body,
 )
 from karria.modules.applications.api.schemas import (
+    ColorChangeRequest,
     CreateDossierRequest,
     CvUpdateRequest,
     DecisionRequest,
@@ -209,6 +211,29 @@ async def change_template(
     Idempotent : le même modèle redemandé ne touche pas `updated_at`.
     """
     dossier = await change.execute(principal.subject_id, dossier_id, body.template_id)
+    return _present(dossier, logo_url)
+
+
+@router.put(
+    "/{dossier_id}/color",
+    summary="Changer la couleur principale du dossier",
+    response_model=DossierRead,
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
+)
+async def change_color(
+    dossier_id: UUID,
+    body: ColorChangeRequest,
+    principal: CurrentPrincipalDep,
+    change: ChangeColorDep,
+    logo_url: LogoUrlDep,
+) -> DossierRead:
+    """Corps `{ "primary_color": "#rrggbb" | null }` (ADR-0034) ; à tout moment.
+
+    `null` rend la main à la couleur du modèle. La couleur survit à un
+    changement de modèle (`PUT /{id}/template` ne la touche pas). Rien
+    d'autre ne change ; idempotent. `422` sur un code qui n'est pas `#rrggbb`.
+    """
+    dossier = await change.execute(principal.subject_id, dossier_id, body.primary_color)
     return _present(dossier, logo_url)
 
 

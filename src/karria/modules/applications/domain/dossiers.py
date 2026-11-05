@@ -220,6 +220,9 @@ class Dossier:
     adaptation: AdaptationState = AdaptationState.EN_COURS
     adaptation_error: str | None = None
     applied_at: datetime | None = None
+    #: La couleur principale posée par la personne sur le modèle du dossier
+    #: (`#RRGGBB`) ; `None` : la couleur du modèle (ADR-0034).
+    primary_color: str | None = None
 
     @classmethod
     def open(
@@ -427,6 +430,16 @@ class Dossier:
         if template_id == self.template_id:
             return self
         return replace(self, template_id=template_id, updated_at=now)
+
+    def with_primary_color(self, primary_color: str | None, *, now: datetime) -> Dossier:
+        """La couleur principale du dossier (`#RRGGBB`, déjà normalisée), ou `None` : celle du modèle.
+
+        Idempotent, comme le modèle. Elle survit au changement de modèle : une
+        couleur choisie est un choix de la personne, pas un attribut du modèle.
+        """
+        if primary_color == self.primary_color:
+            return self
+        return replace(self, primary_color=primary_color, updated_at=now)
 
     def with_paragraph(self, index: int, text: str, *, now: datetime) -> Dossier:
         """Un seul paragraphe remplacé.

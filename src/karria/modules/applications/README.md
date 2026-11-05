@@ -45,6 +45,11 @@
   `ChangeDossierTemplate`), même pendant l'adaptation, sous la même porte qu'à
   l'ouverture (`TemplateChecker`) ; rien d'autre ne bouge que `template_id` et
   `updated_at` — la mise en page n'est pas le fond (ADR-0033 § 2026-11-05).
+- **La couleur principale se change à tout moment** (`PUT /{id}/color`,
+  `ChangeDossierColor`, ADR-0034) : `#RRGGBB` normalisé par le schéma, `null`
+  rend la main à la couleur du modèle ; elle survit au changement de modèle
+  (un choix de la personne, pas un attribut du modèle). Pas de porte : aucune
+  règle d'un autre module.
 - **`updated_at` est celui du domaine**, pas celui de l'ORM : le dépôt écrit
   par `update()` et remet les horodatages après `create()`. Le cas d'usage s'en
   sert pour savoir si la personne a touché le dossier pendant l'adaptation.

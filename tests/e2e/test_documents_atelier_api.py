@@ -437,3 +437,44 @@ class TestExportDuCvRecu:
         )
         assert response.status_code == 409
         assert reason(response) == "cv_missing"
+
+
+class TestCouleurPrincipale:
+    """ADR-0034 : `primary_color` au rendu et à l'export."""
+
+    async def test_le_rendu_prend_la_couleur_choisie_et_refuse_un_code_invalide(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        template, _ = fakes.templates.publish()
+
+        ok = await client.post(
+            f"{API}/documents/{template.id}/render",
+            json={"cv": CV_DATA, "primary_color": "7b1e2b"},
+        )
+        bad = await client.post(
+            f"{API}/documents/{template.id}/render",
+            json={"cv": CV_DATA, "primary_color": "#12345"},
+        )
+
+        assert ok.status_code == 200, ok.text
+        [call] = fakes.engine.called("render_html")
+        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert bad.status_code == 422
+
+    async def test_l_export_retient_la_couleur_et_la_liste_la_rend(
+        self, client: AsyncClient, fakes: Fakes, me: Principal, ai_consented: None
+    ) -> None:
+        template, _ = fakes.templates.publish()
+
+        response = await client.post(
+            f"{API}/cv/me/generated-cvs",
+            json={"template_id": str(template.id), "cv": CV_DATA, "primary_color": "#2E7D32"},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["primary_color"] == "#2E7D32"
+        listed = await client.get(f"{API}/cv/me/generated-cvs?kind=cv")
+        assert listed.json()["items"][0]["primary_color"] == "#2E7D32"
+        assert fakes.engine.called("render_pdf")[0]["spec"]["styles"]["section_title"]["color"] == (
+            "#2E7D32"
+        )

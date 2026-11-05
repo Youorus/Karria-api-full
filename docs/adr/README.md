@@ -66,3 +66,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0031](0031-envoi-des-documents-par-e-mail.md) | Envoi des documents par e-mail : pièces jointes au port mail, aucun texte libre, cinq envois par jour, remise en file | Proposée |
 | [0032](0032-gabarits-d-e-mail.md) | Gabarits d'e-mail sans étiquette ni encart, mode sombre réel, logo sur le stockage public | Proposée |
 | [0033](0033-dossiers-de-candidature.md) | Dossiers de candidature : copie figée du CV, propositions réversibles, lettre liée à une offre, offre figée, purge | Proposée |
+| [0034](0034-couleur-principale-d-un-cv.md) | La couleur principale d'un CV choisie par la personne : `recolor_spec` pur (teintes dérivées suivies), `primary_color` au rendu et à l'export, retenue par dossier (`PUT /applications/{id}/color`), par défaut (`Selection`) et sur l'export | Proposée |

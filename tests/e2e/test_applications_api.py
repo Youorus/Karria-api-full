@@ -483,3 +483,52 @@ class TestGardeFous:
 
         assert response.status_code == 409
         assert response.json()["error"]["details"]["reason"] == "proposition_invalid"
+
+
+class TestCouleurDuDossier:
+    async def test_la_couleur_se_pose_se_relit_survit_au_modele_et_se_retire(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        assert dossier["primary_color"] is None
+
+        colored = await client.put(f"{API}/{dossier['id']}/color", json={"primary_color": "7b1e2b"})
+        assert colored.status_code == 200, colored.text
+        assert colored.json()["primary_color"] == "#7B1E2B"
+        assert colored.json()["cv"] == dossier["cv"]
+
+        template = uuid4()
+        changed = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(template)}
+        )
+        assert changed.json()["primary_color"] == "#7B1E2B"
+        assert (await client.get(f"{API}/{dossier['id']}")).json()["primary_color"] == "#7B1E2B"
+        cards = (await client.get(API)).json()["items"]
+        assert cards[0]["primary_color"] == "#7B1E2B"
+
+        reset = await client.put(f"{API}/{dossier['id']}/color", json={"primary_color": None})
+        assert reset.status_code == 200
+        assert reset.json()["primary_color"] is None
+        assert reset.json()["template_id"] == str(template)
+
+    async def test_un_code_invalide_un_corps_vide_et_un_dossier_inconnu(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+
+        bad = await client.put(f"{API}/{dossier['id']}/color", json={"primary_color": "bleu"})
+        assert bad.status_code == 422
+        assert (await client.put(f"{API}/{dossier['id']}/color", json={})).status_code == 422
+        missing = await client.put(f"{API}/{uuid4()}/color", json={"primary_color": "#7B1E2B"})
+        assert missing.status_code == 404
+        assert (await client.get(f"{API}/{dossier['id']}")).json()["primary_color"] is None

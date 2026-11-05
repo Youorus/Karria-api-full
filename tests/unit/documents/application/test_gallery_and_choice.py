@@ -158,3 +158,18 @@ class TestChoix:
         )
 
         assert selection.template_id == template.id
+
+
+class TestCouleurDuChoix:
+    async def test_le_choix_garde_la_couleur_posee_et_null_la_retire(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        choose = SelectTemplate(env.templates, env.owned, env.clock)
+
+        colored = await choose.execute(
+            env.user, template.id, ats_safe=False, primary_color="#7B1E2B"
+        )
+        assert colored.primary_color == "#7B1E2B"
+        assert await GetSelection(env.owned).execute(env.user) == colored
+
+        reset = await choose.execute(env.user, template.id, ats_safe=False)
+        assert reset.primary_color is None

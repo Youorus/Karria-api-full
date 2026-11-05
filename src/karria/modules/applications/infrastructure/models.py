@@ -65,6 +65,11 @@ class ApplicationDossierModel(BaseDBModel):
     applied_at = fields.DatetimeField(
         null=True, description="Quand la personne a dit avoir candidaté."
     )
+    primary_color = fields.CharField(
+        max_length=7,
+        null=True,
+        description="Couleur principale posée sur le modèle du dossier (#RRGGBB), ou NULL.",
+    )
 
     class Meta:
         table = "applications_dossiers"

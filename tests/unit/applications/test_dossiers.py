@@ -286,3 +286,22 @@ class TestBornesEtValidation:
             adapted.decide(bad.id, Decision.ACCEPTER, now=LATER)
         reverted = adapted.decide(bad.id, Decision.REFUSER, now=LATER)
         assert reverted.cv["identity"]["headline"] == "Vendeuse"
+
+
+class TestCouleurPrincipale:
+    def test_la_couleur_se_pose_se_retire_et_survit_au_modele(self) -> None:
+        dossier = adapted_dossier()
+
+        colored = dossier.with_primary_color("#7B1E2B", now=LATER + timedelta(minutes=1))
+
+        assert colored.primary_color == "#7B1E2B"
+        assert colored.updated_at == LATER + timedelta(minutes=1)
+        assert colored.cv == dossier.cv
+        assert colored.propositions == dossier.propositions
+        # Idempotent.
+        assert colored.with_primary_color("#7B1E2B", now=LATER + timedelta(hours=1)) is colored
+        # Changer de modèle ne touche pas la couleur : c'est un choix de la personne.
+        assert colored.with_template(uuid4(), now=LATER).primary_color == "#7B1E2B"
+        # `None` rend la main à la couleur du modèle.
+        assert colored.with_primary_color(None, now=LATER).primary_color is None
+        assert dossier.with_primary_color(None, now=LATER) is dossier

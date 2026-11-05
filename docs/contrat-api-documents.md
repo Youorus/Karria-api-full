@@ -25,7 +25,8 @@ redemande le rendu. Aucun fichier n'est écrit.
 {
   "cv": { …le CV au format de GET /cv/me, tel que l'app tient le brouillon… },
   "letter": null,
-  "ats_safe": false
+  "ats_safe": false,
+  "primary_color": "#7B1E2B"
 }
 ```
 
@@ -36,6 +37,13 @@ redemande le rendu. Aucun fichier n'est écrit.
 - `?sample=true` (sans corps) : **l'exemple du modèle**, pour la galerie — sans ancres,
   permis même sur un modèle Premium non possédé.
 - `ats_safe: true` : la variante « optimisée ATS » (interlettrage plafonné), comme à l'export.
+- `primary_color` (ADR-0034, **2026-11-05**) : `#rrggbb` (ou `rrggbb`, `#rgb`), la couleur
+  principale choisie par la personne, à la place de celle du modèle (`primary_color` de la
+  galerie, celle des titres de rubrique) : toute occurrence de cette couleur — titres, puces,
+  filets, bandes — et ses teintes dérivées (une bande pâle reste pâle) ; le texte noir et les
+  gris ne bougent pas. Appliquée après `ats_safe`, à l'exemple comme au CV ou à la lettre.
+  `null` ou absent : la couleur du modèle. `422` (erreur de validation) sur un autre code.
+  Les pictogrammes de contact rastérisés gardent leur couleur (limite connue).
 
 ### Réponse
 
@@ -146,8 +154,11 @@ pas une donnée du CV. Une ligne qui réunit plusieurs champs (« Entreprise | 2
 ### `POST /documents/letters/export` → `201 GeneratedCv`
 
 ```json
-{ "template_id": "…" | null, "letter": { … }, "formats": ["pdf", "docx"] | null, "dossier_id": "…" | null }
+{ "template_id": "…" | null, "letter": { … }, "formats": ["pdf", "docx"] | null, "dossier_id": "…" | null, "primary_color": "#7B1E2B" | null }
 ```
+
+`primary_color` : la couleur du dossier, pour que la lettre suive le CV (§ 1) ; sans
+`template_id` ni couleur, celle du choix de la personne (`/user-templates/me/selected`).
 
 Sans `template_id`, le modèle choisi (`PUT /user-templates/me/selected`) ; sans choix,
 `404 template_not_found`. Modèle Premium non possédé : `403 template_locked`. Format
@@ -167,6 +178,10 @@ Réponse : un `GeneratedCv` (même forme que l'export de CV) avec `kind: "letter
   ainsi qu'un dossier de candidature exporte sa copie adaptée (PDF, DOCX, score ATS sur ce
   CV-là). La photo reste celle du CV de la personne. Absent : comportement inchangé (le CV de
   base, `409 cv_missing` s'il n'existe pas). `cv` hors bornes → `422`.
+- `POST /cv/me/generated-cvs` accepte aussi **`primary_color`** (§ 1) ; sans `template_id` ni
+  couleur, celle du choix de la personne. `GeneratedCv` porte **`primary_color`** (`#RRGGBB`
+  ou `null`) : la couleur avec laquelle l'export a été rendu, pour que « Mes CV » la montre et
+  la réutilise (« Voir avec un autre modèle » repart avec elle).
 - `GET /cv/me/generated-cvs?kind=cv|letter&dossier_id=…` filtre ; `kind` inconnu → `422`.
 - `GET` / `DELETE /cv/me/generated-cvs/{id}` valent pour les deux genres.
 

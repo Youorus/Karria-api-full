@@ -124,6 +124,15 @@ passante mobile.
 de données. Un compteur et un cache partagés (Redis) derrière les mêmes
 fonctions.
 
+### Les pictogrammes de contact ne suivent pas la couleur choisie (ADR-0034)
+
+Les icônes à gauche des lignes de contact sont rastérisées depuis le PDF du
+modèle (`icons[*].file`, PNG à 600 dpi) : `recolor_spec` ne les voit pas, elles
+gardent la couleur d'origine quand la personne change la couleur principale.
+Faire : teinter le PNG au rendu (remplacer les pixels de la couleur d'origine,
+alpha conservé) dans `html_renderer`/`docx_renderer` quand `primary_color` est
+posée, ou retenir les tracés vectoriels à l'analyse.
+
 ### `pages` du rendu de l'atelier est une estimation
 
 Le nombre de pages rendu par `POST /documents/{id}/render` vient d'une mesure

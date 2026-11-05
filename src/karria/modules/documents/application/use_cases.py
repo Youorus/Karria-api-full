@@ -70,6 +70,7 @@ from karria.modules.documents.domain.errors import (
 from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.letter import from_letter, letter_warnings
+from karria.modules.documents.domain.palette import recolor_spec
 from karria.modules.documents.domain.sends import (
     MAX_DOCUMENTS_PER_SEND,
     DocumentSend,
@@ -250,7 +251,15 @@ class SelectTemplate:
     ) -> None:
         self._templates, self._owned, self._clock = templates, owned, clock
 
-    async def execute(self, user_id: UUID, template_id: UUID, *, ats_safe: bool) -> Selection:
+    async def execute(
+        self,
+        user_id: UUID,
+        template_id: UUID,
+        *,
+        ats_safe: bool,
+        primary_color: str | None = None,
+    ) -> Selection:
+        """`primary_color` (`#RRGGBB`, déjà normalisée) : la couleur posée ; `None` : celle du modèle."""
         template, _ = await _published(self._templates, template_id)
         ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
         selection = Selection(
@@ -258,6 +267,7 @@ class SelectTemplate:
             template_id=template_id,
             ats_safe=ats_safe,
             updated_at=self._clock.now(),
+            primary_color=primary_color,
         )
         await self._owned.save_selection(selection)
         return selection
@@ -350,6 +360,7 @@ class CvRenderer:
         *,
         ats_safe: bool,
         cv: dict[str, Any] | None = None,
+        primary_color: str | None = None,
     ) -> tuple[
         Template,
         TemplateVersion,
@@ -364,6 +375,8 @@ class CvRenderer:
             cv: Un CV **reçu** (la copie adaptée d'un dossier de candidature, même forme
                 que `GET /cv/me`) rendu à la place du CV de base de la personne ; la photo
                 reste celle de son CV. `None` : le CV de base, qui doit exister (`cv_missing`).
+            primary_color: La couleur principale choisie (`#RRGGBB`), appliquée après la
+                variante ATS (ADR-0034) ; `None` : celle du modèle.
         """
         template, version = await _published(self._templates, template_id)
         ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
@@ -379,6 +392,7 @@ class CvRenderer:
         spec = version.spec or {}
         if ats_safe:
             spec = ats_safe_spec(spec)
+        spec = recolor_spec(spec, primary_color)
         view = from_cv(spec, snapshot.data)
         photo = None
         if spec["header"].get("photo") and snapshot.image_key:
@@ -466,8 +480,13 @@ class ExportCv:
         offer_id: UUID | None,
         dossier_id: UUID | None = None,
         cv: dict[str, Any] | None = None,
+        primary_color: str | None = None,
     ) -> GeneratedCv:
-        """`cv` : la copie adaptée d'un dossier à exporter à la place du CV de base (ADR-0033)."""
+        """`cv` : la copie adaptée d'un dossier à exporter à la place du CV de base (ADR-0033).
+
+        `primary_color` : la couleur principale choisie (`#RRGGBB`) ; sans
+        `template_id`, celle du choix de la personne, comme `ats_safe` (ADR-0034).
+        """
         if offer_id is not None:
             raise TailoringNotAvailableError()
         wanted = check_formats(formats)
@@ -478,10 +497,12 @@ class ExportCv:
             template_id = selection.template_id
             if ats_safe is None:
                 ats_safe = selection.ats_safe
+            if primary_color is None:
+                primary_color = selection.primary_color
         safe = bool(ats_safe)
         started = time.monotonic()
         template, version, spec, view, snapshot, photo, assets = await self._renderer.prepare(
-            user_id, template_id, ats_safe=safe, cv=cv
+            user_id, template_id, ats_safe=safe, cv=cv, primary_color=primary_color
         )
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
         docx = None
@@ -549,6 +570,7 @@ class ExportCv:
             explanation_status=ExplanationStatus.PENDING,
             full_name=" ".join(p for p in (ident.get("first_name"), ident.get("last_name")) if p),
             dossier_id=dossier_id,
+            primary_color=primary_color,
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)
@@ -1009,8 +1031,12 @@ class RenderDocument:
         letter: dict[str, Any] | None = None,
         sample: bool = False,
         ats_safe: bool = False,
+        primary_color: str | None = None,
     ) -> RenderedDocument:
         """
+        `primary_color` (`#RRGGBB`) : la couleur principale choisie, appliquée
+        après la variante ATS, à l'exemple comme au CV ou à la lettre (ADR-0034).
+
         Raises:
             TemplateNotFoundError: Modèle inconnu ou non publié.
             TemplateNotOwnedError: Modèle Premium non possédé (l'exemple reste visible).
@@ -1020,6 +1046,7 @@ class RenderDocument:
         started = time.monotonic()
         template, version = await _published(self._templates, template_id)
         spec = ats_safe_spec(version.spec or {}) if ats_safe else (version.spec or {})
+        spec = recolor_spec(spec, primary_color)
         if sample:
             kind = "sample"
             rendered, warnings = await self._sample(spec, version)
@@ -1135,16 +1162,20 @@ class ExportLetter:
         letter: dict[str, Any],
         formats: list[str] | None,
         dossier_id: UUID | None,
+        primary_color: str | None = None,
     ) -> GeneratedCv:
+        """`primary_color` : la couleur principale du dossier, pour que la lettre suive le CV."""
         wanted = check_formats(formats)
         if template_id is None:
             selection = await self._owned.selection(user_id)
             if selection is None:
                 raise TemplateNotFoundError()
             template_id = selection.template_id
+            if primary_color is None:
+                primary_color = selection.primary_color
         template, version = await _published(self._templates, template_id)
         ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
-        spec = version.spec or {}
+        spec = recolor_spec(version.spec or {}, primary_color)
         view = from_letter(spec, letter, today=self._clock.now().date())
         assets: dict[str, bytes] = {}
         logo = await fetch_logo(self._logos, (letter.get("recipient") or {}).get("logo_url"))
@@ -1186,6 +1217,7 @@ class ExportLetter:
             kind=DocumentKind.LETTER,
             dossier_id=dossier_id,
             company_name=view["recipient"]["company"],
+            primary_color=primary_color,
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)

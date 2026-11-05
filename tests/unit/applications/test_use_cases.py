@@ -23,6 +23,7 @@ from doubles import (
 )
 from karria.modules.applications.application import (
     AdaptCv,
+    ChangeDossierColor,
     ChangeDossierTemplate,
     CreateDossierFromOffer,
     DecideProposition,
@@ -386,6 +387,38 @@ class TestModele:
         assert env.dossiers.rows[dossier.id].template_id is None
         with pytest.raises(DossierNotFoundError):
             await change.execute(uuid4(), dossier.id, None)
+
+
+class TestCouleurDuDossier:
+    async def test_la_couleur_se_pose_et_se_retire_sans_rien_toucher(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        change = ChangeDossierColor(env.dossiers, env.clock)
+        env.clock.advance(timedelta(minutes=1))
+
+        colored = await change.execute(user, dossier.id, "#7B1E2B")
+
+        assert colored.primary_color == "#7B1E2B"
+        assert colored.cv == dossier.cv
+        assert colored.propositions == dossier.propositions
+        assert colored.updated_at > dossier.updated_at
+        assert env.dossiers.rows[dossier.id] == colored
+        # Le même code redemandé ne réécrit rien.
+        env.clock.advance(timedelta(minutes=1))
+        assert (await change.execute(user, dossier.id, "#7B1E2B")).updated_at == colored.updated_at
+        # Le modèle change, la couleur reste.
+        template = uuid4()
+        changed = await ChangeDossierTemplate(env.dossiers, env.templates, env.clock).execute(
+            user, dossier.id, template
+        )
+        assert changed.primary_color == "#7B1E2B"
+        assert changed.template_id == template
+        # `None` rend la main à la couleur du modèle.
+        reset = await change.execute(user, dossier.id, None)
+        assert reset.primary_color is None
+        assert reset.template_id == template
+        with pytest.raises(DossierNotFoundError):
+            await change.execute(uuid4(), dossier.id, "#7B1E2B")
 
 
 class TestLettre:

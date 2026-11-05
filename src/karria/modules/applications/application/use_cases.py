@@ -423,6 +423,33 @@ class ChangeDossierTemplate:
         return updated
 
 
+class ChangeDossierColor:
+    """La couleur principale du dossier change à tout moment (`PUT /{id}/color`).
+
+    Une règle pure, sans porte : le code est déjà normalisé (`#RRGGBB`) par le
+    schéma. `None` rend la main à la couleur du modèle. Rien d'autre ne bouge,
+    et le modèle non plus : la couleur survit à un changement de modèle.
+    """
+
+    def __init__(self, dossiers: DossierRepository, clock: Clock) -> None:
+        self._dossiers = dossiers
+        self._clock = clock
+
+    async def execute(self, user_id: UUID, dossier_id: UUID, primary_color: str | None) -> Dossier:
+        """Raises `DossierNotFoundError`."""
+        dossier = await _owned(self._dossiers, dossier_id, user_id)
+        updated = dossier.with_primary_color(primary_color, now=self._clock.now())
+        if updated is dossier:
+            return dossier
+        await self._dossiers.save(updated)
+        logger.info(
+            "applications.color_changed",
+            dossier_id=str(dossier_id),
+            primary_color=primary_color,
+        )
+        return updated
+
+
 class DraftLetter:
     """La première ébauche de la lettre, par Karria. Remplace la lettre existante."""
 

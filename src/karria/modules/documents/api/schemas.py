@@ -10,8 +10,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from karria.modules.documents.domain.palette import parse_hex_color
 from karria.modules.documents.domain.sends import MAX_DOCUMENTS_PER_SEND, DocumentSend
 from karria.modules.documents.domain.templates import (
     FORMATS,
@@ -24,6 +25,11 @@ from karria.modules.documents.domain.templates import (
     gallery_traits,
 )
 from karria.shared.storage import Bucket, ObjectStorage
+
+
+def _normalized_color(value: str | None) -> str | None:
+    """`#1a2b3c`, `1a2b3c` → `#1A2B3C` ; `None` reste `None` ; sinon `422`."""
+    return None if value is None else parse_hex_color(value)
 
 
 class AtsReadiness(BaseModel):
@@ -174,6 +180,12 @@ class SelectRequest(BaseModel):
 
     template_id: UUID
     ats_safe: bool = False
+    primary_color: str | None = Field(
+        default=None,
+        description="La couleur principale choisie (`#rrggbb`) ; `null` : celle du modèle (ADR-0034).",
+    )
+
+    _color = field_validator("primary_color")(_normalized_color)
 
 
 class SelectionRead(BaseModel):
@@ -182,6 +194,12 @@ class SelectionRead(BaseModel):
     template: TemplateRef
     ats_safe: bool
     updated_at: datetime
+    primary_color: str | None = Field(
+        default=None, description="La couleur posée par la personne, ou `null`."
+    )
+    default_primary_color: str | None = Field(
+        default=None, description="La couleur d'origine du modèle choisi (mesurée)."
+    )
 
     @classmethod
     def present(cls, selection: Selection, template: Template | None) -> SelectionRead:
@@ -193,6 +211,8 @@ class SelectionRead(BaseModel):
             ),
             ats_safe=selection.ats_safe,
             updated_at=selection.updated_at,
+            primary_color=selection.primary_color,
+            default_primary_color=template.primary_color if template else None,
         )
 
 
@@ -242,6 +262,15 @@ class ExportRequest(BaseModel):
             "même forme et mêmes bornes que le rendu ancré). Absent : le CV de la personne."
         ),
     )
+    primary_color: str | None = Field(
+        default=None,
+        description=(
+            "La couleur principale choisie (`#rrggbb`), appliquée après la variante ATS ; "
+            "`null` : celle du modèle (ou du choix, sans `template_id`). ADR-0034."
+        ),
+    )
+
+    _color = field_validator("primary_color")(_normalized_color)
 
 
 # ---------------------------------------------------------------------- atelier (ADR-0029)
@@ -370,6 +399,12 @@ class RenderRequest(BaseModel):
     cv: CvBody | None = None
     letter: LetterBody | None = None
     ats_safe: bool = False
+    primary_color: str | None = Field(
+        default=None,
+        description="La couleur principale choisie (`#rrggbb`) ; `null` : celle du modèle (ADR-0034).",
+    )
+
+    _color = field_validator("primary_color")(_normalized_color)
 
 
 class RenderRead(BaseModel):
@@ -397,6 +432,12 @@ class LetterExportRequest(BaseModel):
     letter: LetterBody
     formats: list[str] | None = None
     dossier_id: UUID | None = None
+    primary_color: str | None = Field(
+        default=None,
+        description="La couleur principale du dossier, pour que la lettre suive le CV.",
+    )
+
+    _color = field_validator("primary_color")(_normalized_color)
 
 
 # ---------------------------------------------------------------------- envoi (ADR-0031)
@@ -450,6 +491,9 @@ class GeneratedCvRead(BaseModel):
     )
     template: TemplateRef
     ats_safe: bool
+    primary_color: str | None = Field(
+        default=None, description="La couleur principale du rendu, si la personne en a posé une."
+    )
     offer_id: UUID | None
     created_at: datetime
     pdf_url: str | None
@@ -484,6 +528,7 @@ class GeneratedCvRead(BaseModel):
                 version=generated.template_version,
             ),
             ats_safe=generated.ats_safe,
+            primary_color=generated.primary_color,
             offer_id=generated.offer_id,
             created_at=generated.created_at,
             pdf_url=await sign(generated.pdf_key, "pdf"),

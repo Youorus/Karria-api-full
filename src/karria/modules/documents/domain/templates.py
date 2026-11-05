@@ -149,6 +149,9 @@ class Selection:
     template_id: UUID
     ats_safe: bool
     updated_at: datetime
+    #: La couleur principale posée par la personne (`#RRGGBB`) ; `None` :
+    #: celle du modèle (ADR-0034).
+    primary_color: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +194,9 @@ class GeneratedCv:
     dossier_id: UUID | None = None
     #: L'entreprise destinataire d'une lettre (nom du fichier) ; vide pour un CV.
     company_name: str = ""
+    #: La couleur principale avec laquelle l'export a été rendu, si la personne
+    #: en a posé une (`#RRGGBB`) ; `None` : la couleur du modèle (ADR-0034).
+    primary_color: str | None = None
 
     @staticmethod
     def new_id() -> UUID:

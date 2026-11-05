@@ -9,11 +9,12 @@ rendu, les exports et l'envoi.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from karria.modules.applications.application import LogoUrl
 from karria.modules.applications.domain import (
@@ -140,6 +141,10 @@ class DossierRead(BaseModel):
     id: UUID
     offer: OfferSnapshotRead
     template_id: UUID | None
+    primary_color: str | None = Field(
+        default=None,
+        description="La couleur principale posée par la personne (`#RRGGBB`) ; `null` : celle du modèle.",
+    )
     cv: dict[str, Any] = Field(
         description="La copie adaptée du CV, au format `GET /cv/me` (sans `image_url` ni `id`)."
     )
@@ -168,6 +173,7 @@ class DossierRead(BaseModel):
             id=dossier.id,
             offer=OfferSnapshotRead.present(dossier.offer, logo_url),
             template_id=dossier.template_id,
+            primary_color=dossier.primary_color,
             cv=dossier.cv,
             cv_base_hash=dossier.cv_base_hash,
             base_changed=base_changed,
@@ -205,6 +211,7 @@ class DossierCardRead(BaseModel):
     id: UUID
     offer: OfferCardRead
     template_id: UUID | None
+    primary_color: str | None = None
     status: DossierStatus
     adaptation: AdaptationState
     coverage_ratio: float
@@ -229,6 +236,7 @@ class DossierCardRead(BaseModel):
                 source_url=offer.source_url,
             ),
             template_id=dossier.template_id,
+            primary_color=dossier.primary_color,
             status=dossier.status,
             adaptation=dossier.adaptation,
             coverage_ratio=dossier.coverage.ratio,
@@ -286,6 +294,34 @@ class TemplateChangeRequest(BaseModel):
     template_id: UUID | None = Field(
         description="Le modèle (gratuit ou possédé) ; `null` : le modèle choisi de la personne."
     )
+
+
+_HEX_COLOR = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+
+
+class ColorChangeRequest(BaseModel):
+    """La couleur principale du dossier, changée depuis l'atelier (ADR-0034)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    primary_color: str | None = Field(
+        description="`#rrggbb` (ou `rrggbb`) ; `null` : la couleur du modèle."
+    )
+
+    @field_validator("primary_color")
+    @classmethod
+    def _normalized(cls, value: str | None) -> str | None:
+        """`#1a2b3c` → `#1A2B3C`, la forme que `documents` écrit dans ses spécifications."""
+        if value is None:
+            return None
+        match = _HEX_COLOR.match(value.strip())
+        if match is None:
+            msg = "Un code couleur s'écrit #rrggbb."
+            raise ValueError(msg)
+        digits = match.group(1)
+        if len(digits) == 3:  # noqa: PLR2004 - forme courte
+            digits = "".join(c * 2 for c in digits)
+        return f"#{digits.upper()}"
 
 
 class LetterWriteRequest(LetterShape):

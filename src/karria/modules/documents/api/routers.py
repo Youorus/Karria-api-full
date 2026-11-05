@@ -288,7 +288,10 @@ async def select_template(
     templates: TemplatesDep,
 ) -> SelectionRead:
     selection = await use_case.execute(
-        principal.subject_id, body.template_id, ats_safe=body.ats_safe
+        principal.subject_id,
+        body.template_id,
+        ats_safe=body.ats_safe,
+        primary_color=body.primary_color,
     )
     return SelectionRead.present(selection, await templates.get(selection.template_id))
 
@@ -324,6 +327,7 @@ async def export_cv(
         offer_id=body.offer_id,
         dossier_id=body.dossier_id,
         cv=body.cv.model_dump(mode="json") if body.cv else None,
+        primary_color=body.primary_color,
     )
     return await GeneratedCvRead.present(generated, storage)
 
@@ -420,6 +424,7 @@ async def render_document(
         letter=body.letter.model_dump(mode="json") if body and body.letter else None,
         sample=sample,
         ats_safe=bool(body and body.ats_safe),
+        primary_color=body.primary_color if body else None,
     )
     return RenderRead(html=rendered.html, pages=rendered.pages, warnings=list(rendered.warnings))
 
@@ -452,6 +457,7 @@ async def export_letter(
         letter=body.letter.model_dump(mode="json"),
         formats=body.formats,
         dossier_id=body.dossier_id,
+        primary_color=body.primary_color,
     )
     return await GeneratedCvRead.present(generated, storage)
 

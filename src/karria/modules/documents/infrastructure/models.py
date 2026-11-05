@@ -93,6 +93,9 @@ class SelectionModel(BaseDBModel):
     user_id: UUID = fields.UUIDField(unique=True)
     template_id: UUID = fields.UUIDField()
     ats_safe = fields.BooleanField(default=False)
+    primary_color = fields.CharField(
+        max_length=7, null=True, description="Couleur principale choisie (#RRGGBB), ou NULL."
+    )
 
     class Meta:
         table = "documents_selections"
@@ -122,6 +125,9 @@ class GeneratedCvModel(BaseDBModel):
     )
     company_name = fields.CharField(
         max_length=200, default="", description="Entreprise destinataire d'une lettre."
+    )
+    primary_color = fields.CharField(
+        max_length=7, null=True, description="Couleur principale du rendu (#RRGGBB), ou NULL."
     )
 
     class Meta:

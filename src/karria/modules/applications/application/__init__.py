@@ -17,6 +17,7 @@ from karria.modules.applications.application.ports import (
 from karria.modules.applications.application.use_cases import (
     ADAPTATION_INLINE_SECONDS,
     AdaptCv,
+    ChangeDossierColor,
     ChangeDossierTemplate,
     CreateDossierFromOffer,
     CreationResult,
@@ -42,6 +43,7 @@ __all__ = [
     "AdaptCv",
     "BaseCv",
     "BaseCvReader",
+    "ChangeDossierColor",
     "ChangeDossierTemplate",
     "CreateDossierFromOffer",
     "CreationResult",

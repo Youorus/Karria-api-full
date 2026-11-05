@@ -202,11 +202,16 @@ class TortoiseUserTemplateRepository:
             template_id=row.template_id,
             ats_safe=row.ats_safe,
             updated_at=row.updated_at,
+            primary_color=row.primary_color,
         )
 
     async def save_selection(self, selection: Selection) -> None:
         await SelectionModel.update_or_create(
-            defaults={"template_id": selection.template_id, "ats_safe": selection.ats_safe},
+            defaults={
+                "template_id": selection.template_id,
+                "ats_safe": selection.ats_safe,
+                "primary_color": selection.primary_color,
+            },
             user_id=selection.user_id,
         )
 
@@ -242,6 +247,7 @@ def _generated(row: GeneratedCvModel) -> GeneratedCv:
         kind=DocumentKind(row.kind or "cv"),
         dossier_id=row.dossier_id,
         company_name=row.company_name or "",
+        primary_color=row.primary_color,
     )
 
 
@@ -269,6 +275,7 @@ class TortoiseGeneratedCvRepository:
             kind=generated.kind.value,
             dossier_id=generated.dossier_id,
             company_name=generated.company_name,
+            primary_color=generated.primary_color,
         )
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:

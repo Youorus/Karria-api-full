@@ -121,3 +121,21 @@ class TestExportLettre:
             await _export(env).execute(
                 env.user, template_id=template.id, letter=LETTER, formats=["odt"], dossier_id=None
             )
+
+
+class TestCouleurDeLaLettre:
+    async def test_la_lettre_suit_la_couleur_du_dossier(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+
+        generated = await _export(env).execute(
+            env.user,
+            template_id=template.id,
+            letter=LETTER,
+            formats=["pdf"],
+            dossier_id=None,
+            primary_color="#7B1E2B",
+        )
+
+        assert generated.primary_color == "#7B1E2B"
+        [call] = env.engine.called("render_pdf")
+        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"

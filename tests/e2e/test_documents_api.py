@@ -618,3 +618,32 @@ class TestAdministration:
         assert body[1]["status"] == "failed"
         assert body[1]["error"] == "aucune rubrique"
         assert body[1]["signed_sample_render_url"] is None
+
+
+class TestCouleurDuChoix:
+    async def test_le_choix_porte_la_couleur_et_celle_d_origine_du_modele(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        template, _ = fakes.templates.publish()
+        fakes.templates.templates[template.id] = replace(template, primary_color="#1A5276")
+
+        chosen = await client.put(
+            f"{API}/user-templates/me/selected",
+            json={"template_id": str(template.id), "primary_color": "#7b1e2b"},
+        )
+        read = await client.get(f"{API}/user-templates/me/selected")
+
+        assert chosen.status_code == 200, chosen.text
+        assert chosen.json()["primary_color"] == "#7B1E2B"
+        assert chosen.json()["default_primary_color"] == "#1A5276"
+        assert read.json() == chosen.json()
+
+        reset = await client.put(
+            f"{API}/user-templates/me/selected", json={"template_id": str(template.id)}
+        )
+        assert reset.json()["primary_color"] is None
+        bad = await client.put(
+            f"{API}/user-templates/me/selected",
+            json={"template_id": str(template.id), "primary_color": "rouge"},
+        )
+        assert bad.status_code == 422

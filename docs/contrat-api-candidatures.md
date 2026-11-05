@@ -45,6 +45,7 @@ sont limitées à **30 appels par 10 minutes et par compte** (`429 ai_rate_limit
     "published_at": "2026-11-01T00:00:00Z"
   },
   "template_id": null, // le modèle de CV choisi, ou null
+  "primary_color": null, // la couleur principale posée par la personne (#RRGGBB), ou null (ADR-0034)
   "cv": {
     /* la copie adaptée, au format GET /cv/me, SANS image_url ni id */
   },
@@ -140,6 +141,7 @@ avec le nom du CV. Même forme que ce que `documents` met en page (ADR-0030).
   "id": "9a4b…",
   "offer": { "offer_id": "…", "title": "…", "company": "…", "logo_url": "…", "city": "…", "contract_label": "CDI", "source_url": "…" },
   "template_id": null,
+  "primary_color": null,
   "status": "candidate",
   "adaptation": "faite",
   "coverage_ratio": 0.75,
@@ -210,6 +212,18 @@ CV adapté, les propositions et leur état, la lettre, la couverture restent
 tels quels ; seul `updated_at` bouge. Idempotent : le même modèle redemandé ne
 réécrit rien. `null` : le dossier suit de nouveau le modèle choisi de la
 personne (`GET /user-templates/me/selected`).
+
+### `PUT /applications/{id}/color` → `200 Dossier`
+
+**2026-11-05, ADR-0034.** Corps `{ "primary_color": "#rrggbb" | null }` (`rrggbb` et
+`#rgb` acceptés, rendu en `#RRGGBB`). La couleur principale du CV du dossier, posée par
+la personne depuis la feuille « Couleur » de l'atelier, à tout moment. `null` : la couleur
+du modèle. **Elle survit au changement de modèle** (`PUT /{id}/template` ne la touche
+pas) : un choix de la personne n'est pas un attribut du modèle. Rien d'autre ne change ;
+idempotent ; `404 dossier_not_found` ; `422` sur un code qui n'est pas `#rrggbb`. L'app
+envoie cette couleur dans `primary_color` du rendu (`POST /documents/{id}/render`) et des
+exports (CV et lettre) du dossier. Le dossier (`Dossier`) et la carte (`CarteDossier`)
+portent **`primary_color`** (`#RRGGBB` ou `null`).
 
 ### `POST /applications/{id}/propositions/{pid}` → `200 Dossier`
 

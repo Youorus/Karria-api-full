@@ -190,3 +190,43 @@ class TestLettre:
         await _atelier(env).execute(env.user, template.id, cv=CV_DATA, letter=LETTER)
         assert env.engine.called("render_html")[0]["view"]["kind"] == "letter"
         assert replace(template, label="x").label == "x"
+
+
+class TestCouleurPrincipale:
+    """ADR-0034 : la couleur choisie remplace celle du modèle avant le rendu."""
+
+    async def test_la_couleur_choisie_recolore_la_specification_rendue(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+
+        await _atelier(env).execute(env.user, template.id, cv=CV_DATA, primary_color="#7B1E2B")
+
+        [call] = env.engine.called("render_html")
+        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert call["spec"]["styles"]["name"]["color"] != "#7B1E2B", "le nom n'est pas en bleu"
+
+    async def test_sans_couleur_ou_avec_celle_d_origine_la_specification_est_celle_du_modele(
+        self, env: Env
+    ) -> None:
+        template, version = env.templates.publish()
+
+        await _atelier(env).execute(env.user, template.id, cv=CV_DATA)
+        await _atelier(env).execute(env.user, template.id, cv=CV_DATA, primary_color="#1a5276")
+
+        for call in env.engine.called("render_html"):
+            assert call["spec"] == version.spec
+
+    async def test_la_couleur_s_applique_apres_la_variante_ats_et_a_la_lettre(
+        self, env: Env
+    ) -> None:
+        template, _ = env.templates.publish(spec=make_spec(spaced=True))
+
+        await _atelier(env).execute(
+            env.user, template.id, cv=CV_DATA, ats_safe=True, primary_color="#2E7D32"
+        )
+        await _atelier(env).execute(env.user, template.id, letter=LETTER, primary_color="#2E7D32")
+
+        cv_call, letter_call = env.engine.called("render_html")
+        title = cv_call["spec"]["styles"]["section_title"]
+        assert title["color"] == "#2E7D32"
+        assert title["letter_spacing_pt"] < 2.0, "l'interlettrage plafonné reste plafonné"
+        assert letter_call["spec"]["styles"]["section_title"]["color"] == "#2E7D32"

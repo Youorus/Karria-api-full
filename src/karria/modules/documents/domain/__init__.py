@@ -21,6 +21,11 @@ from karria.modules.documents.domain.errors import (
 )
 from karria.modules.documents.domain.gate import Fidelity, GateDecision, evaluate
 from karria.modules.documents.domain.letter import from_letter, letter_warnings
+from karria.modules.documents.domain.palette import (
+    parse_hex_color,
+    primary_color_of,
+    recolor_spec,
+)
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
     DocumentSend,
@@ -90,4 +95,7 @@ __all__ = [
     "from_letter",
     "letter_warnings",
     "normalize_address",
+    "parse_hex_color",
+    "primary_color_of",
+    "recolor_spec",
 ]

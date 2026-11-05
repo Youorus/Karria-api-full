@@ -388,3 +388,14 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
   `ai_consent.required: false`.
 - **Retour arrière côté produit sans redéploiement** : l'app cesse d'envoyer
   `ai_disclosure_version` ; le serveur ne consigne plus rien, la feuille revient.
+
+## Couleur principale d'un CV (ADR-0034)
+
+- **Migration 20** (`couleur_principale` : colonne `primary_color` VARCHAR(7) NULL sur
+  `documents_selections`, `documents_generated_cvs` et `applications_dossiers`) :
+  `aerich upgrade` dans un conteneur ponctuel, **avant** le code (sans les colonnes,
+  `GET /applications` et `GET /user-templates/me/selected` répondent 500).
+- Aucune variable nouvelle.
+- **Vérifier** : `PUT /user-templates/me/selected` `{ "template_id": "…", "primary_color":
+  "#7b1e2b" }` → `primary_color: "#7B1E2B"` et `default_primary_color` ; un
+  `POST /documents/{id}/render` avec `primary_color` rend des titres de cette couleur.
