@@ -40,6 +40,18 @@ appliquée en prod **avant** le code via un conteneur ponctuel avec le fichier m
 imbriqués : la feuille d'information s'ouvre au-dessus de celle de connexion) ; décider,
 après relecture App Store, si l'on garde l'envoi de `ai_disclosure_version`.
 
+### Session du 2026-11-05 (matin) — Google Sign-In Android : audience du client web Firebase (coordinateur) — EN PRODUCTION
+
+Marc a rappelé que la V1 (`~/Documents/HelloWorkk/karria`) avait Google, push et Firebase en marche
+sur Android. Repris : l'app Android passe à Google le client **web du projet Firebase**
+(`karria-notifications-push`, celui qui contient le client Android OAuth avec l'empreinte SHA-1 du
+keystore), pas le client web du projet iOS. Nouveau réglage **`SOCIAL__GOOGLE_ANDROID_WEB_CLIENT_ID`**
+ajouté aux audiences (`settings.py`, test, `.env.example`), commit `6122afe`, variable posée dans
+`/root/karria-api.env` et dans Dokploy (script `ajout_env.py`, redéploiement). Côté app : commit
+`5a879fb` (fichiers Firebase client, `EXPO_PUBLIC_GOOGLE_ANDROID_WEB_CLIENT_ID`, profils EAS) ;
+keystore V1 dans `~/.karria/android/`. Reste à Marc : message UMP AdMob pour Android, confirmer les
+identifiants distants EAS, puis un vrai Android pour vérifier connexion Google et push.
+
 ### Session du 2026-11-05 — atelier CV : rendu HTML ancré, lettres, envoi par e-mail, gabarits d'e-mail, version minimale de l'app (Fable) — EN PRODUCTION
 
 **Demande de Marc** : les briques « documents » et « e-mail » de `docs/atelier-cv-feuille-de-route.md`
