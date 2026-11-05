@@ -175,6 +175,8 @@ qui **compte une impression**, sans jamais gêner le geste en cours. Les abonné
 | Finaliser | une annonce sous le score ATS, et une pendant la génération du PDF/DOCX | temps d'attente naturel |
 | Photo | une annonce pendant la génération des rendus (30–60 s) | temps d'attente naturel |
 | Galerie de mes CV / mes photos | une carte annonce dans la liste | même rythme que la liste |
+| **Mes CV** (app, 2026-11-05) | `mes_cv` : une carte dans la liste **après la deuxième** (la liste est courte, la troisième place est encore à l'écran) ; `mes_cv_vide` : une carte **sous l'invitation** de l'état vide, au milieu de l'écran | même rythme que les cartes ; le bouton bleu « Nouveau CV » est en pied flottant, l'annonce ne le touche jamais |
+| **Finaliser, documents prêts** (app, 2026-11-05) | `finaliser_score` : une carte **sous le score ATS et ses points, au-dessus des documents** — en plus de `finaliser` pendant la génération (deux objets, deux impressions) | le score vient d'être lu, la personne respire avant de télécharger ; « Envoyer par e-mail » reste en pied flottant, hors du défilement |
 
 Règles : une seule annonce visible à la fois, jamais au-dessus d'un bouton principal,
 jamais dans les 2 secondes qui suivent un toucher (pas de clic accidentel, exigé par
