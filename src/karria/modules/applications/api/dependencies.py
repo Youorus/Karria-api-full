@@ -21,6 +21,7 @@ from karria.modules.applications.application import (
     AdaptCv,
     BaseCv,
     BaseCvReader,
+    ChangeDossierTemplate,
     CreateDossierFromOffer,
     CvAdapter,
     CvValidator,
@@ -274,6 +275,13 @@ def get_update_dossier_cv(
     return UpdateDossierCv(dossiers, validator, clock)
 
 
+def get_change_template(
+    dossiers: DossiersDep, templates: TemplateCheckerDep, clock: ClockDep
+) -> ChangeDossierTemplate:
+    """Changer le modèle de CV du dossier, sous la même porte qu'à l'ouverture."""
+    return ChangeDossierTemplate(dossiers, templates, clock)
+
+
 def get_draft_letter(
     dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep
 ) -> DraftLetter:
@@ -307,6 +315,7 @@ ListDossiersDep = Annotated[ListDossiers, Depends(get_list_dossiers)]
 DeleteDossierDep = Annotated[DeleteDossier, Depends(get_delete_dossier)]
 DecidePropositionDep = Annotated[DecideProposition, Depends(get_decide_proposition)]
 UpdateDossierCvDep = Annotated[UpdateDossierCv, Depends(get_update_dossier_cv)]
+ChangeTemplateDep = Annotated[ChangeDossierTemplate, Depends(get_change_template)]
 DraftLetterDep = Annotated[DraftLetter, Depends(get_draft_letter)]
 UpdateLetterDep = Annotated[UpdateLetter, Depends(get_update_letter)]
 RegenerateParagraphDep = Annotated[RegenerateParagraph, Depends(get_regenerate_paragraph)]

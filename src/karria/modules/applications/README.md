@@ -41,6 +41,10 @@
   écrasée : les propositions se rejouent sur l'état courant.
 - **Un dossier par offre.** Redemander rend l'existant (`200`), sans relancer.
   Repartir du CV de base = supprimer, puis recréer.
+- **Le modèle de CV se change à tout moment** (`PUT /{id}/template`,
+  `ChangeDossierTemplate`), même pendant l'adaptation, sous la même porte qu'à
+  l'ouverture (`TemplateChecker`) ; rien d'autre ne bouge que `template_id` et
+  `updated_at` — la mise en page n'est pas le fond (ADR-0033 § 2026-11-05).
 - **`updated_at` est celui du domaine**, pas celui de l'ORM : le dépôt écrit
   par `update()` et remet les horodatages après `create()`. Le cas d'usage s'en
   sert pour savoir si la personne a touché le dossier pendant l'adaptation.

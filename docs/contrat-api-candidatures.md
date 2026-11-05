@@ -155,7 +155,8 @@ avec le nom du CV. Même forme que ce que `documents` met en page (ADR-0030).
 
 ### `POST /applications` → `201 Dossier` (ou `200`)
 
-Corps `{ "offer_id": "<uuid>", "template_id": "<uuid>" | null }`. Copie le CV de
+Corps `{ "offer_id": "<uuid>", "template_id": "<uuid>" | null }` (le modèle se
+change ensuite par `PUT /{id}/template`). Copie le CV de
 base, fige l'offre, lance l'adaptation. Si le modèle répond en moins de dix
 secondes, le dossier arrive `adaptation: faite` avec ses propositions ; sinon
 `en_cours`, et l'app relit `GET /{id}` (toutes les 2 s, par exemple) jusqu'à
@@ -198,6 +199,18 @@ revalidé par la forme d'un CV (`422 cv_invalid` avec `details.fields:
 leur état ; accepter ou revenir s'applique toujours à l'élément visé s'il
 existe encore. `409 adaptation_in_progress` tant que Karria travaille.
 
+### `PUT /applications/{id}/template` → `200 Dossier`
+
+Corps `{ "template_id": "<uuid>" | null }`. Le modèle de CV du dossier change
+**à tout moment**, même pendant l'adaptation — c'est ce que la feuille « Avec
+quel modèle ? » de l'atelier appelle à chaque choix. Même vérification qu'à
+l'ouverture : `403 template_locked` (`details.template_id`) pour un modèle
+Premium non possédé ; `404 dossier_not_found`. **Rien d'autre ne change** : le
+CV adapté, les propositions et leur état, la lettre, la couverture restent
+tels quels ; seul `updated_at` bouge. Idempotent : le même modèle redemandé ne
+réécrit rien. `null` : le dossier suit de nouveau le modèle choisi de la
+personne (`GET /user-templates/me/selected`).
+
 ### `POST /applications/{id}/propositions/{pid}` → `200 Dossier`
 
 Corps `{ "decision": "accepter" | "refuser" | "revenir" }`. `accepter` applique
@@ -239,7 +252,7 @@ Retour à `brouillon` ou `pret` ; le fil retire `applied`. Idempotent.
 |---|---|---|
 | 401 | `unauthenticated` / `session_expired` | sans session, ou jeton périmé |
 | 403 | `ai_consent_required` | créer, relancer, ébaucher, réécrire sans accord à l'IA |
-| 403 | `template_locked` | modèle Premium non possédé |
+| 403 | `template_locked` | modèle Premium non possédé (ouverture, ou `PUT /{id}/template`) |
 | 404 | `dossier_not_found`, `offer_not_found`, `proposition_not_found`, `letter_missing`, `paragraph_not_found` | |
 | 409 | `cv_missing` | pas de CV de base |
 | 409 | `adaptation_in_progress` | retoucher ou ébaucher pendant l'adaptation |

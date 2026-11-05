@@ -98,3 +98,34 @@ le CV de base n'est pas touché.
   (par défaut Gemini, comme les autres).
 - Le consentement à l'IA est à redonner par tout le monde (nouvel usage).
 - Contrat pour l'app : `docs/contrat-api-candidatures.md`.
+
+## 2026-11-05 — le modèle de CV du dossier se change à tout moment (`PUT /{id}/template`)
+
+**Le problème.** `template_id` n'était accepté qu'à l'ouverture du dossier.
+Dans l'app, la feuille « Avec quel modèle ? » ne s'ouvrait donc qu'une fois ;
+ensuite, le modèle retenu localement partait dans le brouillon de l'atelier et
+dans « le modèle choisi de la personne » (`/user-templates/me/selected`), mais
+le dossier, lui, gardait `null` — et deux appareils, ou la lettre et Finaliser,
+pouvaient ne pas lire le même modèle. Marc : « l'utilisateur doit pouvoir
+passer d'un modèle à l'autre pour voir les différences, sans perdre ce qui
+est déjà inscrit ».
+
+**La décision.** Une route dédiée, **`PUT /applications/{id}/template`**, corps
+`{ "template_id": "<uuid>" | null }`, servie par le cas d'usage
+`ChangeDossierTemplate`, sous **la même porte qu'à l'ouverture** : le port
+`TemplateChecker` (← `documents`, gratuit ou possédé), `403 template_locked`
+sinon. Elle ne touche **que** `template_id` et `updated_at` : le CV adapté, les
+propositions et leur état, la lettre, la couverture restent tels quels —
+changer de modèle change la mise en page, jamais le fond. Elle est permise
+**pendant l'adaptation** (elle n'entre pas en conflit avec les propositions :
+l'adaptation se rejoue sur l'état courant par `save_if_unchanged`, et le
+modèle n'est pas un chemin du CV). Idempotente : le même modèle redemandé ne
+réécrit rien. `null` rend la main au modèle choisi de la personne.
+
+**Ce qu'on a écarté.** Accepter `template_id` dans `PUT /{id}/cv` : la retouche
+du CV est refusée pendant l'adaptation et bornée à 256 Kio, le modèle n'a pas
+à attendre ni à peser ; mêler les deux aurait aussi rendu la vérification
+« possédé ? » dépendante d'un envoi de CV. Ne rien changer et lire toujours
+`/user-templates/me/selected` : un seul modèle pour tous les dossiers, alors
+qu'une candidature sobre et une autre créative sont justement le cas d'usage.
+

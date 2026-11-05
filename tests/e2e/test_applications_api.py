@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -180,6 +181,91 @@ class TestLectureEtListe:
 
         assert (await client.get(f"{API}/{dossier['id']}")).status_code == 404
         assert (await client.get(API)).json()["items"] == []
+
+
+class TestModele:
+    async def test_changer_de_modele_a_tout_moment_sans_rien_perdre(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        assert dossier["template_id"] is None
+        first, second = uuid4(), uuid4()
+        applications_env.clock.advance(timedelta(minutes=1))
+
+        changed = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(first)}
+        )
+        assert changed.status_code == 200, changed.text
+        body = changed.json()
+        assert body["template_id"] == str(first)
+        assert body["cv"] == dossier["cv"]
+        assert body["propositions"] == dossier["propositions"]
+        assert body["coverage"] == dossier["coverage"]
+        assert body["updated_at"] > dossier["updated_at"]
+
+        again = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(second)}
+        )
+        assert again.json()["template_id"] == str(second)
+        assert again.json()["cv"] == dossier["cv"]
+
+        detail = await client.get(f"{API}/{dossier['id']}")
+        assert detail.json()["template_id"] == str(second)
+        cards = (await client.get(API)).json()["items"]
+        assert cards[0]["template_id"] == str(second)
+
+        reset = await client.put(f"{API}/{dossier['id']}/template", json={"template_id": None})
+        assert reset.status_code == 200
+        assert reset.json()["template_id"] is None
+
+    async def test_un_modele_premium_non_possede_est_refuse(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        locked = uuid4()
+        applications_env.templates.locked.add(locked)
+
+        refused = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(locked)}
+        )
+
+        assert refused.status_code == 403
+        error = refused.json()["error"]
+        assert error["details"]["reason"] == "template_locked"
+        assert error["details"]["template_id"] == str(locked)
+        assert (await client.get(f"{API}/{dossier['id']}")).json()["template_id"] is None
+
+    async def test_dossier_inconnu_corps_incomplet_et_autre_personne(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+
+        missing = await client.put(f"{API}/{uuid4()}/template", json={"template_id": None})
+        assert missing.status_code == 404
+        assert missing.json()["error"]["details"]["reason"] == "dossier_not_found"
+
+        assert (await client.put(f"{API}/{dossier['id']}/template", json={})).status_code == 422
+
+        authenticate(uuid4())
+        other = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(uuid4())}
+        )
+        assert other.status_code == 404
 
 
 class TestAtelier:

@@ -23,6 +23,7 @@ from doubles import (
 )
 from karria.modules.applications.application import (
     AdaptCv,
+    ChangeDossierTemplate,
     CreateDossierFromOffer,
     DecideProposition,
     DeleteDossier,
@@ -51,6 +52,7 @@ from karria.modules.applications.domain import (
     DossierConflictError,
     DossierNotFoundError,
     DossierStatus,
+    Letter,
     LetterInvalidError,
     LetterMissingError,
     ModelOutputInvalidError,
@@ -333,6 +335,57 @@ class TestPropositionsEtCv:
             )
         with pytest.raises(AdaptationInProgressError):
             await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, pending.id)
+
+
+class TestModele:
+    async def test_changer_de_modele_garde_tout_le_reste(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        lettered = dossier.with_letter(Letter.validated(sample_letter_json()), now=env.clock.now())
+        await env.dossiers.save(lettered)
+        change = ChangeDossierTemplate(env.dossiers, env.templates, env.clock)
+        template = uuid4()
+        env.clock.advance(timedelta(minutes=1))
+
+        changed = await change.execute(user, dossier.id, template)
+
+        assert changed.template_id == template
+        assert changed.cv == lettered.cv
+        assert changed.propositions == lettered.propositions
+        assert changed.letter == lettered.letter
+        assert changed.updated_at > lettered.updated_at
+        assert env.dossiers.rows[dossier.id] == changed
+        # Un second changement, puis le retour au modèle choisi : rien d'autre ne bouge.
+        other = await change.execute(user, dossier.id, uuid4())
+        assert other.cv == lettered.cv
+        reset = await change.execute(user, dossier.id, None)
+        assert reset.template_id is None
+        assert reset.letter == lettered.letter
+
+    async def test_le_meme_modele_redemande_ne_reecrit_pas(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        change = ChangeDossierTemplate(env.dossiers, env.templates, env.clock)
+        template = uuid4()
+        once = await change.execute(user, dossier.id, template)
+        env.clock.advance(timedelta(minutes=1))
+
+        again = await change.execute(user, dossier.id, template)
+
+        assert again.updated_at == once.updated_at
+
+    async def test_un_modele_verrouille_ou_un_dossier_inconnu(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        change = ChangeDossierTemplate(env.dossiers, env.templates, env.clock)
+        locked = uuid4()
+        env.templates.locked.add(locked)
+
+        with pytest.raises(TemplateLockedError):
+            await change.execute(user, dossier.id, locked)
+        assert env.dossiers.rows[dossier.id].template_id is None
+        with pytest.raises(DossierNotFoundError):
+            await change.execute(uuid4(), dossier.id, None)
 
 
 class TestLettre:

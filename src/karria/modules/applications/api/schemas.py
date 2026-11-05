@@ -278,6 +278,16 @@ class CvUpdateRequest(BaseModel):
     cv: dict[str, Any] = Field(description="Au format `GET /cv/me` ; revalidé par le serveur.")
 
 
+class TemplateChangeRequest(BaseModel):
+    """Le modèle de CV du dossier, changé à tout moment depuis l'atelier."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: UUID | None = Field(
+        description="Le modèle (gratuit ou possédé) ; `null` : le modèle choisi de la personne."
+    )
+
+
 class LetterWriteRequest(LetterShape):
     """La lettre entière, éditée à la main. Même forme que `LetterRead`."""
 

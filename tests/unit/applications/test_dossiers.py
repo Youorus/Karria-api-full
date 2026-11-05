@@ -217,6 +217,23 @@ class TestCvEtLettre:
             lettered.with_paragraph(1, "Nouveau", now=LATER).letter.paragraphs[1].text == "Nouveau"
         )  # type: ignore[union-attr]
 
+    def test_changer_de_modele_ne_touche_que_le_modele(self) -> None:
+        dossier = adapted_dossier().with_letter(Letter.validated(sample_letter_json()), now=LATER)
+        template = uuid4()
+
+        changed = dossier.with_template(template, now=LATER + timedelta(minutes=1))
+
+        assert changed.template_id == template
+        assert changed.updated_at == LATER + timedelta(minutes=1)
+        assert changed.cv == dossier.cv
+        assert changed.propositions == dossier.propositions
+        assert changed.letter == dossier.letter
+        assert changed.coverage == dossier.coverage
+        # Idempotent : le même modèle redemandé ne bouge pas `updated_at`.
+        assert changed.with_template(template, now=LATER + timedelta(hours=1)) is changed
+        # `None` rend la main au modèle choisi de la personne.
+        assert changed.with_template(None, now=LATER).template_id is None
+
 
 class TestCandidature:
     def test_candidater_puis_revenir(self) -> None:

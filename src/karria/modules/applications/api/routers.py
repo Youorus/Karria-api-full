@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 
 from karria.modules.applications.api.dependencies import (
     AiPrincipalDep,
+    ChangeTemplateDep,
     CreateDossierDep,
     DecidePropositionDep,
     DeleteDossierDep,
@@ -39,6 +40,7 @@ from karria.modules.applications.api.schemas import (
     DossierRead,
     LetterWriteRequest,
     RegenerateRequest,
+    TemplateChangeRequest,
 )
 from karria.modules.applications.domain import Dossier
 from karria.shared.auth import CurrentPrincipalDep, require_authentication
@@ -184,6 +186,30 @@ async def update_cv(
     visé s'il existe encore.
     """
     return _present(await update.execute(principal.subject_id, dossier_id, body.cv), logo_url)
+
+
+@router.put(
+    "/{dossier_id}/template",
+    summary="Changer le modèle de CV du dossier",
+    response_model=DossierRead,
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.NOT_FOUND),
+)
+async def change_template(
+    dossier_id: UUID,
+    body: TemplateChangeRequest,
+    principal: CurrentPrincipalDep,
+    change: ChangeTemplateDep,
+    logo_url: LogoUrlDep,
+) -> DossierRead:
+    """Corps `{ "template_id": "<uuid>" | null }` ; à tout moment, même pendant l'adaptation.
+
+    Même porte qu'à l'ouverture : `403 template_locked` (`details.template_id`)
+    pour un modèle Premium non possédé ; `404 dossier_not_found`. Rien d'autre
+    ne change : le CV adapté, les propositions et la lettre restent tels quels.
+    Idempotent : le même modèle redemandé ne touche pas `updated_at`.
+    """
+    dossier = await change.execute(principal.subject_id, dossier_id, body.template_id)
+    return _present(dossier, logo_url)
 
 
 @router.post(

@@ -417,6 +417,17 @@ class Dossier:
         """La lettre, ébauchée par Karria ou envoyée par la personne."""
         return replace(self, letter=letter, updated_at=now)
 
+    def with_template(self, template_id: UUID | None, *, now: datetime) -> Dossier:
+        """Le modèle de CV du dossier, changé à tout moment ; `None` : le modèle choisi de la personne.
+
+        Idempotent : redemander le modèle déjà posé ne touche pas `updated_at`.
+        Le droit d'employer le modèle (gratuit ou possédé) n'est pas une règle
+        du dossier : le cas d'usage le vérifie par le port `TemplateChecker`.
+        """
+        if template_id == self.template_id:
+            return self
+        return replace(self, template_id=template_id, updated_at=now)
+
     def with_paragraph(self, index: int, text: str, *, now: datetime) -> Dossier:
         """Un seul paragraphe remplacé.
 

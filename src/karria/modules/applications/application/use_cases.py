@@ -389,6 +389,40 @@ class UpdateDossierCv:
         return updated
 
 
+class ChangeDossierTemplate:
+    """Le modèle de CV du dossier change à tout moment (`PUT /{id}/template`).
+
+    La même porte qu'à l'ouverture : un modèle Premium non possédé est refusé
+    (`TemplateLockedError`, par le port `TemplateChecker` vers `documents`).
+    Rien d'autre ne bouge — ni le CV adapté, ni les propositions, ni la
+    lettre : changer de modèle, c'est changer la mise en page, pas le fond.
+    `None` rend la main au modèle choisi de la personne.
+    """
+
+    def __init__(
+        self, dossiers: DossierRepository, templates: TemplateChecker, clock: Clock
+    ) -> None:
+        self._dossiers = dossiers
+        self._templates = templates
+        self._clock = clock
+
+    async def execute(self, user_id: UUID, dossier_id: UUID, template_id: UUID | None) -> Dossier:
+        """Raises `DossierNotFoundError`, puis `TemplateLockedError` si le modèle n'est pas utilisable."""
+        dossier = await _owned(self._dossiers, dossier_id, user_id)
+        if template_id is not None and not await self._templates.usable(user_id, template_id):
+            raise TemplateLockedError(template_id)
+        updated = dossier.with_template(template_id, now=self._clock.now())
+        if updated is dossier:
+            return dossier
+        await self._dossiers.save(updated)
+        logger.info(
+            "applications.template_changed",
+            dossier_id=str(dossier_id),
+            template_id=str(template_id) if template_id else None,
+        )
+        return updated
+
+
 class DraftLetter:
     """La première ébauche de la lettre, par Karria. Remplace la lettre existante."""
 
