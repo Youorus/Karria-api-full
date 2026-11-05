@@ -168,6 +168,7 @@ qui **compte une impression**, sans jamais gêner le geste en cours. Les abonné
 
 | Moment | Emplacement | Pourquoi ça ne gêne pas |
 |---|---|---|
+| **Fiche d'une offre** (`detail_offre`, décidé le 2026-11-05) | **au-dessus du pli** : entre les étiquettes (lieu, contrat, salaire…) et la description ; jamais au-dessus de « Adapter mon CV », qui vit dans le pied flottant ; calme tactile **700 ms** au lieu de 2 s (l'arrivée sur la fiche est un toucher), doigt levé exigé, entrée en fondu et description qui glisse | posée en bas, elle n'était comptée que si l'on défilait jusqu'à elle ; en haut, elle est vue à chaque ouverture où AdMob remplit |
 | Choix du modèle | une carte annonce dans la galerie, au format d'une carte de modèle, après la 3e | même rythme que les modèles |
 | Atelier | **jamais sur la feuille** ; une annonce dans la feuille basse quand elle est ouverte sur une rubrique longue (sous le formulaire), et une pendant que Karria réfléchit (temps d'attente) | la feuille reste pure ; l'attente devient utile |
 | Après un enregistrement | une annonce dans la bande « enregistré » qui s'efface d'elle-même | le geste est fini |
@@ -177,9 +178,18 @@ qui **compte une impression**, sans jamais gêner le geste en cours. Les abonné
 
 Règles : une seule annonce visible à la fois, jamais au-dessus d'un bouton principal,
 jamais dans les 2 secondes qui suivent un toucher (pas de clic accidentel, exigé par
-AdMob), chargement en arrière-plan pour ne jamais faire attendre, et chaque impression
-est journalisée côté app (compteur par emplacement) pour mesurer ce que rapporte chaque
-moment et retirer ceux qui font décrocher.
+AdMob) — un emplacement peut demander moins (`CALME_PAR_EMPLACEMENT`, 700 ms sur la fiche
+d'offre) mais **jamais sous un doigt posé** (la racine note la fin de chaque toucher,
+`calme-tactile.ts`) —, chargement en arrière-plan pour ne jamais faire attendre, et
+chaque impression est journalisée côté app (compteur par emplacement) pour mesurer ce
+que rapporte chaque moment et retirer ceux qui font décrocher.
+
+**Pas de garantie d'impression à chaque ouverture**, et aucune app ne l'a : il faut que
+la personne ne soit pas sans pub, que le consentement UMP/ATT soit obtenu, qu'AdMob
+remplisse la demande, que l'écran soit encore ouvert au calme tactile, et que la carte
+soit **réellement visible** (le SDK n'émet `IMPRESSION` qu'à l'affichage de la
+`NativeAdView`). L'app ne maîtrise que les deux derniers — d'où la place au-dessus du pli
+et le délai court ; le reste se lit dans la console AdMob (demandes, remplissage).
 
 ## Les phases, dans l'ordre
 

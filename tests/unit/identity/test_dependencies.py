@@ -6,7 +6,7 @@ import pytest
 
 from doubles import IdentityEnv, StaticJwksSource
 from karria.modules.identity.api.dependencies import get_apple_login, get_google_login
-from karria.modules.identity.application import SocialLogin
+from karria.modules.identity.application import AcceptAiConsent, SocialLogin
 from karria.modules.identity.domain import SocialProviderUnavailableError
 from karria.shared.config import AppSettings, Environment, Settings, SocialSettings
 
@@ -29,6 +29,9 @@ def _assemble(factory, settings: Settings) -> SocialLogin:  # noqa: ANN001
         clock=env.clock,
         uow=env.uow,
         events=env.events,
+        ai_consent=AcceptAiConsent(
+            consents=env.ai_consents, catalog=env.ai_catalog, clock=env.clock
+        ),
     )
 
 

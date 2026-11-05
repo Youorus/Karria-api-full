@@ -101,6 +101,10 @@ class LoginChallenge:
             au moment où l'app l'envoie ; elle est horodatée sur le compte
             à la validation du code.
         privacy_policy_version: Idem, pour la politique de confidentialité.
+        ai_disclosure_version: La version de l'information sur l'IA que
+            l'écran de connexion affichait, si l'app l'a envoyée (ADR-0025,
+            « accord à l'inscription »). `None` : rien à consigner, la
+            feuille demandera au premier geste d'IA.
     """
 
     id: UUID
@@ -115,6 +119,7 @@ class LoginChallenge:
     terms_version: str
     privacy_policy_version: str
     code_sends: int = 1
+    ai_disclosure_version: str | None = None
     attempts: int = 0
     completed_at: datetime | None = None
     created_account: bool = False
@@ -219,6 +224,7 @@ def open_challenge(
     terms_version: str,
     privacy_policy_version: str,
     at: datetime,
+    ai_disclosure_version: str | None = None,
 ) -> LoginChallenge:
     """Ouvre un parcours, aux durées du domaine."""
     return LoginChallenge(
@@ -233,4 +239,5 @@ def open_challenge(
         code_sent_at=at,
         terms_version=terms_version,
         privacy_policy_version=privacy_policy_version,
+        ai_disclosure_version=ai_disclosure_version,
     )

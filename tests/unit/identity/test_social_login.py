@@ -13,8 +13,15 @@ import pytest
 
 from doubles import SAMPLE_CONSENT as CONSENT
 from doubles import IdentityEnv, StubSocialVerifier
-from karria.modules.identity.application import SocialLogin, UserRegistered, UserSignedIn
+from karria.modules.identity.application import (
+    AcceptAiConsent,
+    ConsentGiven,
+    SocialLogin,
+    UserRegistered,
+    UserSignedIn,
+)
 from karria.modules.identity.domain import (
+    AiDisclosure,
     InvalidSocialTokenError,
     SocialEmailMissingError,
     SocialEmailUnverifiedError,
@@ -52,12 +59,50 @@ def _login(env: IdentityEnv, verifier: StubSocialVerifier) -> SocialLogin:
         clock=env.clock,
         uow=env.uow,
         events=env.events,
+        ai_consent=AcceptAiConsent(
+            consents=env.ai_consents, catalog=env.ai_catalog, clock=env.clock
+        ),
     )
 
 
 @pytest.fixture
 def env() -> IdentityEnv:
     return IdentityEnv.build()
+
+
+class TestAccordIaALInscription:
+    """ADR-0025, « accord à l'inscription » : la version affichée vaut accord, aussi par Apple/Google."""
+
+    async def test_la_premiere_venue_consigne_l_accord(self, env: IdentityEnv) -> None:
+        consent = ConsentGiven(
+            "2026-10", "2026-10", ai_disclosure_version=AiDisclosure.build(["gemini"]).version
+        )
+        outcome = await _login(
+            env, StubSocialVerifier(SocialProvider.GOOGLE, GOOGLE_PROFILE)
+        ).execute(token="t", nonce=None, consent=consent)
+        recorded = env.ai_consents.rows[outcome.user.id]
+        assert recorded.accepted_at == env.clock.now()
+        assert recorded.providers == ("gemini",)
+
+    async def test_un_retour_consigne_l_accord_s_il_manque(self, env: IdentityEnv) -> None:
+        login = _login(env, StubSocialVerifier(SocialProvider.GOOGLE, GOOGLE_PROFILE))
+        first = await login.execute(token="t", nonce=None, consent=CONSENT)
+        assert first.user.id not in env.ai_consents.rows
+
+        consent = ConsentGiven(
+            "2026-10", "2026-10", ai_disclosure_version=AiDisclosure.build(["gemini"]).version
+        )
+        again = await login.execute(token="t", nonce=None, consent=consent)
+
+        assert again.created_account is False
+        assert env.ai_consents.rows[again.user.id].active
+
+    async def test_une_version_perimee_ne_consigne_rien(self, env: IdentityEnv) -> None:
+        consent = ConsentGiven("2026-10", "2026-10", ai_disclosure_version="2020-01.deadbeef")
+        outcome = await _login(env, StubSocialVerifier(SocialProvider.APPLE, APPLE_FIRST)).execute(
+            token="t", nonce=None, consent=consent
+        )
+        assert outcome.user.id not in env.ai_consents.rows
 
 
 class TestPremiereVenue:

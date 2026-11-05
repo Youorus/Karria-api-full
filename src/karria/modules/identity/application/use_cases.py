@@ -109,10 +109,18 @@ _LAST_USED_GRANULARITY: Final = timedelta(minutes=5)
 
 @dataclass(frozen=True, slots=True)
 class ConsentGiven:
-    """Les versions acceptées « en continuant », telles que l'app les envoie."""
+    """Les versions acceptées « en continuant », telles que l'app les envoie.
+
+    `ai_disclosure_version` est **facultative** (ADR-0025, accord à
+    l'inscription) : la version de l'information sur l'IA que l'écran de
+    connexion affichait. Présente et courante, elle vaut accord IA à la
+    connexion ; absente ou périmée, rien n'est consigné et la feuille
+    demandera au premier geste d'IA.
+    """
 
     terms_version: str
     privacy_policy_version: str
+    ai_disclosure_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,10 +227,28 @@ class _AccountResolver:
     Google, donne le même compte.
     """
 
-    def __init__(self, *, users: UserRepository, uow: UnitOfWork, events: EventBus | None) -> None:
+    def __init__(
+        self,
+        *,
+        users: UserRepository,
+        uow: UnitOfWork,
+        events: EventBus | None,
+        ai_consent: AcceptAiConsent | None = None,
+    ) -> None:
         self._users = users
         self._uow = uow
         self._events = events
+        self._ai_consent = ai_consent
+
+    async def record_ai_consent(self, user: User, consent: ConsentGiven) -> None:
+        """Consigne l'accord IA donné « en continuant », s'il y en a un et s'il est courant.
+
+        Après le compte et hors de sa transaction : l'accord IA a sa propre
+        ligne, et son absence ne doit jamais empêcher une connexion.
+        """
+        if self._ai_consent is None or consent.ai_disclosure_version is None:
+            return
+        await self._ai_consent.at_sign_in(user.id, version=consent.ai_disclosure_version)
 
     async def resolve(
         self, email: EmailAddress, *, consent: ConsentGiven, at: datetime
@@ -242,6 +268,7 @@ class _AccountResolver:
             ).signed_in(at=at)
             async with self._uow.atomic():
                 await self._users.save(updated)
+            await self.record_ai_consent(updated, consent)
             return updated, False
 
         user = User(
@@ -260,6 +287,7 @@ class _AccountResolver:
         async with self._uow.atomic():
             await self._users.add(user)
         logger.info("identity.user_registered", user_id=str(user.id))
+        await self.record_ai_consent(user, consent)
         if self._events is not None:
             await self._events.publish(UserRegistered(user_id=user.id))
         return user, True
@@ -364,6 +392,7 @@ class StartEmailLogin:
             terms_version=consent.terms_version,
             privacy_policy_version=consent.privacy_policy_version,
             at=now,
+            ai_disclosure_version=consent.ai_disclosure_version,
         )
         async with self._uow.atomic():
             await self._challenges.add(challenge)
@@ -447,6 +476,7 @@ class VerifyEmailLoginCode:
         clock: Clock,
         uow: UnitOfWork,
         events: EventBus | None = None,
+        ai_consent: AcceptAiConsent | None = None,
     ) -> None:
         self._challenges = challenges
         self._tokens = tokens
@@ -454,7 +484,9 @@ class VerifyEmailLoginCode:
         self._clock = clock
         self._uow = uow
         self._events = events
-        self._accounts = _AccountResolver(users=users, uow=uow, events=events)
+        self._accounts = _AccountResolver(
+            users=users, uow=uow, events=events, ai_consent=ai_consent
+        )
         self._issuer = _SessionIssuer(sessions=sessions, tokens=tokens, clock=clock, uow=uow)
 
     async def execute(
@@ -502,6 +534,7 @@ class VerifyEmailLoginCode:
             consent=ConsentGiven(
                 terms_version=challenge.terms_version,
                 privacy_policy_version=challenge.privacy_policy_version,
+                ai_disclosure_version=challenge.ai_disclosure_version,
             ),
             at=now,
         )
@@ -545,6 +578,7 @@ class SocialLogin:
         clock: Clock,
         uow: UnitOfWork,
         events: EventBus | None = None,
+        ai_consent: AcceptAiConsent | None = None,
     ) -> None:
         self._verifier = verifier
         self._identities = identities
@@ -552,7 +586,9 @@ class SocialLogin:
         self._clock = clock
         self._uow = uow
         self._events = events
-        self._accounts = _AccountResolver(users=users, uow=uow, events=events)
+        self._accounts = _AccountResolver(
+            users=users, uow=uow, events=events, ai_consent=ai_consent
+        )
         self._issuer = _SessionIssuer(sessions=sessions, tokens=tokens, clock=clock, uow=uow)
 
     async def execute(
@@ -604,6 +640,7 @@ class SocialLogin:
         async with self._uow.atomic():
             await self._users.save(updated)
             await self._identities.touch(identity.id, now)
+        await self._accounts.record_ai_consent(updated, consent)
         session = await self._issuer.open(updated, user_agent=ua, at=now)
         await _announce(self._events, updated, created_account=False)
         logger.info("social.signed_in", provider=identity.provider.value, created=False)
@@ -921,6 +958,19 @@ class _AiConsentBase:
         )
 
 
+class GetAiDisclosure(_AiConsentBase):
+    """`GET /auth/ai-disclosure` : l'information courante, **sans session**.
+
+    C'est ce que l'écran de connexion affiche derrière « Karria et l'IA »
+    avant tout compte, et la version qu'il renvoie ensuite dans
+    `ai_disclosure_version` (ADR-0025, accord à l'inscription).
+    """
+
+    def execute(self) -> AiDisclosure:
+        """L'information d'aujourd'hui."""
+        return self.disclosure()
+
+
 class GetAiConsentStatus(_AiConsentBase):
     """`GET /auth/me/ai-consent`, et le champ `ai_consent` de `GET /auth/me`."""
 
@@ -953,6 +1003,34 @@ class AcceptAiConsent(_AiConsentBase):
         existing = await self._consents.find(user_id)
         if existing is not None and existing.covers(disclosure):
             return AiConsentStatus(disclosure=disclosure, consent=existing)
+        return AiConsentStatus(
+            disclosure=disclosure, consent=await self._grant(user_id, disclosure, source="sheet")
+        )
+
+    async def at_sign_in(self, user_id: UUID, *, version: str) -> None:
+        """L'accord donné « en continuant » à la connexion (ADR-0025, accord à l'inscription).
+
+        Même preuve que la feuille — version, fournisseurs, usages, horodatage
+        serveur — mais **jamais une erreur** : la connexion ne dépend pas de
+        ce que l'écran affichait. Trois cas où rien n'est écrit :
+
+        - la version ne correspond plus (fournisseur changé entre
+          l'affichage et la validation) : la feuille demandera ;
+        - un accord courant existe déjà : sa date d'origine est la preuve ;
+        - l'accord a été **retiré** dans les paramètres : un retrait
+          explicite ne se renverse pas par une phrase en bas d'un écran ;
+          la feuille redemandera, explicitement.
+        """
+        disclosure = self.disclosure()
+        if version != disclosure.version:
+            logger.info("identity.ai_consent_sign_in_stale", user_id=str(user_id))
+            return
+        existing = await self._consents.find(user_id)
+        if existing is not None and (existing.covers(disclosure) or not existing.active):
+            return
+        await self._grant(user_id, disclosure, source="sign_in")
+
+    async def _grant(self, user_id: UUID, disclosure: AiDisclosure, *, source: str) -> AiConsent:
         consent = AiConsent.given(user_id, disclosure, at=self._clock.now())
         await self._consents.save(consent)
         logger.info(
@@ -960,8 +1038,9 @@ class AcceptAiConsent(_AiConsentBase):
             user_id=str(user_id),
             version=consent.version,
             providers=list(consent.providers),
+            source=source,
         )
-        return AiConsentStatus(disclosure=disclosure, consent=consent)
+        return consent
 
 
 class RevokeAiConsent(_AiConsentBase):

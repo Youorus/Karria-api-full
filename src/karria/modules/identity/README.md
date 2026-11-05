@@ -18,7 +18,9 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
   du jeton de rafraîchissement, détection de réutilisation, raison de
   clôture. Jamais un jeton en clair.
 - **Les parcours de connexion** (`identity_login_challenges`) : adresse,
-  condensat du code, essais, envois, consentement en attente.
+  condensat du code, essais, envois, consentement en attente — versions des
+  conditions et, depuis la migration 19, la version de l'information sur
+  l'IA affichée (`ai_disclosure_version`, NULL si l'app ne l'a pas envoyée).
 - **La suppression du compte** (`DELETE /auth/me`, ADR-0015) : efface
   **physiquement** sessions, rattachements, parcours de l'adresse et compte
   en une transaction, puis publie `AccountDeleted(user_id)` pour que les
@@ -38,7 +40,12 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
   Routes `GET/PUT/DELETE /auth/me/ai-consent` et champ `ai_consent` de
   `GET /auth/me`. La porte que les routes d'IA franchissent vit dans
   `shared/auth` (`AiConsentedPrincipalDep`) ; `bootstrap/wiring.py` y
-  branche `EnsureAiConsent`.
+  branche `EnsureAiConsent`. Depuis le 2026-11-05 (ADR-0025, « accord à
+  l'inscription ») : `GET /auth/ai-disclosure` rend l'information **sans
+  session** (120 lectures / 10 min par origine), et `ai_disclosure_version`
+  (facultatif) sur les trois requêtes de connexion vaut le même accord,
+  consigné à la connexion par `AcceptAiConsent.at_sign_in` — jamais une
+  erreur, jamais le rétablissement d'un accord retiré.
 - **Les raisons d'erreur** `auth_*`, `user_email_invalid`,
   `account_deletion_*`, `ai_consent_required` et
   `ai_consent_version_mismatch` que l'app branche (`domain/errors.py`).

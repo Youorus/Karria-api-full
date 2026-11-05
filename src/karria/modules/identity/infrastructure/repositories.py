@@ -271,6 +271,7 @@ def _to_challenge(row: LoginChallengeModel) -> LoginChallenge:
         created_account=row.created_account,
         terms_version=row.terms_version,
         privacy_policy_version=row.privacy_policy_version,
+        ai_disclosure_version=row.ai_disclosure_version,
     )
 
 
@@ -288,6 +289,7 @@ def _challenge_columns(challenge: LoginChallenge) -> dict[str, Any]:
         "created_account": challenge.created_account,
         "terms_version": challenge.terms_version,
         "privacy_policy_version": challenge.privacy_policy_version,
+        "ai_disclosure_version": challenge.ai_disclosure_version,
     }
 
 

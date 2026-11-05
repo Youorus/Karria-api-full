@@ -29,6 +29,7 @@ from karria.modules.identity.domain import (
     DEPARTURE_DETAILS_MAX_LENGTH,
     EMAIL_MAX_LENGTH,
     AiConsentStatus,
+    AiDisclosure,
     AiPurpose,
     DepartureFeedback,
     User,
@@ -37,6 +38,8 @@ from karria.modules.identity.domain import (
 
 #: Longueur maximale d'une version de document contractuel.
 _VERSION_MAX = 32
+#: Une version d'information sur l'IA : `<révision>.<empreinte>` (ADR-0025).
+_AI_VERSION_MAX = 64
 #: Un jeton d'identité Apple ou Google ne dépasse pas quelques kilo-octets.
 _TOKEN_MAX = 8192
 
@@ -47,6 +50,11 @@ class _WithConsent(BaseModel):
     Il n'y a plus d'écran où cocher une case : l'écran d'accueil dit « en
     continuant, tu acceptes », et continuer **est** l'acceptation. La preuve
     tient dans ces versions, horodatées par le serveur avec le compte.
+
+    Depuis le 2026-11-05 (ADR-0025, accord à l'inscription), la même phrase
+    dit aussi « et que Karria s'appuie sur des modèles d'IA » : l'app envoie
+    la `ai_disclosure_version` qu'elle a chargée (`GET /auth/ai-disclosure`).
+    Facultative — un client ancien ne l'envoie pas, et la feuille demandera.
     """
 
     terms_version: str = Field(
@@ -57,11 +65,24 @@ class _WithConsent(BaseModel):
         max_length=_VERSION_MAX,
         description="Version de la politique de confidentialité acceptée.",
     )
+    ai_disclosure_version: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=_AI_VERSION_MAX,
+        description=(
+            "La `version` de `GET /auth/ai-disclosure` affichée derrière « Karria et l'IA ». "
+            "Si elle est encore la version courante à la connexion, l'accord IA est consigné "
+            "(même preuve que `PUT /auth/me/ai-consent`) ; sinon rien n'est écrit et la feuille "
+            "demandera au premier geste d'IA. Un accord **retiré** n'est jamais rétabli ainsi."
+        ),
+    )
 
     def consent(self) -> ConsentGiven:
         """Projette le consentement vers la couche application."""
         return ConsentGiven(
-            terms_version=self.terms_version, privacy_policy_version=self.privacy_policy_version
+            terms_version=self.terms_version,
+            privacy_policy_version=self.privacy_policy_version,
+            ai_disclosure_version=self.ai_disclosure_version,
         )
 
 
@@ -183,7 +204,11 @@ class AiProviderResponse(BaseModel):
 
 
 class AiDisclosureResponse(BaseModel):
-    """Ce que la personne doit accepter aujourd'hui."""
+    """Ce que la personne doit accepter aujourd'hui.
+
+    Servi seul par `GET /auth/ai-disclosure` (public), et dans `disclosure`
+    de `GET /auth/me/ai-consent`.
+    """
 
     version: str = Field(
         description=(
@@ -197,9 +222,20 @@ class AiDisclosureResponse(BaseModel):
     purposes: list[AiPurpose] = Field(
         description=(
             "Les outils concernés : `assistant`, `transcription`, `cv_creation`, `cv_import`, "
-            "`photo_enhancement`, `template_analysis`."
+            "`photo_enhancement`, `template_analysis`, `application`."
         )
     )
+
+    @classmethod
+    def from_disclosure(cls, disclosure: AiDisclosure) -> AiDisclosureResponse:
+        """Projette l'information courante."""
+        return cls(
+            version=disclosure.version,
+            providers=[
+                AiProviderResponse(id=p, name=provider_name(p)) for p in disclosure.providers
+            ],
+            purposes=list(disclosure.purposes),
+        )
 
 
 class AiConsentResponse(BaseModel):
@@ -219,14 +255,7 @@ class AiConsentResponse(BaseModel):
         consent = status.consent
         return cls(
             required=status.required,
-            disclosure=AiDisclosureResponse(
-                version=status.disclosure.version,
-                providers=[
-                    AiProviderResponse(id=p, name=provider_name(p))
-                    for p in status.disclosure.providers
-                ],
-                purposes=list(status.disclosure.purposes),
-            ),
+            disclosure=AiDisclosureResponse.from_disclosure(status.disclosure),
             accepted_version=consent.version if consent else None,
             accepted_at=consent.accepted_at if consent else None,
             revoked_at=consent.revoked_at if consent else None,

@@ -16,7 +16,7 @@ Un test substitue n'importe lequel par `app.dependency_overrides`.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import Depends, Request
 
@@ -28,6 +28,7 @@ from karria.modules.identity.application import (
     DepartureFeedbackRepository,
     EnsureAiConsent,
     GetAiConsentStatus,
+    GetAiDisclosure,
     GetCurrentUser,
     JwksSource,
     LoginChallengeRepository,
@@ -64,8 +65,10 @@ from karria.modules.identity.infrastructure import (
     TortoiseUserRepository,
     UnknownMainDeviceLookup,
 )
+from karria.shared.auth import Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import get_settings
+from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import EventBusDep, SettingsDep, UnitOfWorkDep
 from karria.shared.i18n import Language, from_accept_language
 from karria.shared.mail import Mailer, build_mailer
@@ -167,6 +170,17 @@ def get_login_code_sender(settings: SettingsDep) -> LoginCodeSender:
     mailer = _mailer_for(settings.mail.provider.value, settings.mail.host, settings.mail.sender)
     return MailLoginCodeSender(mailer)
 
+
+#: `GET /auth/ai-disclosure` sans session, compté par origine (ADR-0025) :
+#: l'écran de connexion la lit une fois en s'ouvrant.
+GUEST_RATE_LIMIT: Final = 120
+GUEST_RATE_WINDOW_SECONDS: Final = 600
+_guest_limiter = SlidingWindowLimiter(
+    max_hits=GUEST_RATE_LIMIT, window_seconds=GUEST_RATE_WINDOW_SECONDS
+)
+GuestPrincipalDep = Annotated[
+    Principal | None, Depends(allow_anonymous(_guest_limiter, scope="identity"))
+]
 
 ClockDep = Annotated[Clock, Depends(get_clock)]
 UserRepositoryDep = Annotated[UserRepository, Depends(get_user_repository)]
@@ -276,8 +290,9 @@ def get_verify_email_login_code(
     clock: ClockDep,
     uow: UnitOfWorkDep,
     events: EventBusDep,
+    ai_consent: AcceptAiConsentDep,
 ) -> VerifyEmailLoginCode:
-    """Assemble la validation du code."""
+    """Assemble la validation du code — avec l'accord IA donné « en continuant » (ADR-0025)."""
     return VerifyEmailLoginCode(
         users=users,
         challenges=challenges,
@@ -287,6 +302,7 @@ def get_verify_email_login_code(
         clock=clock,
         uow=uow,
         events=events,
+        ai_consent=ai_consent,
     )
 
 
@@ -301,6 +317,7 @@ def get_google_login(
     clock: ClockDep,
     uow: UnitOfWorkDep,
     events: EventBusDep,
+    ai_consent: AcceptAiConsentDep,
 ) -> SocialLogin:
     """Assemble la connexion Google.
 
@@ -319,6 +336,7 @@ def get_google_login(
         clock=clock,
         uow=uow,
         events=events,
+        ai_consent=ai_consent,
     )
 
 
@@ -333,6 +351,7 @@ def get_apple_login(
     clock: ClockDep,
     uow: UnitOfWorkDep,
     events: EventBusDep,
+    ai_consent: AcceptAiConsentDep,
 ) -> SocialLogin:
     """Assemble la connexion Apple."""
     if not settings.social.apple_enabled:
@@ -346,6 +365,7 @@ def get_apple_login(
         clock=clock,
         uow=uow,
         events=events,
+        ai_consent=ai_consent,
     )
 
 
@@ -378,6 +398,13 @@ def get_logout(
 def get_current_user_reader(users: UserRepositoryDep) -> GetCurrentUser:
     """Assemble la lecture du compte connecté."""
     return GetCurrentUser(users=users)
+
+
+def get_ai_disclosure(
+    consents: AiConsentRepositoryDep, catalog: AiProviderCatalogDep
+) -> GetAiDisclosure:
+    """Assemble la lecture publique de l'information sur l'IA."""
+    return GetAiDisclosure(consents=consents, catalog=catalog)
 
 
 def get_ai_consent_status(
@@ -444,6 +471,7 @@ ResolveSessionDep = Annotated[ResolveSession, Depends(get_resolve_session)]
 LogoutDep = Annotated[Logout, Depends(get_logout)]
 GetCurrentUserDep = Annotated[GetCurrentUser, Depends(get_current_user_reader)]
 DeleteAccountDep = Annotated[DeleteAccount, Depends(get_delete_account)]
+GetAiDisclosureDep = Annotated[GetAiDisclosure, Depends(get_ai_disclosure)]
 GetAiConsentStatusDep = Annotated[GetAiConsentStatus, Depends(get_ai_consent_status)]
 AcceptAiConsentDep = Annotated[AcceptAiConsent, Depends(get_accept_ai_consent)]
 RevokeAiConsentDep = Annotated[RevokeAiConsent, Depends(get_revoke_ai_consent)]
@@ -461,8 +489,10 @@ __all__ = [
     "DepartureRepositoryDep",
     "EnsureAiConsentDep",
     "GetAiConsentStatusDep",
+    "GetAiDisclosureDep",
     "GetCurrentUserDep",
     "GoogleLoginDep",
+    "GuestPrincipalDep",
     "IdentityRepositoryDep",
     "JwksSourceDep",
     "LogoutDep",
@@ -482,6 +512,7 @@ __all__ = [
     "get_accept_ai_consent",
     "get_ai_consent_repository",
     "get_ai_consent_status",
+    "get_ai_disclosure",
     "get_ai_provider_catalog",
     "get_challenge_repository",
     "get_clock",

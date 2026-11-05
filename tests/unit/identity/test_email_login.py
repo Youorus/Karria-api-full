@@ -8,13 +8,14 @@ code, et la validation crée le compte avec son consentement.
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from doubles import SAMPLE_CONSENT as CONSENT
 from doubles import IdentityEnv
 from karria.modules.identity.application import (
+    ConsentGiven,
     ResendEmailLoginCode,
     StartEmailLogin,
     UserRegistered,
@@ -24,6 +25,7 @@ from karria.modules.identity.application import (
 from karria.modules.identity.domain import (
     LOGIN_CODE_RESEND_DELAY,
     MAX_CODE_ATTEMPTS,
+    AiDisclosure,
     InvalidEmailError,
     LoginChallengeExpiredError,
     LoginCodeExhaustedError,
@@ -281,3 +283,83 @@ class TestVerify:
 
         assert outcome.created_account
         assert env.events.published == []
+
+
+class TestAccordIaALInscription:
+    """ADR-0025, « accord à l'inscription » : la version affichée voyage avec le parcours."""
+
+    @staticmethod
+    def _current_version() -> str:
+        return AiDisclosure.build(["gemini"]).version
+
+    async def _login(
+        self,
+        start: StartEmailLogin,
+        verify: VerifyEmailLoginCode,
+        env: IdentityEnv,
+        consent: ConsentGiven,
+    ) -> UUID:
+        opened = await start.execute(email=EMAIL, consent=consent, throttle_key="k")
+        assert env.challenges.rows[opened.challenge_id].ai_disclosure_version == (
+            consent.ai_disclosure_version
+        )
+        outcome = await verify.execute(
+            challenge_id=opened.challenge_id,
+            code=env.sender.last_code_for("marc@exemple.fr"),
+            throttle_key="k",
+        )
+        return outcome.user.id
+
+    async def test_la_version_courante_vaut_accord_horodate(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        consent = ConsentGiven("2026-10", "2026-10", ai_disclosure_version=self._current_version())
+
+        user_id = await self._login(start, verify, env, consent)
+
+        recorded = env.ai_consents.rows[user_id]
+        assert recorded.version == self._current_version()
+        assert recorded.providers == ("gemini",)
+        assert recorded.accepted_at == env.clock.now()
+        assert recorded.active
+
+    async def test_sans_version_rien_n_est_consigne(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        user_id = await self._login(start, verify, env, CONSENT)
+        assert user_id not in env.ai_consents.rows
+
+    async def test_une_version_perimee_ne_consigne_rien_et_ne_bloque_pas(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        consent = ConsentGiven("2026-10", "2026-10", ai_disclosure_version="2020-01.deadbeef")
+
+        user_id = await self._login(start, verify, env, consent)
+
+        assert user_id not in env.ai_consents.rows
+        assert env.users.rows  # la connexion a bien eu lieu
+
+    async def test_un_accord_retire_n_est_pas_retabli_par_une_reconnexion(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        consent = ConsentGiven("2026-10", "2026-10", ai_disclosure_version=self._current_version())
+        user_id = await self._login(start, verify, env, consent)
+        env.ai_consents.rows[user_id] = env.ai_consents.rows[user_id].revoked(at=env.clock.now())
+        env.clock.advance(timedelta(days=1))
+
+        again = await self._login(start, verify, env, consent)
+
+        assert again == user_id
+        assert not env.ai_consents.rows[user_id].active
+
+    async def test_un_accord_courant_garde_sa_date_d_origine(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        consent = ConsentGiven("2026-10", "2026-10", ai_disclosure_version=self._current_version())
+        user_id = await self._login(start, verify, env, consent)
+        first = env.ai_consents.rows[user_id].accepted_at
+        env.clock.advance(timedelta(days=1))
+
+        await self._login(start, verify, env, consent)
+
+        assert env.ai_consents.rows[user_id].accepted_at == first

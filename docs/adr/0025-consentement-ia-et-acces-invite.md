@@ -115,3 +115,79 @@ réplique.
 - Un fil public attire l'aspiration : le quota par origine est la première
   réponse ; un compteur partagé (Redis) viendra avec la réplication
   (`PLUS-TARD.md`).
+
+## 2026-11-05 — accord à l'inscription (complète la décision 1)
+
+**Statut :** Proposée — 2026-11-05 (à valider par Marc). **Ne revient pas**
+sur la section 1 : la feuille, la porte serveur et la version calculée
+restent ; cette section ajoute un **second chemin** vers la même preuve.
+
+### Le problème
+
+Marc (dictée) : « Afficher le consentement au moment même où l'utilisateur
+veut générer son CV pose énormément de problèmes avec la psychologie de
+l'utilisateur, qui peut se retenir. » La feuille arrive au pire moment —
+entre l'intention et le geste — et une part des personnes renonce. Les
+grandes applications font accepter cela **à l'inscription**, dans la phrase
+« en continuant, tu acceptes ».
+
+### La décision
+
+1. **Une route publique, `GET /auth/ai-disclosure`** (sans session, comptée
+   par origine : 120 lectures / 10 min). Elle rend la `disclosure` courante
+   — version, fournisseurs réellement routés, usages — c'est-à-dire la
+   même information que `GET /auth/me/ai-consent`, avant tout compte.
+   L'écran de connexion la lit en s'ouvrant et l'affiche derrière un lien
+   « Karria et l'IA » (la feuille existante, en consultation, sans bouton
+   d'accord).
+2. **`ai_disclosure_version`, champ facultatif de `_WithConsent`** — donc de
+   `POST /auth/email/start`, `/auth/social/google`, `/auth/social/apple`,
+   à côté de `terms_version` et `privacy_policy_version`. Pour le parcours
+   par code, il voyage sur le parcours (`identity_login_challenges`,
+   migration 19) et se consigne à la validation, comme les conditions.
+3. **Même preuve que la feuille.** `AcceptAiConsent.at_sign_in` écrit la
+   même ligne qu'un `PUT /auth/me/ai-consent` (version, fournisseurs,
+   usages, horodatage serveur) et le même journal, avec `source=sign_in`.
+   Trois cas où **rien** n'est écrit, sans jamais faire échouer la
+   connexion : version absente (client ancien), version **périmée** (un
+   fournisseur a changé entre l'affichage et la validation — la feuille
+   demandera), accord **retiré** dans les paramètres (un retrait explicite
+   ne se renverse pas par une phrase en bas d'un écran ; la feuille
+   redemandera, explicitement). Un accord courant garde sa date d'origine.
+4. **Rien ne change après la connexion.** `use-action-ia` et la porte
+   `403 ai_consent_required` restent : la feuille devient un **filet** —
+   version changée, accord retiré, client ancien.
+
+### Le risque, assumé et noté
+
+L'ADR ci-dessus écrivait, le 2026-10-30 : « *“En continuant, tu acceptes”
+ne suffit pas* » pour la règle 5.1.2 (i) d'Apple, qui demande une
+information claire **et** une permission explicite avant d'envoyer des
+données personnelles à une IA tierce. Cette section prend le pari inverse,
+choisi par Marc, avec trois garde-fous : l'information est à un toucher de
+la phrase (lien « Karria et l'IA », lisible avant tout compte), l'accord
+est **tracé** avec sa version et ses fournisseurs, et le chemin explicite
+reste **intact** (la feuille, ses routes, le retrait dans les paramètres).
+Si la relecture App Store refuse, il suffit de **ne plus envoyer**
+`ai_disclosure_version` depuis l'app : le serveur ne consigne alors rien,
+et la feuille revient au premier geste — sans redéploiement de l'API.
+
+### Alternatives écartées
+
+- **Accepter la version à `POST /auth/email/verify`** plutôt qu'à `start`,
+  pour éviter la colonne : le consentement aux conditions voyage avec
+  `start`, et deux endroits pour la même preuve, c'est un de trop.
+- **Consigner à `start` pour un compte existant** : l'adresse n'est pas
+  encore prouvée ; n'importe qui pourrait « accepter » pour autrui.
+- **Rétablir un accord retiré à la reconnexion** : techniquement une
+  acceptation, mais c'est exactement le motif sombre qu'un relecteur
+  cherche ; refusé.
+
+### Conséquences
+
+- Migration 19 (`ai_disclosure_version` NULL sur `identity_login_challenges`),
+  **à appliquer avant** le code.
+- Contrat de l'app : `contrat-api-consentement-ia.md` (route publique,
+  champ, cas où rien n'est écrit) ; `feuille-connexion.tsx` porte la
+  phrase, le lien et la note sur le risque Apple ; `auth.api.ts` envoie la
+  version chargée.

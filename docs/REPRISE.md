@@ -5,6 +5,41 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 (soir) — accord IA donné « en continuant » à l'inscription (ADR-0025, section du 2026-11-05 — Fable) — EN PRODUCTION
+
+**Demande de Marc** : ne plus afficher le consentement IA au moment où la personne veut
+générer son CV (elle renonce), mais le faire accepter « en continuant » à l'inscription,
+comme les grandes applications, avec l'information à portée de main.
+
+**Livré** (API, module `identity`, `make check` vert, 3 405 tests ; **migration 19**
+appliquée en prod **avant** le code via un conteneur ponctuel avec le fichier monté) :
+- **`GET /auth/ai-disclosure`**, public (120 lectures / 10 min par origine) : la
+  `disclosure` courante (version, fournisseurs réellement routés, usages) — ce que
+  l'écran de connexion montre derrière « Karria et l'IA ».
+- **`ai_disclosure_version`**, champ facultatif de `_WithConsent` (`/auth/email/start`,
+  `/auth/social/google|apple`) ; porté par le parcours (`identity_login_challenges`,
+  colonne NULL) et consigné à `verify` par **`AcceptAiConsent.at_sign_in`** : même preuve
+  que le `PUT` (journal `identity.ai_consent_given`, `source=sign_in`). Rien n'est écrit
+  — et la connexion n'échoue jamais — si la version manque ou est périmée, si un accord
+  courant existe (date d'origine gardée) ou si l'accord a été **retiré** (un retrait
+  explicite ne se renverse pas par la phrase ; la feuille redemandera).
+- Les routes `/me/ai-consent` et la porte `403 ai_consent_required` sont inchangées : la
+  feuille devient un **filet**.
+- Docs : ADR-0025 § « 2026-11-05 — accord à l'inscription » (avec le **risque Apple
+  5.1.2 (i)** assumé : l'ADR disait le 2026-10-30 qu'« en continuant » ne suffit pas ;
+  retour arrière sans redéploiement = l'app cesse d'envoyer le champ), README `identity`,
+  `DEPLOIEMENT.md`, contrat app `karria_app/docs/contrat-api-consentement-ia.md`.
+- **Publicité** (décision consignée dans `atelier-cv-feuille-de-route.md` § 7) : la carte
+  native de la fiche d'offre passe **au-dessus du pli** (après les étiquettes, avant la
+  description), calme tactile 700 ms pour cet emplacement, jamais sous un doigt posé
+  (la racine note aussi la fin des touchers). Pas de garantie d'impression possible
+  (consentement UMP/ATT, sans pub, remplissage AdMob, visibilité réelle) : le hook
+  `use-annonce-emplacement.ts` l'explique en tête.
+
+**Reste** : valider la section d'ADR ; un test sur l'iPhone de Marc (deux `Modal`
+imbriqués : la feuille d'information s'ouvre au-dessus de celle de connexion) ; décider,
+après relecture App Store, si l'on garde l'envoi de `ai_disclosure_version`.
+
 ### Session du 2026-11-05 — atelier CV : rendu HTML ancré, lettres, envoi par e-mail, gabarits d'e-mail, version minimale de l'app (Fable) — EN PRODUCTION
 
 **Demande de Marc** : les briques « documents » et « e-mail » de `docs/atelier-cv-feuille-de-route.md`

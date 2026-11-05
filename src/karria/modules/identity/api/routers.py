@@ -19,8 +19,10 @@ from karria.modules.identity.api.dependencies import (
     AppleLoginDep,
     DeleteAccountDep,
     GetAiConsentStatusDep,
+    GetAiDisclosureDep,
     GetCurrentUserDep,
     GoogleLoginDep,
+    GuestPrincipalDep,
     LogoutDep,
     RefreshSessionDep,
     RequestContextDep,
@@ -32,6 +34,7 @@ from karria.modules.identity.api.dependencies import (
 from karria.modules.identity.api.schemas import (
     AiConsentAcceptRequest,
     AiConsentResponse,
+    AiDisclosureResponse,
     AppleLoginRequest,
     ChallengeResponse,
     DeleteAccountRequest,
@@ -64,7 +67,9 @@ router = APIRouter(prefix="/auth", tags=["Authentification"])
         "Compte existant ou non, la réponse est **identique** : c'est la "
         "validation du code qui crée le compte s'il n'existe pas.\n\n"
         "Le consentement (`terms_version`, `privacy_policy_version`) voyage "
-        "ici et sera horodaté sur le compte à la validation.\n\n"
+        "ici et sera horodaté sur le compte à la validation. `ai_disclosure_version` "
+        "(facultatif, la `version` de `GET /auth/ai-disclosure` affichée) vaut accord IA "
+        "à la validation si elle est encore courante (ADR-0025).\n\n"
         "Erreurs : `user_email_invalid` (422, `field: email`), "
         "`auth_too_many_attempts` (429, `retry_after`)."
     ),
@@ -267,6 +272,27 @@ async def me(
 # ---------------------------------------------------------------------
 # Consentement à l'IA (ADR-0025)
 # ---------------------------------------------------------------------
+
+
+@router.get(
+    "/ai-disclosure",
+    response_model=AiDisclosureResponse,
+    summary="L'information sur l'IA, avant tout compte",
+    description=(
+        "**Sans session.** Ce que l'écran de connexion montre derrière « Karria et l'IA » : la "
+        "`version` courante, les fournisseurs réellement routés, les usages. L'app renvoie cette "
+        "`version` dans `ai_disclosure_version` des requêtes de connexion ; si elle est encore "
+        "courante à la connexion, l'accord IA est consigné sans feuille (ADR-0025, accord à "
+        "l'inscription). Compté par origine pour un appelant anonyme "
+        "(`429 anonymous_rate_limited`)."
+    ),
+    responses=error_responses(ErrorCode.RATE_LIMITED),
+)
+async def read_ai_disclosure(
+    _principal: GuestPrincipalDep, disclosure: GetAiDisclosureDep
+) -> AiDisclosureResponse:
+    """L'information courante, connecté ou non."""
+    return AiDisclosureResponse.from_disclosure(disclosure.execute())
 
 
 @router.get(

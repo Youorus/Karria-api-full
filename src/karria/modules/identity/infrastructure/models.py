@@ -30,6 +30,8 @@ from karria.shared.database import BaseDBModel
 _HASH_LENGTH = 64
 #: Longueur d'une version de document contractuel (`2026-10`, `v3`…).
 _VERSION_LENGTH = 32
+#: Une version d'information sur l'IA : `<révision>.<empreinte>` (ADR-0025).
+_AI_VERSION_LENGTH = 64
 
 
 class UserModel(BaseDBModel):
@@ -67,7 +69,8 @@ class AiConsentModel(BaseDBModel):
     )
     user_id: UUID
     version = fields.CharField(
-        max_length=64, description="La version de l'information acceptée (`2026-10.<empreinte>`)."
+        max_length=_AI_VERSION_LENGTH,
+        description="La version de l'information acceptée (`2026-10.<empreinte>`).",
     )
     providers: list[str] = fields.JSONField(
         description="Les fournisseurs nommés à la personne à ce moment-là."
@@ -177,6 +180,14 @@ class LoginChallengeModel(BaseDBModel):
     created_account = fields.BooleanField(default=False)
     terms_version = fields.CharField(max_length=_VERSION_LENGTH)
     privacy_policy_version = fields.CharField(max_length=_VERSION_LENGTH)
+    # Migration 19 (ADR-0025, accord à l'inscription) : la version de
+    # l'information sur l'IA affichée par l'écran de connexion, consignée sur
+    # le compte à la validation du code si elle est encore la version courante.
+    ai_disclosure_version = fields.CharField(
+        max_length=_AI_VERSION_LENGTH,
+        null=True,
+        description="Version de l'information sur l'IA acceptée « en continuant », ou NULL.",
+    )
 
     class Meta:
         table = "identity_login_challenges"

@@ -10,6 +10,7 @@ import pytest
 
 from doubles import IdentityEnv
 from karria.modules.identity.application import (
+    AcceptAiConsent,
     DeleteAccount,
     GetCurrentUser,
     Logout,
@@ -52,7 +53,12 @@ def resend(env: IdentityEnv) -> ResendEmailLoginCode:
 
 
 @pytest.fixture
-def verify(env: IdentityEnv) -> VerifyEmailLoginCode:
+def ai_consent(env: IdentityEnv) -> AcceptAiConsent:
+    return AcceptAiConsent(consents=env.ai_consents, catalog=env.ai_catalog, clock=env.clock)
+
+
+@pytest.fixture
+def verify(env: IdentityEnv, ai_consent: AcceptAiConsent) -> VerifyEmailLoginCode:
     return VerifyEmailLoginCode(
         users=env.users,
         challenges=env.challenges,
@@ -62,6 +68,7 @@ def verify(env: IdentityEnv) -> VerifyEmailLoginCode:
         clock=env.clock,
         uow=env.uow,
         events=env.events,
+        ai_consent=ai_consent,
     )
 
 

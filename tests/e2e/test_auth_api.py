@@ -19,9 +19,15 @@ from httpx import AsyncClient
 
 from doubles import CollectingBus, IdentityEnv, StubSocialVerifier
 from karria.modules.identity.api import dependencies as deps
-from karria.modules.identity.application import AccountDeleted, MainDeviceSnapshot, SocialLogin
+from karria.modules.identity.application import (
+    AcceptAiConsent,
+    AccountDeleted,
+    MainDeviceSnapshot,
+    SocialLogin,
+)
 from karria.modules.identity.domain import (
     REFRESH_REUSE_GRACE,
+    AiDisclosure,
     SocialProvider,
     VerifiedSocialProfile,
 )
@@ -182,6 +188,95 @@ class TestEmailLogin:
         assert response.status_code == 429
 
 
+class TestAccordIaALInscription:
+    """ADR-0025, « accord à l'inscription » : route publique, puis la version voyage avec la connexion."""
+
+    async def test_l_information_se_lit_sans_session(
+        self, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        response = await client.get("/api/v1/auth/ai-disclosure")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body) == {"version", "providers", "purposes"}
+        assert body["version"] == AiDisclosure.build(["gemini"]).version
+        assert body["providers"] == [{"id": "gemini", "name": "Google Gemini"}]
+        assert "application" in body["purposes"]
+
+    async def test_la_version_affichee_vaut_accord_a_la_connexion(
+        self, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        version = (await client.get("/api/v1/auth/ai-disclosure")).json()["version"]
+        started = await client.post(
+            "/api/v1/auth/email/start",
+            json={"email": EMAIL, **CONSENT, "ai_disclosure_version": version},
+        )
+        assert started.status_code == 200, started.text
+        verified = await client.post(
+            "/api/v1/auth/email/verify",
+            json={
+                "challenge_id": started.json()["challenge_id"],
+                "code": identity_env.sender.last_code_for(EMAIL),
+            },
+        )
+        assert verified.status_code == 200, verified.text
+
+        me = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {verified.json()['session']['access_token']}"},
+        )
+        assert me.json()["ai_consent"]["required"] is False
+        assert me.json()["ai_consent"]["accepted_version"] == version
+        assert me.json()["ai_consent"]["accepted_at"] is not None
+
+    async def test_une_version_perimee_connecte_sans_consigner(
+        self, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        started = await client.post(
+            "/api/v1/auth/email/start",
+            json={"email": EMAIL, **CONSENT, "ai_disclosure_version": "2020-01.deadbeef"},
+        )
+        assert started.status_code == 200, started.text
+        verified = await client.post(
+            "/api/v1/auth/email/verify",
+            json={
+                "challenge_id": started.json()["challenge_id"],
+                "code": identity_env.sender.last_code_for(EMAIL),
+            },
+        )
+        assert verified.status_code == 200, verified.text
+        me = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {verified.json()['session']['access_token']}"},
+        )
+        assert me.json()["ai_consent"]["required"] is True
+
+    async def test_par_google_aussi(
+        self, app: FastAPI, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        _override_social(app, identity_env, SocialProvider.GOOGLE, GOOGLE_PROFILE)
+        version = AiDisclosure.build(["gemini"]).version
+
+        response = await client.post(
+            "/api/v1/auth/social/google",
+            json={"id_token": "jeton", **CONSENT, "ai_disclosure_version": version},
+        )
+
+        assert response.status_code == 200, response.text
+        me = await client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {response.json()['session']['access_token']}"},
+        )
+        assert me.json()["ai_consent"]["required"] is False
+
+    async def test_une_version_vide_est_refusee(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/api/v1/auth/email/start",
+            json={"email": EMAIL, **CONSENT, "ai_disclosure_version": ""},
+        )
+        assert response.status_code == 422
+
+
 class TestSession:
     async def test_le_rafraichissement_tourne_et_lancien_acces_meurt(
         self, client: AsyncClient, identity_env: IdentityEnv
@@ -296,6 +391,9 @@ def _override_social(
             tokens=env.tokens,
             clock=env.clock,
             uow=env.uow,
+            ai_consent=AcceptAiConsent(
+                consents=env.ai_consents, catalog=env.ai_catalog, clock=env.clock
+            ),
         )
 
     target = deps.get_google_login if provider is SocialProvider.GOOGLE else deps.get_apple_login

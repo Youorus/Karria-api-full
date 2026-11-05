@@ -366,3 +366,18 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
   (`STORE_URL`) : sinon l'app bloque sans issue.
 - **Vérifier** : `GET https://api.karria.fr/api/v1/app/release?platform=ios&build=1` →
   `{"status":"ok",…}` sans session.
+
+## Accord IA à l'inscription (ADR-0025, section du 2026-11-05)
+
+- **Migration 19** (`accord_ia_a_l_inscription` : colonne `ai_disclosure_version` NULL
+  sur `identity_login_challenges`) : `aerich upgrade` dans un conteneur ponctuel,
+  **avant** le code (sans la colonne, `POST /auth/email/start` répond 500 — plus
+  aucune connexion par code).
+- Aucune variable nouvelle. Le quota de `GET /auth/ai-disclosure` (120 / 10 min par
+  origine) est dans le module, pas dans la configuration.
+- **Vérifier** : `GET https://api.karria.fr/api/v1/auth/ai-disclosure` sans session →
+  `{"version":"2026-10.…","providers":[{"id":"gemini",…}],"purposes":[…]}` ; puis une
+  connexion avec `ai_disclosure_version` = cette version → `GET /auth/me` répond
+  `ai_consent.required: false`.
+- **Retour arrière côté produit sans redéploiement** : l'app cesse d'envoyer
+  `ai_disclosure_version` ; le serveur ne consigne plus rien, la feuille revient.
