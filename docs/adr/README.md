@@ -67,3 +67,4 @@ sont pas reprises : Karria prendra les siennes, module par module.
 | [0032](0032-gabarits-d-e-mail.md) | Gabarits d'e-mail sans étiquette ni encart, mode sombre réel, logo sur le stockage public | Proposée |
 | [0033](0033-dossiers-de-candidature.md) | Dossiers de candidature : copie figée du CV, propositions réversibles, lettre liée à une offre, offre figée, purge | Proposée |
 | [0034](0034-couleur-principale-d-un-cv.md) | La couleur principale d'un CV choisie par la personne : `recolor_spec` pur (teintes dérivées suivies), `primary_color` au rendu et à l'export, retenue par dossier (`PUT /applications/{id}/color`), par défaut (`Selection`) et sur l'export | Proposée |
+| [0035](0035-pied-de-page-karria-sur-les-documents.md) | Le pied de page Karria sur les documents exportés : une ligne discrète « réalisé avec Karria · karria.fr/app » au bas des PDF et DOCX (CV, lettre, ATS safe), hors du flux, lien cliquable | Proposée |

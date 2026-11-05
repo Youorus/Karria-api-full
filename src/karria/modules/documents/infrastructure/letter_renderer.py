@@ -30,6 +30,11 @@ from docx.shared import Mm, Pt
 from karria.modules.documents.domain.headline import MM_PER_PT, ats_safe_spacing
 from karria.modules.documents.infrastructure.docx_renderer import FontNames, embed_fonts, rgb
 from karria.modules.documents.infrastructure.fonts import FontSet
+from karria.modules.documents.infrastructure.footer import (
+    add_docx_footer,
+    docx_footer_distance,
+    footer_html,
+)
 from karria.modules.documents.infrastructure.html_renderer import (
     anchor,
     esc,
@@ -267,8 +272,8 @@ class LetterHtmlRenderer:
         ]
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Lettre</title><style>{"".join(css)}</style></head>'
-            f'<body><div class="page"><div class="sheet">{self.header()}{self.body()}</div></div>'
-            f"{fit_script(self.spec, live=self.anchored)}</body></html>"
+            f'<body><div class="page"><div class="sheet">{self.header()}{self.body()}</div>'
+            f"{footer_html('letter')}</div>{fit_script(self.spec, live=self.anchored)}</body></html>"
         )
 
 
@@ -324,6 +329,11 @@ class LetterDocxRenderer:
             "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
         }.get(align, WD_ALIGN_PARAGRAPH.LEFT)
 
+    def footer_family(self) -> str:
+        """La police du pied Karria : celle du plus petit corps du document."""
+        smallest = min(self.styles.values(), key=lambda st: float(st["size_pt"]))
+        return self.names.word_font(str(smallest["family"]), 400, False)[0]
+
     def render(self) -> bytes:
         """Le DOCX complet, polices incorporées."""
         page = self.spec["page"]
@@ -332,6 +342,8 @@ class LetterDocxRenderer:
         sec.page_width, sec.page_height = Mm(page["width_mm"]), Mm(page["height_mm"])
         sec.top_margin, sec.bottom_margin = Mm(TOP_MM), Mm(15)
         sec.left_margin, sec.right_margin = Mm(left), Mm(right)
+        sec.footer_distance = docx_footer_distance()
+        add_docx_footer(sec.footer.paragraphs[0], "letter", self.footer_family())
         normal = self.doc.styles["Normal"]
         normal.paragraph_format.space_after = Pt(0)
         normal.paragraph_format.space_before = Pt(0)

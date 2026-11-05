@@ -48,6 +48,10 @@ from karria.modules.documents.infrastructure.fonts import (
     glyph_box,
     subset_for_documents,
 )
+from karria.modules.documents.infrastructure.footer import (
+    add_docx_footer,
+    docx_footer_distance,
+)
 from karria.modules.documents.infrastructure.html_renderer import (
     LIST_KINDS,
     ROLE_MARKER,
@@ -1086,6 +1090,11 @@ class DocxRenderer:
         else:
             p._p.append(run)
 
+    def footer_family(self) -> str:
+        """La police du pied Karria : celle du plus petit corps du document."""
+        smallest = min(self.styles.values(), key=lambda st: float(st["size_pt"]))
+        return self.names.word_font(str(smallest["family"]), 400, False)[0]
+
     # ------------------------------------------------------------------ document
     def render(self, assets: dict[str, bytes]) -> bytes:
         """Le DOCX complet, polices incorporées."""
@@ -1099,7 +1108,8 @@ class DocxRenderer:
         lead_top = (self.pitch(st_top) - st_top["box_h_mm"]) if st_top else 0.0
         sec.top_margin, sec.bottom_margin = Mm(max(0.0, top - lead_top)), Mm(6)
         sec.left_margin, sec.right_margin = Mm(0), Mm(0)
-        sec.header_distance, sec.footer_distance = Mm(0), Mm(0)
+        sec.header_distance, sec.footer_distance = Mm(0), docx_footer_distance()
+        add_docx_footer(sec.footer.paragraphs[0], "cv", self.footer_family())
         normal = self.doc.styles["Normal"]
         normal.paragraph_format.space_after = Pt(0)
         normal.paragraph_format.space_before = Pt(0)

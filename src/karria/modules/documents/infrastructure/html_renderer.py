@@ -31,6 +31,7 @@ from typing import Any, Final
 
 from karria.modules.documents.domain.view import header_path, item_path
 from karria.modules.documents.infrastructure.fonts import FontSet
+from karria.modules.documents.infrastructure.footer import footer_html
 
 Json = dict[str, Any]
 
@@ -717,7 +718,7 @@ class HtmlRenderer:
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
-            f"{''.join(bands_html)}</div></div>{fit}</body></html>"
+            f"{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
         )
 
 

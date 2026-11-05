@@ -185,6 +185,16 @@ Réponse : un `GeneratedCv` (même forme que l'export de CV) avec `kind: "letter
 - `GET /cv/me/generated-cvs?kind=cv|letter&dossier_id=…` filtre ; `kind` inconnu → `422`.
 - `GET` / `DELETE /cv/me/generated-cvs/{id}` valent pour les deux genres.
 
+### Le pied de page Karria (2026-11-05, ADR-0035)
+
+Chaque PDF et chaque DOCX exporté — CV et lettre, variante ATS safe comprise — porte une ligne
+de pied discrète : « CV réalisé avec Karria · karria.fr/app » (« Lettre réalisée avec Karria ·
+… »), 7 pt, gris doux, centrée, le lien cliquable vers
+`https://karria.fr/app?utm_source=document&utm_medium=cv|letter`. En HTML elle est posée en
+absolu au bas de la feuille `.page`, hors du flux et sans ancre `data-chemin` : elle ne déplace
+rien et ne change pas `pages` ; l'atelier (rendu ancré) la montre aussi. En DOCX c'est le pied de
+section, dans la marge basse. Aucun champ ni paramètre ne la pilote.
+
 ---
 
 ## 3. Envoi par e-mail

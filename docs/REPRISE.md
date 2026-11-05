@@ -5,6 +5,36 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
+
+**Demande de Marc** : à chaque partage (CV, lettre, offre), le destinataire doit avoir de quoi
+télécharger Karria — comme chez les grandes applications.
+
+**Livré côté API** (`make check` vert) :
+- **`documents/infrastructure/footer.py`** : `footer_html(kind)`, `add_docx_footer(paragraph, kind,
+  family)`, `footer_url(kind)` — « CV réalisé avec Karria · karria.fr/app » / « Lettre réalisée
+  avec Karria · … », 7 pt, gris `#9a9fa6`, lien `https://karria.fr/app?utm_source=document&utm_medium=cv|letter`.
+- Branché dans les quatre rendus par une ligne chacun : `HtmlRenderer.render` et
+  `LetterHtmlRenderer.render` (div en absolu au bas de `.page`, après le flux — pas d'ancre, pas
+  de classe `.t`, pagination inchangée), `DocxRenderer.render` et `LetterDocxRenderer.render`
+  (pied de section, `footer_distance` 3 mm, `w:hyperlink` réel, police du plus petit corps).
+  Vaut aussi pour les documents ATS safe. Tests : `tests/unit/documents/infrastructure/test_footer.py`.
+- Contrat : `docs/contrat-api-documents.md` § 2 « Le pied de page Karria » (même texte côté app).
+- Aucune route ni champ nouveau. L'API publique `GET /offers/{id}` (ADR-0025) est maintenant lue par
+  le site (`karria.fr/offre/<id>`, branche `partage` de `karria-landing`) : 240 lectures / 10 min
+  par adresse — Vercel sert la page depuis peu d'adresses, la réponse est gardée 5 min côté site ;
+  surveiller les `429` si le partage prend.
+
+**Côté app** (`karria_app`, commits `042cd11`, `b029b32`, `8325015`) : lecteur de documents dans
+l'app (plus de `storage.karria.fr` à l'écran), partage iOS avec message + fichier, message de
+partage d'offre avec `https://karria.fr/offre/<id>` et `https://karria.fr/app`, liens universels
+déclarés ; voir `karria_app/docs/REPRISE.md`.
+
+**Non vérifié** : un vrai PDF Gotenberg avec le pied (le HTML est testé, pas la sortie Chromium) ;
+un DOCX ouvert dans Word/Pages (python-docx relu seulement). À regarder : la ligne ne doit pas
+empiéter sur un CV multi-pages très dense (la réserve basse est de 6 mm minimum sur la première
+page seulement).
+
 ### Session du 2026-11-05 (soir) — la couleur principale d'un CV, choisie par la personne (ADR-0034 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : pouvoir changer la couleur primaire d'un CV dans l'atelier (palette, code,
