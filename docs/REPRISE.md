@@ -5,6 +5,32 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 (matin) — le modèle de CV d'un dossier se change à tout moment (ADR-0033 § 2026-11-05 — Fable) — EN PRODUCTION
+
+**Demande de Marc** : pouvoir passer d'un modèle à l'autre dans l'atelier, sur tout son catalogue,
+sans perdre ce qui est inscrit ; `template_id` n'était accepté qu'à `POST /applications`.
+
+**Livré** (commit `69bdb30`, `make check` vert, 3 412 tests, poussé → Dokploy, `/health/ready`
+200, la route répond 401 sans session) : **`PUT /applications/{id}/template`**, corps
+`{ "template_id": "<uuid>" | null }`, cas d'usage `ChangeDossierTemplate` (`Dossier.with_template`),
+**même porte qu'à l'ouverture** (port `TemplateChecker` ← `documents`, `403 template_locked` avec
+`details.template_id`), `404 dossier_not_found`, permise pendant l'adaptation, idempotente (le même
+modèle ne touche pas `updated_at`), `null` rend la main au modèle choisi de la personne. Rien
+d'autre ne bouge : CV adapté, propositions, lettre, couverture. Tests unitaires (domaine, cas
+d'usage) et e2e ; ADR-0033 complétée (section datée, avec ce qu'on a écarté : passer par `PUT /cv`
+ou lire toujours `/user-templates/me/selected`) ; `docs/contrat-api-candidatures.md` (et sa copie
+dans `karria_app/docs/`) ; README du module.
+
+**Acquisition d'un modèle (relu bout en bout)** : webhook Stripe → `Purchase` ajouté une seule
+fois → `TemplateStore.grant(user_id, template_id)` → `GET /user-templates/me` le liste ; côté app,
+la feuille de l'atelier attend la livraison (`attendreLaLivraison`), ajoute le modèle à `possedes`
+et l'applique ; la galerie relit `/user-templates/me` à chaque ouverture. Pas de trou trouvé ; le
+rendu (`render`) et la route ci-dessus vérifient tous deux « possédé ? » par `documents`.
+
+**Reste** : valider la section d'ADR ; un `?dossier_id=null` (ou `?orphan=true`) sur
+`GET /cv/me/generated-cvs` et un `cv` embarqué dans l'export restent des écarts de contrat notés par l'app.
+
+
 ### Session du 2026-11-05 (soir) — accord IA donné « en continuant » à l'inscription (ADR-0025, section du 2026-11-05 — Fable) — EN PRODUCTION
 
 **Demande de Marc** : ne plus afficher le consentement IA au moment où la personne veut
