@@ -172,6 +172,18 @@ class TestSocialSettings:
         assert social.apple_audiences == ["com.karria.app"]
         assert social.apple_enabled
 
+    def test_le_client_web_android_est_une_audience_a_part(self) -> None:
+        """Android passe à Google le client web du projet Firebase, pas celui d'iOS."""
+        from karria.shared.config import SocialSettings  # noqa: PLC0415
+
+        social = SocialSettings(
+            google_ios_client_id="ios",
+            google_web_client_id="web",
+            google_android_web_client_id="web-android",
+        )
+
+        assert social.google_audiences == ["ios", "web", "web-android"]
+
     def test_sans_identifiant_google_la_connexion_google_est_indisponible(self) -> None:
         from karria.shared.config import SocialSettings  # noqa: PLC0415
 

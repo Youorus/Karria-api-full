@@ -327,6 +327,12 @@ class SocialSettings(BaseModel):
     google_ios_client_id: str = ""
     google_web_client_id: str = ""
     google_android_client_id: str = ""
+    #: Le client **web** que l'application Android passe à Google : il doit
+    #: appartenir au même projet que le client Android OAuth (celui qui porte
+    #: l'empreinte SHA-1 du keystore) — chez Karria, le projet Firebase, pas
+    #: celui du client iOS. Un jeton obtenu sur Android porte donc cette
+    #: audience-là (repris de la V1, 2026-11-05).
+    google_android_web_client_id: str = ""
     #: Le *bundle identifier* de l'application iOS, audience des jetons
     #: Apple. Il n'est pas secret et ne change pas d'un environnement à
     #: l'autre — d'où la valeur par défaut.
@@ -341,6 +347,7 @@ class SocialSettings(BaseModel):
                 self.google_ios_client_id,
                 self.google_web_client_id,
                 self.google_android_client_id,
+                self.google_android_web_client_id,
             )
             if value
         ]
