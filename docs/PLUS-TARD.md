@@ -101,14 +101,39 @@ cela n'est repris : la cible d'hébergement de la refonte n'est pas décidée.
 **Déclencheur :** la décision d'hébergement. Écrire alors la séquence, et
 un `compose.prod.yaml` si c'est le choix.
 
-### Le logo d'e-mail et l'adresse de contact ne sont pas confirmés
+### L'adresse de contact des e-mails n'est pas confirmée (le logo l'est depuis le 2026-11-05)
 
-`shared/mail/theme.py` pointe `https://karria.fr/icon-512.png` et
-`contact@karria.fr`. Ni l'un ni l'autre n'a été vérifié.
+Le logo des e-mails est désormais servi par notre stockage public
+(`karria-production-assets/brand/…`, ADR-0032, vérifié en production).
+`contact@karria.fr` (`shared/mail/theme.py`) n'est qu'un repli : l'adresse
+citée est `MAIL__FROM_ADDRESS`, et personne n'a confirmé qu'une boîte la relève.
 
-**Ce que ça coûte :** un en-tête d'e-mail avec un carré vide, et un pied
-qui promet une boîte que personne ne relève.
+**Ce que ça coûte :** un pied qui promet une boîte que personne ne relève.
 **Déclencheur :** avant le premier envoi réel (`scripts/test_smtp.py`).
+
+### Le quota de rendus de l'atelier et le cache des URL de photos sont en mémoire
+
+`documents` compte les rendus de l'atelier (90/min/compte, ADR-0029) et garde
+les URL signées des photos stables 45 min **par processus** (Gunicorn en a
+quatre) : le plafond réel est multiplié par le nombre de workers, et une
+photo peut être retéléchargée jusqu'à quatre fois par la WebView.
+
+**Ce que ça coûte :** rien de visible en un exemplaire ; un peu de bande
+passante mobile.
+**Déclencheur :** la réplication de l'API, ou une plainte sur la consommation
+de données. Un compteur et un cache partagés (Redis) derrière les mêmes
+fonctions.
+
+### `pages` du rendu de l'atelier est une estimation
+
+Le nombre de pages rendu par `POST /documents/{id}/render` vient d'une mesure
+sans navigateur ; la vérité est dans `window.karriaFit` une fois les polices
+chargées dans la WebView. Un CV à la limite peut annoncer 1 et en faire 2.
+
+**Ce que ça coûte :** une seconde de décalage dans l'indicateur de pages de
+l'app, qui lit ensuite `window.karriaFit`.
+**Déclencheur :** si l'app ne peut pas lire la WebView (plateforme sans
+`injectedJavaScript`) ; passer alors par Gotenberg au repos, plus lent.
 
 ---
 

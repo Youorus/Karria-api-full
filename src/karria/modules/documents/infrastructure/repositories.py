@@ -351,5 +351,10 @@ class TortoiseSendRepository:
             user_id=user_id, created_at__gte=start, created_at__lt=end
         ).count()
 
+    async def count_to_between(self, address: str, start: datetime, end: datetime) -> int:
+        return await DocumentSendModel.filter(
+            to_address=address, created_at__gte=start, created_at__lt=end
+        ).count()
+
     async def forget(self, user_id: UUID) -> None:
         await DocumentSendModel.filter(user_id=user_id).delete()

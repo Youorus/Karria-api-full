@@ -331,19 +331,34 @@ class TestEnvoi:
         self, client: AsyncClient, fakes: Fakes, me: Principal, storage: InMemoryObjectStorage
     ) -> None:
         generated_id = await self._export(fakes, me, storage)
+        fakes.accounts.emails[me.subject_id] = "moi@exemple.fr"
         for _ in range(DAILY_SEND_LIMIT):
-            ok = await client.post(
-                f"{API}/documents/exports/{generated_id}/send", json={"to": "a@b.fr"}
-            )
+            ok = await client.post(f"{API}/documents/exports/{generated_id}/send")
             assert ok.status_code == 202
 
-        response = await client.post(
-            f"{API}/documents/exports/{generated_id}/send", json={"to": "a@b.fr"}
-        )
+        response = await client.post(f"{API}/documents/exports/{generated_id}/send")
 
         assert response.status_code == 429
         assert reason(response) == "send_quota_exceeded"
         assert response.json()["error"]["details"]["retry_after"] > 0
+        assert response.json()["error"]["details"]["scope"] == "account"
+
+    async def test_le_troisieme_envoi_du_jour_vers_la_meme_adresse_tierce_est_refuse(
+        self, client: AsyncClient, fakes: Fakes, me: Principal, storage: InMemoryObjectStorage
+    ) -> None:
+        generated_id = await self._export(fakes, me, storage)
+        for _ in range(2):
+            ok = await client.post(
+                f"{API}/documents/exports/{generated_id}/send", json={"to": "rh@acme.fr"}
+            )
+            assert ok.status_code == 202
+
+        response = await client.post(
+            f"{API}/documents/exports/{generated_id}/send", json={"to": "rh@acme.fr"}
+        )
+
+        assert response.status_code == 429
+        assert response.json()["error"]["details"]["scope"] == "recipient"
 
     async def test_un_lot_vide_ou_trop_grand_est_refuse_par_le_schema(
         self, client: AsyncClient, fakes: Fakes, me: Principal

@@ -14,6 +14,7 @@ from documents.fakes import (
     PDF_BYTES,
     FakeAccountDirectory,
     FakeDocumentMailer,
+    FakeOriginThrottle,
     InMemorySendRepository,
     make_generated,
 )
@@ -26,7 +27,11 @@ from karria.modules.documents.domain.errors import (
     SendNotFoundError,
     SendQuotaExceededError,
 )
-from karria.modules.documents.domain.sends import DAILY_SEND_LIMIT, SendStatus
+from karria.modules.documents.domain.sends import (
+    DAILY_SEND_LIMIT,
+    DAILY_SENDS_PER_RECIPIENT,
+    SendStatus,
+)
 from karria.modules.documents.domain.templates import DocumentKind
 from karria.shared.errors.exceptions import InvalidInputError
 from karria.shared.mail import MailDeliveryError
@@ -41,6 +46,7 @@ class SendEnv:
         self.sends = InMemorySendRepository()
         self.accounts = FakeAccountDirectory()
         self.mailer = FakeDocumentMailer()
+        self.origins = FakeOriginThrottle()
 
     def request(self) -> SendDocuments:
         return SendDocuments(
@@ -49,6 +55,7 @@ class SendEnv:
             accounts=self.accounts,
             jobs=self.env.jobs,
             clock=self.env.clock,
+            origins=self.origins,
         )
 
     def deliver(self) -> DeliverDocuments:
@@ -153,17 +160,65 @@ class TestDemande:
         self, sends: SendEnv
     ) -> None:
         cv = await sends.cv()
+        sends.accounts.emails[sends.env.user] = "moi@exemple.fr"
         for _ in range(DAILY_SEND_LIMIT):
-            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="a@b.fr")
+            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to=None)
 
         with pytest.raises(SendQuotaExceededError) as exc:
-            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="a@b.fr")
+            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to=None)
         assert exc.value.details["retry_after"] > 0
+        assert exc.value.details["scope"] == "account"
 
         sends.env.clock.advance(timedelta(days=1))
-        again = await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="a@b.fr")
+        again = await sends.request().execute(sends.env.user, generated_ids=[cv.id], to=None)
         assert again.status is SendStatus.QUEUED
         assert len(sends.sends.items) == DAILY_SEND_LIMIT + 1
+
+    async def test_deux_envois_par_jour_vers_une_meme_adresse_tierce_tous_comptes_confondus(
+        self, sends: SendEnv
+    ) -> None:
+        cv = await sends.cv()
+        other_cv = make_generated(uuid4(), pdf_key="generated-cvs/o/cv.pdf")
+        await sends.env.generated.add(other_cv)
+        for _ in range(DAILY_SENDS_PER_RECIPIENT):
+            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="RH@acme.fr")
+
+        with pytest.raises(SendQuotaExceededError) as mine:
+            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh@acme.fr")
+        with pytest.raises(SendQuotaExceededError) as theirs:
+            await sends.request().execute(
+                other_cv.user_id, generated_ids=[other_cv.id], to="rh@acme.fr"
+            )
+        assert mine.value.details["scope"] == "recipient"
+        assert theirs.value.details["scope"] == "recipient"
+        # Une autre adresse tierce reste possible, dans le quota du compte.
+        ok = await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh@beta.fr")
+        assert ok.status is SendStatus.QUEUED
+
+    async def test_sa_propre_adresse_echappe_aux_plafonds_anti_relais(self, sends: SendEnv) -> None:
+        cv = await sends.cv()
+        sends.accounts.emails[sends.env.user] = "Moi@Exemple.fr"
+        sends.origins.limit = 0
+        for _ in range(3):
+            send = await sends.request().execute(
+                sends.env.user, generated_ids=[cv.id], to="moi@exemple.fr", origin="1.2.3.4"
+            )
+            assert send.status is SendStatus.QUEUED
+        assert sends.origins.hits == {}
+
+    async def test_une_origine_qui_insiste_est_refusee_et_journalisee(self, sends: SendEnv) -> None:
+        cv = await sends.cv()
+        sends.origins.limit = 1
+        await sends.request().execute(
+            sends.env.user, generated_ids=[cv.id], to="a@b.fr", origin="1.2.3.4"
+        )
+        with pytest.raises(SendQuotaExceededError) as exc:
+            await sends.request().execute(
+                sends.env.user, generated_ids=[cv.id], to="c@d.fr", origin="1.2.3.4"
+            )
+        assert exc.value.details["scope"] == "origin"
+        assert exc.value.details["retry_after"] == 60
+        assert sends.origins.hits == {"send|1.2.3.4": 2}
 
     async def test_une_file_en_panne_marque_l_envoi_en_echec_tout_de_suite(
         self, sends: SendEnv
@@ -247,6 +302,24 @@ class TestRemise:
         assert await sends.deliver().execute(send.id) is SendStatus.SENT
         assert await sends.deliver().execute(uuid4()) is None
         assert len(sends.mailer.sent) == 1
+
+    async def test_un_nom_qui_ressemble_a_un_lien_ne_signe_pas_et_ne_nomme_pas_la_piece(
+        self, sends: SendEnv
+    ) -> None:
+        generated = make_generated(sends.env.user, full_name="www.arnaque.fr")
+        await sends.env.storage.put(
+            Bucket.DOCUMENTS, generated.pdf_key, PDF_BYTES, content_type="application/pdf"
+        )
+        await sends.env.generated.add(generated)
+        send = await sends.request().execute(
+            sends.env.user, generated_ids=[generated.id], to="a@b.fr"
+        )
+
+        await sends.deliver().execute(send.id)
+
+        _, sender_name, documents = sends.mailer.sent[0]
+        assert sender_name == "Une personne"
+        assert documents[0].file_name == "CV.pdf"
 
     async def test_sans_nom_sur_les_documents_la_signature_reste_sobre(
         self, sends: SendEnv

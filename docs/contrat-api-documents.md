@@ -186,8 +186,11 @@ Réponse : un `GeneratedCv` (même forme que l'export de CV) avec `kind: "letter
 
 Plusieurs documents **dans un seul e-mail** (1 à 4, doublons ignorés) : le PDF de chaque
 export quand il existe, sinon le DOCX, nommés « CV - Prénom Nom.pdf », « Lettre de
-motivation - Entreprise.pdf ». Le message est un gabarit fixe signé du nom de la personne
-(« Awa Diallo vous transmet ses documents de candidature… ») : **aucun texte libre**.
+motivation - Entreprise.pdf ». Le message est un gabarit fixe, **objet fixe** (« Des
+documents envoyés depuis Karria »), signé du nom de la personne (« Awa Diallo vous
+transmet ses documents de candidature… ») : **aucun texte libre**. Le nom et les noms de
+pièces sont filtrés (jeu strict, 60 caractères) et remplacés par « Une personne » /
+« CV.pdf » s'ils ressemblent à un lien ou un domaine.
 
 ### Réponse (`Envoi`)
 
@@ -209,10 +212,14 @@ la raison d'un échec reste dans le journal, jamais dans la réponse).
 | 409 | `account_email_unknown` | `to: null` et adresse du compte introuvable |
 | 422 | `recipient_invalid` (`field: to`) | adresse mal formée |
 | 422 | `documents_count_invalid` | 0 ou > 4 documents |
-| 429 | `send_quota_exceeded` | **5 envois par jour civil (UTC)** déjà demandés (`details.retry_after`, secondes jusqu'à minuit UTC) |
+| 429 | `send_quota_exceeded`, `scope: account` | **5 envois par jour civil (UTC)** déjà demandés (`details.retry_after`, secondes jusqu'à minuit UTC) |
+| 429 | `send_quota_exceeded`, `scope: recipient` | adresse **tierce** : déjà **2 envois aujourd'hui vers cette adresse** (tous comptes confondus) |
+| 429 | `send_quota_exceeded`, `scope: origin` | adresse **tierce** : plus de 10 envois par heure depuis cette origine (`retry_after` en secondes) |
 
-Le quota compte les envois **demandés** (réussis ou non). L'app affiche l'adresse avant
-d'envoyer (« confirmée visuellement ») ; l'API ne demande pas de seconde confirmation.
+Les quotas comptent les envois **demandés** (réussis ou non). Vers l'adresse du compte
+(`to: null`, ou la même adresse), seul `scope: account` s'applique. L'app affiche
+l'adresse avant d'envoyer (« confirmée visuellement ») ; l'API ne demande pas de seconde
+confirmation.
 
 ---
 

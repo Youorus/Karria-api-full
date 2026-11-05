@@ -235,7 +235,7 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.WELCOME: "Bienvenue sur Karria, Awa",
     MailMessage.SMTP_TEST: "Test SMTP Karria",
     MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
-    MailMessage.DOCUMENTS_SENT: "Documents de candidature de Awa Diallo",
+    MailMessage.DOCUMENTS_SENT: "Des documents envoyés depuis Karria",
 }
 
 #: Ce qui trahit une variable mal rendue, quelle que soit sa syntaxe.

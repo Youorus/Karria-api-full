@@ -11,11 +11,16 @@ from documents.fakes import make_generated
 from karria.modules.documents.domain.errors import RecipientInvalidError, SendQuotaExceededError
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
+    DAILY_SENDS_PER_RECIPIENT,
     DocumentSend,
     SendStatus,
     day_bounds,
     ensure_quota,
+    ensure_recipient_quota,
+    looks_like_link,
     normalize_address,
+    safe_attachment_name,
+    safe_display_name,
 )
 from karria.modules.documents.domain.templates import DocumentKind
 
@@ -94,3 +99,45 @@ class TestNomsDeFichiers:
         assert cv.file_name("pdf") == "CV - Awa Diallo.pdf"
         assert letter.file_name("docx") == "Lettre de motivation - Acme.docx"
         assert make_generated(uuid4(), full_name="").file_name("pdf") == "CV.pdf"
+
+
+class TestNomsSurs:
+    """Un message signé Karria part vers des tiers : rien de ce qui vient du CV ne peut y glisser un lien."""
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            ("Awa Diallo", "Awa Diallo"),
+            ("  Jean-Luc O'Neil  ", "Jean-Luc O'Neil"),
+            ("Awa <b>Diallo</b>", "Awa bDiallob"),
+            ("A" * 80, "A" * 60),
+            ("Awa Diallo.", "Awa Diallo"),
+        ],
+    )
+    def test_un_nom_est_reduit_au_jeu_strict_et_borne(self, given: str, expected: str) -> None:
+        assert safe_display_name(given) == expected
+
+    @pytest.mark.parametrize(
+        "given",
+        ["www.arnaque.fr", "http://x", "https://x", "acme.fr", "Awa Diallo - karria.fr", "", None],
+    )
+    def test_un_nom_qui_ressemble_a_un_lien_ou_vide_est_refuse(self, given: str | None) -> None:
+        assert safe_display_name(given) == ""
+
+    def test_la_piece_jointe_garde_son_extension_et_retombe_sur_un_nom_neutre(self) -> None:
+        assert safe_attachment_name("CV - Awa Diallo", "pdf", "CV") == "CV - Awa Diallo.pdf"
+        assert safe_attachment_name("CV - www.x.fr", "pdf", "CV") == "CV.pdf"
+        assert (
+            safe_attachment_name("Lettre de motivation - Acme", "docx", "Lettre de motivation")
+            == "Lettre de motivation - Acme.docx"
+        )
+
+    def test_le_plafond_par_destinataire(self) -> None:
+        ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT - 1, NOON)
+        with pytest.raises(SendQuotaExceededError) as exc:
+            ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT, NOON)
+        assert exc.value.details["scope"] == "recipient"
+
+    def test_un_point_suivi_de_lettres_fait_un_lien(self) -> None:
+        assert looks_like_link("foo.bar")
+        assert not looks_like_link("foo bar")

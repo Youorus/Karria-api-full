@@ -186,7 +186,15 @@ class SendRepository(Protocol):
 
     async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int: ...
 
+    async def count_to_between(self, address: str, start: datetime, end: datetime) -> int: ...
+
     async def forget(self, user_id: UUID) -> None: ...
+
+
+class OriginThrottle(Protocol):
+    """Port : compte les envois par origine (adresse IP) ; rend les secondes à attendre, ou `None`."""
+
+    def hit(self, key: str) -> int | None: ...
 
 
 class AccountDirectory(Protocol):

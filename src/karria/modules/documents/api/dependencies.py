@@ -40,6 +40,7 @@ from karria.modules.documents.application import (
     ListOwnedTemplates,
     ListTemplates,
     LogoFetcher,
+    OriginThrottle,
     PreviewTemplate,
     RecordTemplateView,
     RenderDocument,
@@ -150,6 +151,19 @@ def throttle_render(principal: CurrentPrincipalDep) -> Principal:
 
 
 RenderPrincipalDep = Annotated[Principal, Depends(throttle_render)]
+
+#: Envois vers une adresse tierce par origine (adresse IP) et par heure
+#: (ADR-0031, revue de sécurité) : dix couvrent une personne qui envoie son
+#: dossier à plusieurs entreprises ; un relais en voudrait des centaines.
+SEND_ORIGIN_LIMIT = 10
+SEND_ORIGIN_WINDOW_SECONDS = 3_600
+_send_origin_limiter = SlidingWindowLimiter(
+    max_hits=SEND_ORIGIN_LIMIT, window_seconds=SEND_ORIGIN_WINDOW_SECONDS
+)
+
+
+def get_origin_throttle() -> OriginThrottle:
+    return _send_origin_limiter
 
 
 def get_template_repository() -> TemplateRepository:
@@ -368,9 +382,10 @@ def get_send_documents(
     accounts: AccountsDep,
     jobs: JobsDep,
     clock: ClockDep,
+    origins: Annotated[OriginThrottle, Depends(get_origin_throttle)],
 ) -> SendDocuments:
     return SendDocuments(
-        generated=generated, sends=sends, accounts=accounts, jobs=jobs, clock=clock
+        generated=generated, sends=sends, accounts=accounts, jobs=jobs, clock=clock, origins=origins
     )
 
 

@@ -40,6 +40,27 @@ adresse libre fait de Karria un relais de courrier : il faut qu'il soit
    marque `sent` ou `failed` (raison technique dans le journal, jamais dans la
    réponse). `GET /documents/sends/{id}` relit l'état.
 
+## Revue de sécurité (2026-11-05, même jour)
+
+Un message signé Karria part vers des tiers, et le nom de la personne comme
+les noms de fichiers viennent du CV — donc de la personne. Pour que l'envoi ne
+serve ni de relais d'hameçonnage ni de relais de courrier :
+
+6. **L'objet est fixe** (« Des documents envoyés depuis Karria ») : aucun
+   texte contrôlé par la personne n'y entre.
+7. **Le nom qui signe et les noms de pièces** sont réduits à un jeu strict
+   (`[\w \-'.]`, 60 caractères) et **refusés** s'ils ressemblent à un lien ou
+   un domaine (`http`, `www`, un point suivi de lettres) : repli « Une
+   personne », « CV.pdf », « Lettre de motivation.pdf ». Le gabarit échappe
+   tout le contexte (test dédié).
+8. Vers une **adresse tierce** : **deux envois par jour vers la même adresse**,
+   tous comptes confondus (`429 send_quota_exceeded`, `scope: recipient`), et
+   **dix envois par heure et par origine** (adresse IP, `scope: origin`).
+   Vers **sa propre adresse** (celle du compte), seul le quota du compte
+   (`scope: account`) s'applique.
+9. Chaque refus est journalisé (`documents.send_refused` : compte, plafond,
+   tiers ou non) — le journal d'abus.
+
 ## Conséquences
 
 - Le quota compte les envois **demandés** (créés), pas les remis : un envoi

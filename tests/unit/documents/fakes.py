@@ -459,9 +459,28 @@ class InMemorySendRepository:
             1 for s in self.items.values() if s.user_id == user_id and start <= s.created_at < end
         )
 
+    async def count_to_between(self, address: str, start: datetime, end: datetime) -> int:
+        return sum(
+            1
+            for s in self.items.values()
+            if s.to.casefold() == address.casefold() and start <= s.created_at < end
+        )
+
     async def forget(self, user_id: UUID) -> None:
         self.forgotten.append(user_id)
         self.items = {k: s for k, s in self.items.items() if s.user_id != user_id}
+
+
+@dataclass
+class FakeOriginThrottle:
+    """Implémente `OriginThrottle` : refuse au-delà de `limit` passages par clé."""
+
+    limit: int = 10
+    hits: dict[str, int] = field(default_factory=dict)
+
+    def hit(self, key: str) -> int | None:
+        self.hits[key] = self.hits.get(key, 0) + 1
+        return 60 if self.hits[key] > self.limit else None
 
 
 class FakeAccountDirectory:

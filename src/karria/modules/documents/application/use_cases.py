@@ -42,6 +42,7 @@ from karria.modules.documents.application.ports import (
     DocumentMailer,
     GeneratedCvRepository,
     LogoFetcher,
+    OriginThrottle,
     RenderedHtml,
     SendRepository,
     TemplateJobs,
@@ -57,6 +58,7 @@ from karria.modules.documents.domain.errors import (
     RenderingUnavailableError,
     RenderTooLargeError,
     SendNotFoundError,
+    SendQuotaExceededError,
     TailoringNotAvailableError,
     TemplateIngestionError,
     TemplateNotFoundError,
@@ -72,7 +74,10 @@ from karria.modules.documents.domain.sends import (
     SendStatus,
     day_bounds,
     ensure_quota,
+    ensure_recipient_quota,
     normalize_address,
+    safe_attachment_name,
+    safe_display_name,
 )
 from karria.modules.documents.domain.templates import (
     RENDER_MAX_HTML_BYTES,
@@ -1177,7 +1182,14 @@ class ExportLetter:
 
 
 class SendDocuments:
-    """Demande l'envoi d'un ou plusieurs exports à une adresse : journal, quota, file."""
+    """Demande l'envoi d'un ou plusieurs exports à une adresse : journal, quotas, file.
+
+    Trois quotas (ADR-0031, revue de sécurité) : cinq envois par jour et par
+    compte ; vers une adresse **tierce** seulement, deux envois par jour vers
+    la même adresse (tous comptes confondus) et un plafond par origine
+    (`OriginThrottle`). Chaque refus est journalisé (`documents.send_refused`)
+    : c'est le journal d'abus.
+    """
 
     def __init__(
         self,
@@ -1187,21 +1199,30 @@ class SendDocuments:
         accounts: AccountDirectory,
         jobs: TemplateJobs,
         clock: Clock,
+        origins: OriginThrottle | None = None,
     ) -> None:
         self._generated, self._sends, self._accounts = generated, sends, accounts
-        self._jobs, self._clock = jobs, clock
+        self._jobs, self._clock, self._origins = jobs, clock, origins
 
     async def execute(
-        self, user_id: UUID, *, generated_ids: list[UUID], to: str | None
+        self,
+        user_id: UUID,
+        *,
+        generated_ids: list[UUID],
+        to: str | None,
+        origin: str | None = None,
     ) -> DocumentSend:
         """
+        Args:
+            origin: L'adresse IP de la demande, pour le plafond par origine (`None` : hors HTTP).
+
         Raises:
             InvalidInputError: Aucun document, trop de documents, ou un doublon.
             GeneratedCvNotFoundError: Un export inconnu ou d'une autre personne.
             DocumentFileMissingError: Un export sans fichier.
             RecipientInvalidError: Adresse mal formée.
             AccountEmailUnknownError: `to` absent et adresse du compte introuvable.
-            SendQuotaExceededError: Cinq envois déjà demandés aujourd'hui.
+            SendQuotaExceededError: Un des trois quotas est atteint (`details.scope`).
         """
         unique = list(dict.fromkeys(generated_ids))
         if not unique or len(unique) > MAX_DOCUMENTS_PER_SEND:
@@ -1215,15 +1236,34 @@ class SendDocuments:
                 raise GeneratedCvNotFoundError()
             if not (found.pdf_key or found.docx_key):
                 raise DocumentFileMissingError(generated_id)
+        account = await self._accounts.email_of(user_id)
         if to is None:
-            account = await self._accounts.email_of(user_id)
             if not account:
                 raise AccountEmailUnknownError()
             to = account
         address = normalize_address(to)
         now = self._clock.now()
         start, end = day_bounds(now)
-        ensure_quota(await self._sends.count_between(user_id, start, end), now)
+        own = account is not None and address.casefold() == account.strip().casefold()
+        try:
+            ensure_quota(await self._sends.count_between(user_id, start, end), now)
+            if not own:
+                # Une adresse tierce : les plafonds anti-relais s'appliquent.
+                ensure_recipient_quota(await self._sends.count_to_between(address, start, end), now)
+                retry_after = (
+                    self._origins.hit(f"send|{origin}") if self._origins and origin else None
+                )
+                if retry_after is not None:
+                    raise SendQuotaExceededError(retry_after=retry_after, scope="origin")
+        except SendQuotaExceededError as exc:
+            # Le journal d'abus : qui, quel plafond, vers un tiers ou non.
+            logger.warning(
+                "documents.send_refused",
+                user_id=str(user_id),
+                scope=exc.details.get("scope"),
+                third_party=not own,
+            )
+            raise
         send = DocumentSend(
             id=uuid4(),
             user_id=user_id,
@@ -1305,9 +1345,11 @@ class DeliverDocuments:
                 key, extension, content_type = found.docx_key, "docx", DOCX
             else:
                 raise DocumentFileMissingError(generated_id)
+            base, _, _ = found.file_name(extension).rpartition(".")
+            fallback = "Lettre de motivation" if found.kind is DocumentKind.LETTER else "CV"
             out.append(
                 DocumentFile(
-                    file_name=found.file_name(extension),
+                    file_name=safe_attachment_name(base, extension, fallback),
                     content_type=content_type,
                     data=await self._storage.get(Bucket.DOCUMENTS, key),
                 )
@@ -1315,9 +1357,9 @@ class DeliverDocuments:
         return out
 
     async def _sender_name(self, send: DocumentSend) -> str:
-        """Le nom qui signe : celui du premier document qui en porte un."""
+        """Le nom qui signe : celui du premier document qui en porte un de sûr."""
         for generated_id in send.generated_ids:
             found = await self._generated.get(generated_id)
-            if found is not None and found.full_name.strip():
-                return found.full_name.strip()
+            if found is not None and safe_display_name(found.full_name):
+                return safe_display_name(found.full_name)
         return "Une personne"

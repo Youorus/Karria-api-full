@@ -78,7 +78,8 @@ class TestComposition:
 class TestMessage:
     def test_le_message_est_signe_du_nom_de_la_personne_et_liste_les_pieces(self) -> None:
         rendered = render_for(_mail(), app_url="https://karria.fr")
-        assert rendered.subject == "Documents de candidature de Awa Diallo"
+        # L'objet est fixe : rien de ce qui vient du CV n'y entre (revue de sécurité).
+        assert rendered.subject == "Des documents envoyés depuis Karria"
         assert "Awa Diallo" in rendered.text_body
         assert "- CV - Awa Diallo.pdf" in rendered.text_body
         assert "L’équipe Karria" not in rendered.text_body
@@ -111,6 +112,13 @@ class TestMessage:
             "Lettre de motivation - Acme.pdf",
         ]
         assert "Lettre de motivation - Acme.pdf" in text
-        assert (
-            "Application documents from Awa Diallo" not in text
-        )  # l'objet n'est pas dans le corps
+
+    def test_un_nom_hostile_est_echappe_dans_le_html(self) -> None:
+        mail = OutgoingMail(
+            message=MailMessage.DOCUMENTS_SENT,
+            to="rh@acme.fr",
+            context={**CONTEXT, "sender_name": "<script>alert(1)</script> & Cie"},
+        )
+        html = render_for(mail, app_url="https://karria.fr").html_body
+        assert "<script>" not in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; Cie" in html

@@ -198,9 +198,12 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
         },
     ),
     MailMessage.DOCUMENTS_SENT: MailTemplate(
+        # Objet **fixe** : aucun texte contrôlé par la personne n'y entre (un
+        # nom de CV peut être n'importe quoi, et l'objet est ce qu'on lit
+        # avant d'ouvrir — revue de sécurité du 2026-11-05).
         subject={
-            Language.FR: "Documents de candidature de $sender_name",
-            Language.EN: "Application documents from $sender_name",
+            Language.FR: "Des documents envoyés depuis Karria",
+            Language.EN: "Documents sent from Karria",
         },
         template="documents_sent",
         category=MailCategory.NOTIFICATION,

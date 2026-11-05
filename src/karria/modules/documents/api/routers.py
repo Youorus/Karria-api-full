@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 
 from karria.modules.documents.api.dependencies import (
     GuestPrincipalDep,
@@ -96,6 +96,7 @@ from karria.shared.auth import (
 )
 from karria.shared.errors import ErrorCode, InvalidInputError, error_responses
 from karria.shared.http.dependencies import ObjectStorageDep
+from karria.shared.http.ratelimit import client_ip
 from karria.shared.storage import Bucket
 
 router = APIRouter()
@@ -473,11 +474,15 @@ async def export_letter(
 )
 async def send_documents(
     body: BatchSendRequest,
+    request: Request,
     principal: CurrentPrincipalDep,
     use_case: Annotated[SendDocuments, Depends(get_send_documents)],
 ) -> SendRead:
     send = await use_case.execute(
-        principal.subject_id, generated_ids=body.generated_ids, to=body.to
+        principal.subject_id,
+        generated_ids=body.generated_ids,
+        to=body.to,
+        origin=client_ip(request),
     )
     return SendRead.present(send)
 
@@ -496,13 +501,17 @@ async def send_documents(
 )
 async def send_document(
     generated_id: UUID,
+    request: Request,
     principal: CurrentPrincipalDep,
     use_case: Annotated[SendDocuments, Depends(get_send_documents)],
     body: SendRequest | None = None,
 ) -> SendRead:
     """Même contrat que l'envoi groupé, pour un seul document."""
     send = await use_case.execute(
-        principal.subject_id, generated_ids=[generated_id], to=body.to if body else None
+        principal.subject_id,
+        generated_ids=[generated_id],
+        to=body.to if body else None,
+        origin=client_ip(request),
     )
     return SendRead.present(send)
 

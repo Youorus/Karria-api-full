@@ -61,6 +61,9 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   depuis l'hôte public du stockage (`infrastructure/logos.py`), converti en PNG.
 - **Envoi** (ADR-0031) : `202` puis travail `documents.send_documents` ; PDF sinon DOCX ;
   signé du nom de la personne ; 5 envois par jour civil UTC, comptés sur les demandes.
+  Anti-hameçonnage (revue du 2026-11-05) : objet fixe, noms filtrés (jamais un lien),
+  2 envois/jour vers une même adresse tierce, 10/heure par origine, journal
+  `documents.send_refused` ; sa propre adresse n'est bornée que par le quota du compte.
 
 - **Porte de qualité** (`domain/gate.py`) : PDF ≥ 0,90 et planchers par
   composante ; sinon la version reste `review`.
