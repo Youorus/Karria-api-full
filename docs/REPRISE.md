@@ -233,6 +233,17 @@ moteur ; le rendu sample passe par le même chemin HTML).
 besoin ; un vrai envoi d'e-mail depuis l'iPhone de Marc ; quotas et cache d'URL en mémoire par
 processus (voir `PLUS-TARD.md`) ; `contact@karria.fr` toujours non confirmé.
 
+### 2026-11-05, nuit — Anthropic enfin dans le routage (Fable)
+
+L'espace de travail `wrkspc_01QUMMhp36Ri9FfHBUmTkXCA` est le bon (200 sur `/v1/messages` ;
+l'autre répond 404). Posé en prod (`LLM__PROVIDERS__ANTHROPIC__WORKSPACE_ID`). Au passage : la
+clé `LLM__PROVIDERS__ANTHROPIC__API_KEY` n'était que dans `/root/karria-api.env`, **pas** dans
+l'environnement Dokploy (le seul que le conteneur lit) — copiée, redéployée, le conteneur
+répond `anthropic configuré : True`. Aucune route `LLM__TASKS__*=anthropic:…` encore : tout
+reste sur Gemini, et la version de l'accord IA (dérivée des routes) ne change pas.
+**Reste côté Marc** : dire quelles tâches passent sur Claude et avec quel modèle (puis nommer
+Anthropic sur karria.fr/confidentialite ; les utilisateurs reverront la feuille d'accord une fois).
+
 ### 2026-11-05, suite — revue de sécurité du module `applications` (Fable) — EN PRODUCTION
 
 Quatre points corrigés après revue automatique : (1) dépôt : `insert` explicite à
