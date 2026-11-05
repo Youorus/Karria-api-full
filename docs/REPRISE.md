@@ -5,6 +5,70 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 — atelier CV : rendu HTML ancré, lettres, envoi par e-mail, gabarits d'e-mail, version minimale de l'app (Fable) — EN PRODUCTION
+
+**Demande de Marc** : les briques « documents » et « e-mail » de `docs/atelier-cv-feuille-de-route.md`
+(option C), en parallèle de l'agent `applications` (dossiers de candidature, ADR-0033, migration 16).
+Contrat pour l'app : **`docs/contrat-api-documents.md`**.
+
+**Livré** (commits `94bdc73` mail, `256e721` documents, `076badf` app, `ee4d2ca` puis
+`ed5b997` durcissements ; ADR-0029 à 0032 « Proposées » ; **migrations 17 et 18** ;
+`make check` vert, 3 392 tests) :
+
+- **`POST /documents/{template_id}/render`** (session, 90/min/compte) : le HTML que Gotenberg
+  imprime, avec `data-chemin` sur chaque texte du CV **reçu** (le brouillon de l'app), ou une
+  lettre, ou `?sample=true` (galerie, sans ancres). Polices par URL publique stable (bucket
+  public **`assets`**, copies posées à la première demande), pictogrammes en `data:`, photo par
+  URL signée stable 45 min ; `pages` estimé par mesure, vérité dans `window.karriaFit` ;
+  filets de coupure dans l'atelier seulement. Façade pour un autre module :
+  `documents.build_render_document` / `get_render_document` (ADR-0029 § 6).
+- **Lettre de motivation** (ADR-0030) : donnée structurée (`recipient`, `subject`,
+  `paragraphs[{kind,text}]`, `closing`, `sender`), rendue dans la grammaire du modèle de CV
+  (marges extérieures, polices, accent des titres), logo **seulement** depuis
+  `storage.karria.fr` (converti en PNG), HTML ancré + PDF + DOCX (`letter_renderer.py`),
+  `POST /documents/letters/export` → `GeneratedCv` `kind: letter`, `company_name`,
+  `dossier_id` (aussi accepté par l'export de CV ; `GET /cv/me/generated-cvs?kind=&dossier_id=`).
+- **Envoi par e-mail** (ADR-0031) : `POST /documents/exports/{id}/send` et
+  `POST /documents/exports/send` (`generated_ids`, `to: null` = adresse du compte via le port
+  `AccountDirectory` ← `identity`), `202` + travail `documents.send_documents`, journal
+  `documents_sends`, pièces jointes au port mail (`Attachment`, SMTP `add_attachment`), gabarit
+  `documents_sent` signé du nom de la personne. **Deux revues de sécurité** (coordinateur)
+  appliquées le jour même (ADR-0031 § revue) : objet fixe ; noms NFKC réduits aux lettres,
+  jamais un lien/IP/chiffre-point ; adresse relue par `parseaddr` sans `<>(),;:"[]\` ;
+  SMTP `to_addrs` explicite ; 5/jour/compte, 2/jour par (compte, boîte canonique `to_key`,
+  migration 18), 10/jour tous comptes, 10/heure par origine lue derrière
+  `SECURITY__TRUSTED_PROXY_HOPS` (Traefik = 1, origine illisible = seau partagé) ; échecs non
+  comptés ; comptage et insertion sous verrou consultatif ; réponse 429 générique (sans le
+  plafond touché), détail dans le journal `documents.send_refused` ; sa propre adresse n'est
+  bornée que par le quota du compte.
+- **Export de la copie adaptée d'un dossier** : `POST /cv/me/generated-cvs` accepte `cv`
+  (même `CvBody` que le rendu) et l'exporte à la place du CV de base (mêmes vue, ATS,
+  photo de la personne), rattaché à `dossier_id` — c'est ce que `applications` appelle.
+- **Gabarits d'e-mail refaits** (ADR-0032) : plus aucun encart/barre/boîte (code = grand
+  nombre, avertissement = phrase), mode sombre réel (`@media` + classes + `[data-ogsc]`),
+  largeur fluide, mot-logo PNG sur `karria-production-assets/brand/` (noir en clair, blanc en
+  sombre, déposés par `scripts/assets.py brand`), vérifiés visuellement avec
+  `scripts/mail_preview.py` (clair/sombre, 390 et 760 px).
+- **`GET /app/release?platform=&build=`** (module `app`, public, 60/10 min par origine) :
+  `ok | update_available | update_required` depuis `APP_RELEASE__*` (neutres par défaut).
+
+**En production** (push → Dokploy ; **leçon** : le premier déploiement a planté au boot parce que
+le bucket `assets` n'existait pas encore — `make storage-provision` **avant** le code, comme la
+doc le dit ; redéployé après provisionnement) : migration 17 appliquée avant le code ; bucket
+`karria-production-assets` créé ; logos déposés (200, `immutable`) ; `APP_RELEASE__*` neutres
+posés dans Dokploy **et** `/root/karria-api.env` ; `/health/ready` 200 ; `/app/release` → `ok` ;
+avec un compte jetable (créé par condensat du code, supprimé ensuite) : `render?sample=true`
+Meridian → 200 en 226 ms, 20 Ko, polices `…/assets/fonts/Raleway-400.ttf` (200, cache 1 an) ;
+`render` d'un CV → 200 en 135 ms, chemins `identity.headline`, `experiences.0.missions.1`…,
+`warnings: [photo_missing]`. **Non vérifié en prod** : un envoi SMTP réel (couvert par les
+tests avec le mailer console) et l'export de lettre par Gotenberg (couvert par les tests du
+moteur ; le rendu sample passe par le même chemin HTML).
+
+**Reste** : valider ADR-0029 à 0032 ; l'app (WebView, patch local à la frappe, `window.karriaFit`,
+écran lettre, envoi) ; brancher la façade `build_render_document` côté `applications` s'il en a
+besoin ; un vrai envoi d'e-mail depuis l'iPhone de Marc ; quotas et cache d'URL en mémoire par
+processus (voir `PLUS-TARD.md`) ; `contact@karria.fr` toujours non confirmé.
+
 ### 2026-11-05, suite — revue de sécurité du module `applications` (Fable) — EN PRODUCTION
 
 Quatre points corrigés après revue automatique : (1) dépôt : `insert` explicite à
