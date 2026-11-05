@@ -532,6 +532,38 @@ class TestSubscriptionTranslation:
 
 
 class TestCheckoutTranslation:
+    def test_un_vrai_objet_stripe_est_traduit(self) -> None:
+        """Régression du 2026-11-05 : `metadata` est un `StripeObject`, non itérable
+        depuis stripe-python 16 — `dict(metadata)` renvoyait 500 au webhook et au
+        statut d'un café réellement encaissé. Les dicts des autres tests ne le
+        voyaient pas."""
+        user = uuid4()
+        session = stripe.checkout.Session.construct_from(
+            {
+                "id": "cs_live_1",
+                "object": "checkout.session",
+                "mode": "payment",
+                "payment_status": "paid",
+                "amount_total": 299,
+                "currency": "eur",
+                "metadata": {"user_id": str(user), "kind": "coffee", "coffee_count": "1"},
+                "subscription": None,
+                "customer": None,
+            },
+            "sk_test_x",
+        )
+        metadata: Any = session.metadata
+        with pytest.raises(TypeError):
+            dict(metadata)  # la cause, pour mémoire
+
+        record = translate_checkout(session)
+
+        assert record.paid
+        assert record.amount_cents == 299
+        assert record.user_id == user
+        assert record.kind == "coffee"
+        assert record.coffee_count == 1
+
     def test_une_souscription_close(self) -> None:
         record = translate_checkout(
             {

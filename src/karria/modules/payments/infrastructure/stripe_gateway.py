@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Final
 from uuid import UUID
@@ -217,10 +218,30 @@ def translate_subscription(subscription: Any) -> ProviderSubscription:
     )
 
 
+def _mapping(raw: Any) -> dict[str, Any]:
+    """Un `StripeObject` (ou un dict) en dict ordinaire.
+
+    Depuis stripe-python 16, un `StripeObject` n'est plus itérable ni un
+    mapping : `dict(obj)` lève `TypeError`. C'est ce qui a renvoyé 500 au
+    webhook **et** au statut d'un vrai paiement le 2026-11-05 (un café de
+    2,99 € encaissé, jamais enregistré). Les tests passaient des dicts.
+    """
+    if raw is None:
+        return {}
+    to_dict = getattr(raw, "to_dict", None)
+    if callable(to_dict):
+        plain: Any = to_dict()
+        return dict(plain) if isinstance(plain, Mapping) else {}
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    return {}
+
+
 def translate_checkout(session: Any) -> CheckoutRecord:
     """Traduit une session Checkout : mode, paiement, métadonnées posées à l'ouverture."""
-    raw: Any = _field(session, "metadata") or {}
-    metadata: dict[str, str] = {str(k): str(v) for k, v in dict(raw).items()}
+    metadata: dict[str, str] = {
+        str(k): str(v) for k, v in _mapping(_field(session, "metadata")).items()
+    }
     mode: CheckoutMode = "subscription" if _field(session, "mode") == "subscription" else "payment"
     return CheckoutRecord(
         session_id=str(_field(session, "id") or ""),
