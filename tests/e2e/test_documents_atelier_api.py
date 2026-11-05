@@ -341,7 +341,7 @@ class TestEnvoi:
         assert response.status_code == 429
         assert reason(response) == "send_quota_exceeded"
         assert response.json()["error"]["details"]["retry_after"] > 0
-        assert response.json()["error"]["details"]["scope"] == "account"
+        assert "scope" not in response.json()["error"]["details"]
 
     async def test_le_troisieme_envoi_du_jour_vers_la_meme_adresse_tierce_est_refuse(
         self, client: AsyncClient, fakes: Fakes, me: Principal, storage: InMemoryObjectStorage
@@ -358,7 +358,33 @@ class TestEnvoi:
         )
 
         assert response.status_code == 429
-        assert response.json()["error"]["details"]["scope"] == "recipient"
+        assert reason(response) == "send_quota_exceeded"
+
+    async def test_l_origine_est_lue_derriere_le_mandataire_de_confiance(
+        self,
+        client: AsyncClient,
+        fakes: Fakes,
+        me: Principal,
+        storage: InMemoryObjectStorage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            deps, "_send_origin_limiter", SlidingWindowLimiter(max_hits=1, window_seconds=60)
+        )
+        generated_id = await self._export(fakes, me, storage)
+        # Traefik (1 saut) ajoute l'adresse réelle à droite : ce que le client écrit à gauche ne compte pas.
+        first = await client.post(
+            f"{API}/documents/exports/{generated_id}/send",
+            json={"to": "a@b.fr"},
+            headers={"X-Forwarded-For": "9.9.9.9, 1.2.3.4"},
+        )
+        forged = await client.post(
+            f"{API}/documents/exports/{generated_id}/send",
+            json={"to": "c@d.fr"},
+            headers={"X-Forwarded-For": "8.8.8.8, 1.2.3.4"},
+        )
+        assert first.status_code == 202
+        assert forged.status_code == 429
 
     async def test_un_lot_vide_ou_trop_grand_est_refuse_par_le_schema(
         self, client: AsyncClient, fakes: Fakes, me: Principal
@@ -370,3 +396,44 @@ class TestEnvoi:
         )
         assert empty.status_code == 422
         assert too_many.status_code == 422
+
+
+class TestExportDuCvRecu:
+    async def test_l_export_rend_le_cv_recu_rattache_au_dossier(
+        self, client: AsyncClient, fakes: Fakes, me: Principal, ai_consented: None
+    ) -> None:
+        template, _ = fakes.templates.publish()
+        dossier = str(uuid4())
+        adapted = {
+            **CV_DATA,
+            "identity": {"first_name": "Awa", "last_name": "Diallo", "headline": "Cheffe"},
+        }
+
+        response = await client.post(
+            f"{API}/cv/me/generated-cvs",
+            json={"template_id": str(template.id), "dossier_id": dossier, "cv": adapted},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["dossier_id"] == dossier
+        assert fakes.engine.called("render_pdf")[0]["view"]["header"]["headline"] == "Cheffe"
+
+    async def test_un_cv_recu_hors_bornes_est_refuse(
+        self, client: AsyncClient, fakes: Fakes, me: Principal, ai_consented: None
+    ) -> None:
+        template, _ = fakes.templates.publish()
+        cv = {**CV_DATA, "skills": [{"name": "x"}] * 61}
+        response = await client.post(
+            f"{API}/cv/me/generated-cvs", json={"template_id": str(template.id), "cv": cv}
+        )
+        assert response.status_code == 422
+
+    async def test_sans_cv_recu_ni_cv_de_base_l_export_repond_cv_missing(
+        self, client: AsyncClient, fakes: Fakes, me: Principal, ai_consented: None
+    ) -> None:
+        template, _ = fakes.templates.publish()
+        response = await client.post(
+            f"{API}/cv/me/generated-cvs", json={"template_id": str(template.id)}
+        )
+        assert response.status_code == 409
+        assert reason(response) == "cv_missing"

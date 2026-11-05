@@ -30,6 +30,7 @@ from karria.modules.documents.domain.errors import (
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
     DAILY_SENDS_PER_RECIPIENT,
+    DAILY_SENDS_PER_RECIPIENT_GLOBAL,
     SendStatus,
 )
 from karria.modules.documents.domain.templates import DocumentKind
@@ -167,33 +168,62 @@ class TestDemande:
         with pytest.raises(SendQuotaExceededError) as exc:
             await sends.request().execute(sends.env.user, generated_ids=[cv.id], to=None)
         assert exc.value.details["retry_after"] > 0
-        assert exc.value.details["scope"] == "account"
+        assert exc.value.scope == "account"
+        assert "scope" not in exc.value.details
 
         sends.env.clock.advance(timedelta(days=1))
         again = await sends.request().execute(sends.env.user, generated_ids=[cv.id], to=None)
         assert again.status is SendStatus.QUEUED
         assert len(sends.sends.items) == DAILY_SEND_LIMIT + 1
 
-    async def test_deux_envois_par_jour_vers_une_meme_adresse_tierce_tous_comptes_confondus(
+    async def test_deux_envois_par_jour_d_un_compte_vers_une_meme_adresse_tierce(
         self, sends: SendEnv
     ) -> None:
         cv = await sends.cv()
         other_cv = make_generated(uuid4(), pdf_key="generated-cvs/o/cv.pdf")
         await sends.env.generated.add(other_cv)
-        for _ in range(DAILY_SENDS_PER_RECIPIENT):
-            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="RH@acme.fr")
+        # Casse et étiquette `+` ne font pas une autre adresse.
+        await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="RH@acme.fr")
+        await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh+karria@acme.fr")
 
         with pytest.raises(SendQuotaExceededError) as mine:
             await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh@acme.fr")
-        with pytest.raises(SendQuotaExceededError) as theirs:
-            await sends.request().execute(
-                other_cv.user_id, generated_ids=[other_cv.id], to="rh@acme.fr"
-            )
-        assert mine.value.details["scope"] == "recipient"
-        assert theirs.value.details["scope"] == "recipient"
+        assert mine.value.scope == "recipient"
+        # Un autre compte garde son propre plafond vers la même adresse.
+        theirs = await sends.request().execute(
+            other_cv.user_id, generated_ids=[other_cv.id], to="rh@acme.fr"
+        )
+        assert theirs.status is SendStatus.QUEUED
         # Une autre adresse tierce reste possible, dans le quota du compte.
         ok = await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh@beta.fr")
         assert ok.status is SendStatus.QUEUED
+        assert sends.sends.locked.count(sends.env.user) >= 3
+
+    async def test_le_plafond_global_par_destinataire_couvre_tous_les_comptes(
+        self, sends: SendEnv
+    ) -> None:
+        for _ in range(DAILY_SENDS_PER_RECIPIENT_GLOBAL):
+            other = make_generated(uuid4(), pdf_key="generated-cvs/o/cv.pdf")
+            await sends.env.generated.add(other)
+            await sends.request().execute(other.user_id, generated_ids=[other.id], to="rh@acme.fr")
+        cv = await sends.cv()
+
+        with pytest.raises(SendQuotaExceededError) as exc:
+            await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="rh@acme.fr")
+        assert exc.value.scope == "recipient_global"
+
+    async def test_un_envoi_en_echec_ne_compte_pas(self, sends: SendEnv) -> None:
+        cv = await sends.cv()
+        for _ in range(DAILY_SENDS_PER_RECIPIENT):
+            send = await sends.request().execute(
+                sends.env.user, generated_ids=[cv.id], to="rh@acme.fr"
+            )
+            await sends.sends.save(send.failed("MailServerUnavailableError"))
+
+        again = await sends.request().execute(
+            sends.env.user, generated_ids=[cv.id], to="rh@acme.fr"
+        )
+        assert again.status is SendStatus.QUEUED
 
     async def test_sa_propre_adresse_echappe_aux_plafonds_anti_relais(self, sends: SendEnv) -> None:
         cv = await sends.cv()
@@ -216,9 +246,19 @@ class TestDemande:
             await sends.request().execute(
                 sends.env.user, generated_ids=[cv.id], to="c@d.fr", origin="1.2.3.4"
             )
-        assert exc.value.details["scope"] == "origin"
+        assert exc.value.scope == "origin"
         assert exc.value.details["retry_after"] == 60
         assert sends.origins.hits == {"send|1.2.3.4": 2}
+
+    async def test_une_origine_illisible_partage_un_seau_commun(self, sends: SendEnv) -> None:
+        cv = await sends.cv()
+        sends.origins.limit = 1
+        await sends.request().execute(sends.env.user, generated_ids=[cv.id], to="a@b.fr", origin="")
+        with pytest.raises(SendQuotaExceededError):
+            await sends.request().execute(
+                sends.env.user, generated_ids=[cv.id], to="c@d.fr", origin=None
+            )
+        assert sends.origins.hits == {"send|unknown": 2}
 
     async def test_une_file_en_panne_marque_l_envoi_en_echec_tout_de_suite(
         self, sends: SendEnv

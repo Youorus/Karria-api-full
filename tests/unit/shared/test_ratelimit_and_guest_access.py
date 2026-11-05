@@ -1,6 +1,6 @@
 """Le limiteur du socle, l'accès anonyme compté, et la porte d'IA refusée par défaut."""
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 import pytest
@@ -164,3 +164,30 @@ class TestPorteIaParDefaut:
         assert anonymous.status_code == 401
         assert connected.status_code == 403
         assert connected.json()["error"]["details"]["reason"] == AI_CONSENT_REQUIRED
+
+
+class TestOrigineDerriereLesMandataires:
+    """`X-Forwarded-For` ne se lit qu'à la position que les mandataires de confiance garantissent."""
+
+    @staticmethod
+    def _request(forwarded: str | None, host: str | None = "10.0.0.2") -> Any:
+        from starlette.requests import Request  # noqa: PLC0415
+
+        headers = [(b"x-forwarded-for", forwarded.encode())] if forwarded is not None else []
+        scope = {"type": "http", "headers": headers, "client": (host, 1234) if host else None}
+        return Request(scope)
+
+    def test_un_saut_prend_la_derniere_adresse_que_le_client_ne_controle_pas(self) -> None:
+        from karria.shared.http.ratelimit import client_ip_behind  # noqa: PLC0415
+
+        assert client_ip_behind(self._request("9.9.9.9, 1.2.3.4"), proxy_hops=1) == "1.2.3.4"
+        assert (
+            client_ip_behind(self._request("9.9.9.9, 1.2.3.4, 5.5.5.5"), proxy_hops=2) == "1.2.3.4"
+        )
+
+    def test_sans_mandataire_ou_sans_en_tete_l_adresse_de_la_connexion(self) -> None:
+        from karria.shared.http.ratelimit import client_ip_behind  # noqa: PLC0415
+
+        assert client_ip_behind(self._request("9.9.9.9"), proxy_hops=0) == "10.0.0.2"
+        assert client_ip_behind(self._request(None), proxy_hops=1) == "10.0.0.2"
+        assert client_ip_behind(self._request(None, host=None), proxy_hops=1) == ""

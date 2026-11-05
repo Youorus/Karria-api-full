@@ -122,3 +122,36 @@ class TestMessage:
         html = render_for(mail, app_url="https://karria.fr").html_body
         assert "<script>" not in html
         assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; Cie" in html
+
+
+class TestRemise:
+    def test_le_destinataire_est_passe_explicitement_au_serveur(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import smtplib  # noqa: PLC0415
+
+        seen: dict[str, object] = {}
+
+        class FakeServer:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def __enter__(self) -> FakeServer:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+            def starttls(self, **kwargs: object) -> None:
+                pass
+
+            def login(self, *args: object) -> None:
+                pass
+
+            def send_message(self, message: EmailMessage, **kwargs: object) -> None:
+                seen.update(kwargs)
+
+        monkeypatch.setattr(smtplib, "SMTP", FakeServer)
+        SmtpMailer(SETTINGS)._deliver(EmailMessage(), "rh@acme.fr")
+
+        assert seen == {"from_addr": "bonjour@karria.fr", "to_addrs": ["rh@acme.fr"]}

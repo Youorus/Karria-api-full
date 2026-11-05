@@ -337,6 +337,11 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
 - **Migration 17** (`lettres_et_envois` : colonnes `kind`, `dossier_id`, `company_name`
   sur `documents_generated_cvs`, table `documents_sends`) : `aerich upgrade` dans un
   conteneur ponctuel, **avant** le code (sans les colonnes, tout export répond 500).
+- **Migration 18** (`cle_du_destinataire` : colonne `to_key` indexée sur `documents_sends`,
+  lignes existantes remplies) : `aerich upgrade`, **avant** le code.
+- `SECURITY__TRUSTED_PROXY_HOPS` (défaut `1` = Traefik) : combien de mandataires de
+  confiance écrivent `X-Forwarded-For` devant l'API ; `0` en local. Sert au plafond par
+  origine des envois d'e-mail. Aucune variable à poser en production.
 - **Bucket public `assets`** (`karria-production-assets`) : `python -m scripts.storage_provision`
   (idempotent). Y vont les copies publiques des polices libres (posées à la première
   demande de rendu) et la marque des e-mails.

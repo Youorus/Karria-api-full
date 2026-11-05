@@ -137,6 +137,11 @@ class SecuritySettings(BaseModel):
     #: stockées cessent de correspondre. C'est d'ailleurs le geste à faire
     #: si l'on soupçonne une fuite de la base.
     token_pepper: SecretStr = SecretStr("")
+    #: Mandataires de confiance devant l'API, pour lire l'origine d'une
+    #: requête dans `X-Forwarded-For` sans se faire usurper (Traefik : 1 ;
+    #: `0` en local, l'adresse de la connexion). Un compte, pas une liste
+    #: d'adresses : Dokploy ne fixe pas l'adresse interne de Traefik.
+    trusted_proxy_hops: int = Field(default=1, ge=0, le=5)
 
 
 class MailProvider(StrEnum):

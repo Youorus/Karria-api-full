@@ -15,7 +15,7 @@ from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 
 from karria.modules.documents.application import (
     AccountDirectory,
@@ -87,6 +87,7 @@ from karria.shared.http.dependencies import (
     UnitOfWorkDep,
     get_queue_app,
 )
+from karria.shared.http.ratelimit import client_ip_behind
 from karria.shared.llm import build_language_model
 from karria.shared.logging import get_logger
 from karria.shared.mail import Mailer, build_mailer
@@ -164,6 +165,18 @@ _send_origin_limiter = SlidingWindowLimiter(
 
 def get_origin_throttle() -> OriginThrottle:
     return _send_origin_limiter
+
+
+def send_origin(request: Request, settings: SettingsDep) -> str:
+    """L'origine d'une demande d'envoi, lue derrière les mandataires de confiance.
+
+    Vide quand rien n'est lisible : le cas d'usage la range alors dans un seau
+    partagé (`unknown`), jamais hors plafond.
+    """
+    return client_ip_behind(request, proxy_hops=settings.security.trusted_proxy_hops)
+
+
+SendOriginDep = Annotated[str, Depends(send_origin)]
 
 
 def get_template_repository() -> TemplateRepository:
@@ -383,9 +396,16 @@ def get_send_documents(
     jobs: JobsDep,
     clock: ClockDep,
     origins: Annotated[OriginThrottle, Depends(get_origin_throttle)],
+    uow: UnitOfWorkDep,
 ) -> SendDocuments:
     return SendDocuments(
-        generated=generated, sends=sends, accounts=accounts, jobs=jobs, clock=clock, origins=origins
+        generated=generated,
+        sends=sends,
+        accounts=accounts,
+        jobs=jobs,
+        clock=clock,
+        origins=origins,
+        uow=uow,
     )
 
 

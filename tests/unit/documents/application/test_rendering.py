@@ -10,6 +10,7 @@ import pytest
 from documents.application.conftest import Env
 from documents.fakes import (
     CLEAN_TEXT,
+    CV_DATA,
     DOCX_BYTES,
     NOW,
     PDF_BYTES,
@@ -327,3 +328,56 @@ class TestExport:
         )
 
         assert generated.full_name == ""
+
+
+class TestCvRecu:
+    """Un dossier de candidature exporte sa copie adaptée, pas le CV de base (ADR-0033)."""
+
+    async def test_le_cv_recu_remplace_le_cv_de_base_et_garde_sa_photo(self, env: Env) -> None:
+        template, _ = env.templates.publish(spec=make_spec(photo=True))
+        env.cvs.put(env.user, image_key="cv/u/photo.jpg")
+        await env.storage.put(
+            Bucket.MEDIA, "cv/u/photo.jpg", b"\xff\xd8photo", content_type="image/jpeg"
+        )
+        adapted = {
+            **CV_DATA,
+            "identity": {"first_name": "Awa", "last_name": "Diallo", "headline": "Cheffe de rayon"},
+        }
+
+        generated = await env.export().execute(
+            env.user,
+            template_id=template.id,
+            formats=["pdf"],
+            ats_safe=False,
+            offer_id=None,
+            dossier_id=uuid4(),
+            cv=adapted,
+        )
+
+        [call] = env.engine.called("render_pdf")
+        assert call["view"]["header"]["headline"] == "Cheffe de rayon"
+        assert call["photo"] == b"\xff\xd8photo"
+        assert generated.dossier_id is not None
+        assert generated.full_name == "Awa Diallo"
+
+    async def test_sans_cv_de_base_le_cv_recu_suffit(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+
+        generated = await env.export().execute(
+            env.user,
+            template_id=template.id,
+            formats=["pdf"],
+            ats_safe=False,
+            offer_id=None,
+            cv=CV_DATA,
+        )
+
+        assert generated.pdf_key is not None
+        assert env.engine.called("render_pdf")[0]["photo"] is None
+
+    async def test_sans_cv_recu_le_cv_de_base_reste_exige(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        with pytest.raises(CvMissingError):
+            await env.export().execute(
+                env.user, template_id=template.id, formats=None, ats_safe=False, offer_id=None
+            )

@@ -146,13 +146,14 @@ class SendQuotaExceededError(DomainError):
     code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
 
     def __init__(self, *, retry_after: int, scope: str = "account") -> None:
-        """`scope` : `account` (5/jour), `recipient` (2/jour vers une adresse tierce), `origin`."""
+        """`scope` (`account`, `recipient`, `recipient_global`, `origin`) va au **journal**,
+        jamais dans la réponse : un client ne doit pas apprendre, par le plafond touché,
+        qu'une adresse a déjà reçu des envois d'autres comptes (oracle)."""
         super().__init__(
-            "Tu as atteint le nombre d'envois du jour. Réessaie demain."
-            if scope == "account"
-            else "Trop d'envois pour le moment. Réessaie plus tard.",
-            details={"reason": "send_quota_exceeded", "retry_after": retry_after, "scope": scope},
+            "Tu as atteint le nombre d'envois possibles pour l'instant. Réessaie plus tard.",
+            details={"reason": "send_quota_exceeded", "retry_after": retry_after},
         )
+        self.scope = scope
 
 
 class AccountEmailUnknownError(BusinessRuleViolationError):

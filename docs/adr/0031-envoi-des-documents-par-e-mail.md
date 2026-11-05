@@ -59,7 +59,29 @@ serve ni de relais d'hameçonnage ni de relais de courrier :
    Vers **sa propre adresse** (celle du compte), seul le quota du compte
    (`scope: account`) s'applique.
 9. Chaque refus est journalisé (`documents.send_refused` : compte, plafond,
-   tiers ou non) — le journal d'abus.
+   tiers ou non, origine) — le journal d'abus.
+
+Seconde passe, le même jour :
+
+10. **L'origine** se lit derrière les mandataires de confiance
+    (`SECURITY__TRUSTED_PROXY_HOPS`, Traefik = 1 : l'avant-dernière… la
+    `n`-ième adresse en partant de la droite de `X-Forwarded-For`), jamais la
+    première, que le client écrit lui-même ; une origine illisible tombe dans
+    un seau **partagé** (`unknown`), jamais hors plafond.
+11. **Le destinataire se compte sur une clé canonique** (`to_key`, migration
+    18 : minuscules, étiquette `+` retirée) ; le plafond est **par (compte,
+    destinataire)** (2/jour) avec un seuil global plus large (10/jour, tous
+    comptes) ; les envois **en échec ne comptent pas** ; comptage et insertion
+    dans une transaction sous verrou consultatif par compte. Le plafond touché
+    n'apparaît **pas** dans la réponse (générique) : il irait trahir qu'une
+    adresse reçoit des envois d'autres comptes.
+12. **L'adresse** doit être ce que `email.utils.parseaddr` relit exactement,
+    une seule, sans `<>(),;:"[]\` ni caractère de contrôle ; SMTP reçoit
+    `to_addrs` explicitement.
+13. **Les noms** sont normalisés NFKC, réduits aux lettres Unicode (plus
+    espace, tiret, apostrophe, point d'initiale) ; refusés s'ils contiennent
+    une suite chiffre-point, une adresse IP, ou un point qui n'est pas une
+    initiale.
 
 ## Conséquences
 

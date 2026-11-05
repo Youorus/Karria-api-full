@@ -12,8 +12,10 @@ from karria.modules.documents.domain.errors import RecipientInvalidError, SendQu
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
     DAILY_SENDS_PER_RECIPIENT,
+    DAILY_SENDS_PER_RECIPIENT_GLOBAL,
     DocumentSend,
     SendStatus,
+    canonical_address,
     day_bounds,
     ensure_quota,
     ensure_recipient_quota,
@@ -112,16 +114,39 @@ class TestNomsSurs:
             ("Awa <b>Diallo</b>", "Awa bDiallob"),
             ("A" * 80, "A" * 60),
             ("Awa Diallo.", "Awa Diallo"),
+            ("J. Dupont", "J. Dupont"),
+            ("Zoë Çelik-Ünal", "Zoë Çelik-Ünal"),
+            (
+                "\uff21\uff57\uff41 \uff24\uff49\uff41\uff4c\uff4c\uff4f",
+                "Awa Diallo",
+            ),  # pleine chasse, NFKC
+            ("Awa 2 Diallo 007", "Awa Diallo"),
         ],
     )
-    def test_un_nom_est_reduit_au_jeu_strict_et_borne(self, given: str, expected: str) -> None:
+    def test_un_nom_est_reduit_aux_lettres_normalise_et_borne(
+        self, given: str, expected: str
+    ) -> None:
         assert safe_display_name(given) == expected
 
     @pytest.mark.parametrize(
         "given",
-        ["www.arnaque.fr", "http://x", "https://x", "acme.fr", "Awa Diallo - karria.fr", "", None],
+        [
+            "www.arnaque.fr",
+            "http://x",
+            "https://x",
+            "acme.fr",
+            "Awa Diallo - karria.fr",
+            "10.0.0.1",
+            "Awa 3.5",
+            "\uff57\uff57\uff57.x",  # « www » en pleine chasse
+            "J.Dupont",
+            "",
+            None,
+        ],
     )
-    def test_un_nom_qui_ressemble_a_un_lien_ou_vide_est_refuse(self, given: str | None) -> None:
+    def test_un_nom_qui_ressemble_a_un_lien_une_ip_ou_un_domaine_est_refuse(
+        self, given: str | None
+    ) -> None:
         assert safe_display_name(given) == ""
 
     def test_la_piece_jointe_garde_son_extension_et_retombe_sur_un_nom_neutre(self) -> None:
@@ -132,12 +157,43 @@ class TestNomsSurs:
             == "Lettre de motivation - Acme.docx"
         )
 
-    def test_le_plafond_par_destinataire(self) -> None:
-        ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT - 1, NOON)
-        with pytest.raises(SendQuotaExceededError) as exc:
-            ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT, NOON)
-        assert exc.value.details["scope"] == "recipient"
+    def test_les_plafonds_par_destinataire_par_compte_puis_global(self) -> None:
+        ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT - 1, 5, NOON)
+        with pytest.raises(SendQuotaExceededError) as mine:
+            ensure_recipient_quota(DAILY_SENDS_PER_RECIPIENT, 2, NOON)
+        with pytest.raises(SendQuotaExceededError) as everyone:
+            ensure_recipient_quota(0, DAILY_SENDS_PER_RECIPIENT_GLOBAL, NOON)
+        assert mine.value.scope == "recipient"
+        assert everyone.value.scope == "recipient_global"
+        # Le plafond touché ne se lit pas dans la réponse : seulement dans le journal.
+        assert "scope" not in mine.value.details
 
     def test_un_point_suivi_de_lettres_fait_un_lien(self) -> None:
         assert looks_like_link("foo.bar")
         assert not looks_like_link("foo bar")
+
+
+class TestCleCanonique:
+    def test_casse_et_etiquette_plus_sont_ignorees(self) -> None:
+        assert canonical_address("RH@Acme.FR") == "rh@acme.fr"
+        assert canonical_address("rh+karria@acme.fr") == "rh@acme.fr"
+        assert canonical_address("Rh+a+b@Acme.fr") == "rh@acme.fr"
+
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "a<b@x.fr",
+            '"a"@x.fr',
+            "a@x.fr,b@y.fr",
+            "a(b)@x.fr",
+            "a;b@x.fr",
+            "a:b@x.fr",
+            "a[b]@x.fr",
+            "a\\b@x.fr",
+            "a@x.fr\r\nBcc: c@y.fr",
+            "Awa <awa@x.fr>",
+        ],
+    )
+    def test_ce_que_le_parseur_relirait_autrement_est_refuse(self, given: str) -> None:
+        with pytest.raises(RecipientInvalidError):
+            normalize_address(given)

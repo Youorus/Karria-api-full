@@ -580,7 +580,7 @@ class TestClassificationDesEchecsSmtp:
             def login(self, *_: object) -> None:
                 return None
 
-            def send_message(self, message: EmailMessage) -> None:
+            def send_message(self, message: EmailMessage, **kwargs: object) -> None:
                 captures.append(message)
 
         monkeypatch.setattr(smtplib, "SMTP", lambda *_a, **_k: ServeurDouble())

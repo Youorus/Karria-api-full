@@ -235,6 +235,13 @@ class ExportRequest(BaseModel):
     dossier_id: UUID | None = Field(
         default=None, description="Dossier de candidature (UUID libre) auquel rattacher l'export."
     )
+    cv: CvBody | None = Field(
+        default=None,
+        description=(
+            "Un CV à exporter **à la place** du CV de base (la copie adaptée d'un dossier, "
+            "même forme et mêmes bornes que le rendu ancré). Absent : le CV de la personne."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------- atelier (ADR-0029)
@@ -535,3 +542,7 @@ class VersionAdminRead(BaseModel):
             signed_sample_docx_url=await sign(f"{prefix}/sample_docx.pdf" if done else None),
             signed_source_url=await sign(version.source_key),
         )
+
+
+# `ExportRequest` nomme `CvBody`, défini plus bas : la référence se résout ici.
+ExportRequest.model_rebuild()

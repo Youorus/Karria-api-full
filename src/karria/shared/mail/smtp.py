@@ -93,7 +93,7 @@ class SmtpMailer:
         # Hors de la boucle d'événements : un aller-retour SMTP dure des
         # centaines de millisecondes, pendant lesquelles toutes les autres
         # requêtes du processus attendraient.
-        await asyncio.to_thread(self._deliver, message)
+        await asyncio.to_thread(self._deliver, message, mail.to)
 
         logger.info(
             "mail.sent",
@@ -143,15 +143,20 @@ class SmtpMailer:
                 )
         return message
 
-    def _deliver(self, message: EmailMessage) -> None:
-        """Remet le message. Exécuté hors de la boucle d'événements."""
+    def _deliver(self, message: EmailMessage, to: str) -> None:
+        """Remet le message au seul destinataire voulu. Exécuté hors de la boucle d'événements.
+
+        `to_addrs` est passé **explicitement** : `send_message` relirait sinon
+        les en-têtes, et une adresse qui contiendrait une virgule ou des
+        chevrons pourrait y faire lire deux destinataires.
+        """
         try:
             with smtplib.SMTP(
                 self._settings.host, self._settings.port, timeout=_TIMEOUT_SECONDS
             ) as server:
                 server.starttls(context=_TLS_CONTEXT)
                 server.login(self._settings.username, self._settings.password.get_secret_value())
-                server.send_message(message)
+                server.send_message(message, from_addr=self._settings.from_address, to_addrs=[to])
         except (smtplib.SMTPException, OSError) as exc:
             raise _classify(exc) from exc
 

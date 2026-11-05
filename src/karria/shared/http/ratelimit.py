@@ -86,6 +86,26 @@ class SlidingWindowLimiter:
         return len(self._hits)
 
 
+def client_ip_behind(request: Request, *, proxy_hops: int) -> str:
+    """L'origine d'une requête telle que les mandataires **de confiance** l'ont vue.
+
+    `X-Forwarded-For` est une liste où chaque mandataire **ajoute à droite**
+    l'adresse qui lui a parlé ; tout ce qui est plus à gauche peut avoir été
+    écrit par le client lui-même. Avec `proxy_hops` mandataires de confiance
+    devant l'API (Traefik : un), l'adresse fiable est la `proxy_hops`-ième en
+    partant de la droite. Sans mandataire (`0`), l'adresse de la connexion.
+    Vide quand rien n'est lisible : à l'appelant de la traiter comme un seau
+    **partagé**, jamais comme une exemption.
+    """
+    if proxy_hops <= 0:
+        return request.client.host if request.client else ""
+    forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",")]
+    forwarded = [p for p in forwarded if p]
+    if len(forwarded) >= proxy_hops:
+        return forwarded[-proxy_hops]
+    return request.client.host if request.client else ""
+
+
 def client_ip(request: Request) -> str:
     """L'origine d'une requête : le premier `X-Forwarded-For`, sinon l'adresse du client.
 

@@ -162,7 +162,11 @@ Réponse : un `GeneratedCv` (même forme que l'export de CV) avec `kind: "letter
 
 - `GeneratedCv` porte désormais `kind` (`cv` | `letter`), `dossier_id` (UUID libre, posé
   par le module des dossiers) et `company_name` (lettre).
-- `POST /cv/me/generated-cvs` accepte `dossier_id`.
+- `POST /cv/me/generated-cvs` accepte `dossier_id`, et **`cv`** : un CV complet (même forme et
+  mêmes bornes que le `cv` du rendu ancré, § 1) exporté **à la place** du CV de base — c'est
+  ainsi qu'un dossier de candidature exporte sa copie adaptée (PDF, DOCX, score ATS sur ce
+  CV-là). La photo reste celle du CV de la personne. Absent : comportement inchangé (le CV de
+  base, `409 cv_missing` s'il n'existe pas). `cv` hors bornes → `422`.
 - `GET /cv/me/generated-cvs?kind=cv|letter&dossier_id=…` filtre ; `kind` inconnu → `422`.
 - `GET` / `DELETE /cv/me/generated-cvs/{id}` valent pour les deux genres.
 
@@ -212,14 +216,13 @@ la raison d'un échec reste dans le journal, jamais dans la réponse).
 | 409 | `account_email_unknown` | `to: null` et adresse du compte introuvable |
 | 422 | `recipient_invalid` (`field: to`) | adresse mal formée |
 | 422 | `documents_count_invalid` | 0 ou > 4 documents |
-| 429 | `send_quota_exceeded`, `scope: account` | **5 envois par jour civil (UTC)** déjà demandés (`details.retry_after`, secondes jusqu'à minuit UTC) |
-| 429 | `send_quota_exceeded`, `scope: recipient` | adresse **tierce** : déjà **2 envois aujourd'hui vers cette adresse** (tous comptes confondus) |
-| 429 | `send_quota_exceeded`, `scope: origin` | adresse **tierce** : plus de 10 envois par heure depuis cette origine (`retry_after` en secondes) |
+| 429 | `send_quota_exceeded` | un plafond est atteint (`details.retry_after`, secondes). La réponse ne dit **pas** lequel : **5 envois par jour civil (UTC)** par compte ; vers une adresse **tierce**, 2 envois par jour par compte vers la même boîte (casse et étiquette `+` ignorées), 10 tous comptes confondus, 10 par heure par origine. |
 
-Les quotas comptent les envois **demandés** (réussis ou non). Vers l'adresse du compte
-(`to: null`, ou la même adresse), seul `scope: account` s'applique. L'app affiche
-l'adresse avant d'envoyer (« confirmée visuellement ») ; l'API ne demande pas de seconde
-confirmation.
+Les quotas comptent les envois demandés qui n'ont pas échoué. Vers l'adresse du compte
+(`to: null`, ou la même boîte), seul le quota du compte s'applique. L'adresse est refusée
+(`422 recipient_invalid`) dès qu'elle contient `<>(),;:"[]\` ou un caractère de contrôle.
+L'app affiche l'adresse avant d'envoyer (« confirmée visuellement ») ; l'API ne demande pas
+de seconde confirmation.
 
 ---
 

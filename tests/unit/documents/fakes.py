@@ -25,7 +25,7 @@ from karria.modules.documents.application import (
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.headline import ats_safe_spec
-from karria.modules.documents.domain.sends import DocumentSend
+from karria.modules.documents.domain.sends import DocumentSend, SendStatus, canonical_address
 from karria.modules.documents.domain.templates import (
     DocumentKind,
     ExplanationStatus,
@@ -439,11 +439,12 @@ def make_generated(
 
 
 class InMemorySendRepository:
-    """Implémente `SendRepository` dans un dictionnaire."""
+    """Implémente `SendRepository` dans un dictionnaire, avec la même sémantique que PostgreSQL."""
 
     def __init__(self) -> None:
         self.items: dict[UUID, DocumentSend] = {}
         self.forgotten: list[UUID] = []
+        self.locked: list[UUID] = []
 
     async def add(self, send: DocumentSend) -> None:
         self.items[send.id] = send
@@ -454,16 +455,28 @@ class InMemorySendRepository:
     async def save(self, send: DocumentSend) -> None:
         self.items[send.id] = send
 
-    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
-        return sum(
-            1 for s in self.items.values() if s.user_id == user_id and start <= s.created_at < end
-        )
+    async def lock_account(self, user_id: UUID) -> None:
+        self.locked.append(user_id)
 
-    async def count_to_between(self, address: str, start: datetime, end: datetime) -> int:
+    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
         return sum(
             1
             for s in self.items.values()
-            if s.to.casefold() == address.casefold() and start <= s.created_at < end
+            if s.user_id == user_id
+            and s.status is not SendStatus.FAILED
+            and start <= s.created_at < end
+        )
+
+    async def count_to_between(
+        self, recipient_key: str, start: datetime, end: datetime, *, user_id: UUID | None = None
+    ) -> int:
+        return sum(
+            1
+            for s in self.items.values()
+            if canonical_address(s.to) == recipient_key
+            and s.status is not SendStatus.FAILED
+            and (user_id is None or s.user_id == user_id)
+            and start <= s.created_at < end
         )
 
     async def forget(self, user_id: UUID) -> None:

@@ -29,6 +29,7 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -36,6 +37,7 @@ from uuid import UUID, uuid4
 from karria.modules.documents.application.ports import (
     AccountDirectory,
     AtsExplainer,
+    CvSnapshot,
     CvSource,
     DocumentEngine,
     DocumentFile,
@@ -72,6 +74,7 @@ from karria.modules.documents.domain.sends import (
     MAX_DOCUMENTS_PER_SEND,
     DocumentSend,
     SendStatus,
+    canonical_address,
     day_bounds,
     ensure_quota,
     ensure_recipient_quota,
@@ -98,7 +101,7 @@ from karria.modules.documents.domain.templates import (
 )
 from karria.modules.documents.domain.view import from_cv, from_sample
 from karria.shared.clock import Clock
-from karria.shared.database import UnitOfWork
+from karria.shared.database import NullUnitOfWork, UnitOfWork
 from karria.shared.errors.exceptions import InvalidInputError
 from karria.shared.images import resize_to_png
 from karria.shared.logging import get_logger
@@ -341,7 +344,12 @@ class CvRenderer:
         self._engine, self._storage = engine, storage
 
     async def prepare(
-        self, user_id: UUID, template_id: UUID, *, ats_safe: bool
+        self,
+        user_id: UUID,
+        template_id: UUID,
+        *,
+        ats_safe: bool,
+        cv: dict[str, Any] | None = None,
     ) -> tuple[
         Template,
         TemplateVersion,
@@ -351,9 +359,21 @@ class CvRenderer:
         bytes | None,
         dict[str, bytes],
     ]:
+        """
+        Args:
+            cv: Un CV **reçu** (la copie adaptée d'un dossier de candidature, même forme
+                que `GET /cv/me`) rendu à la place du CV de base de la personne ; la photo
+                reste celle de son CV. `None` : le CV de base, qui doit exister (`cv_missing`).
+        """
         template, version = await _published(self._templates, template_id)
         ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
         snapshot = await self._cvs.snapshot(user_id)
+        if cv is not None:
+            snapshot = CvSnapshot(
+                data=cv,
+                image_key=snapshot.image_key if snapshot else None,
+                updated_at=snapshot.updated_at if snapshot else datetime.min.replace(tzinfo=UTC),
+            )
         if snapshot is None:
             raise CvMissingError()
         spec = version.spec or {}
@@ -445,7 +465,9 @@ class ExportCv:
         ats_safe: bool | None,
         offer_id: UUID | None,
         dossier_id: UUID | None = None,
+        cv: dict[str, Any] | None = None,
     ) -> GeneratedCv:
+        """`cv` : la copie adaptée d'un dossier à exporter à la place du CV de base (ADR-0033)."""
         if offer_id is not None:
             raise TailoringNotAvailableError()
         wanted = check_formats(formats)
@@ -459,7 +481,7 @@ class ExportCv:
         safe = bool(ats_safe)
         started = time.monotonic()
         template, version, spec, view, snapshot, photo, assets = await self._renderer.prepare(
-            user_id, template_id, ats_safe=safe
+            user_id, template_id, ats_safe=safe, cv=cv
         )
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
         docx = None
@@ -1200,9 +1222,11 @@ class SendDocuments:
         jobs: TemplateJobs,
         clock: Clock,
         origins: OriginThrottle | None = None,
+        uow: UnitOfWork | None = None,
     ) -> None:
         self._generated, self._sends, self._accounts = generated, sends, accounts
         self._jobs, self._clock, self._origins = jobs, clock, origins
+        self._uow = uow
 
     async def execute(
         self,
@@ -1243,27 +1267,7 @@ class SendDocuments:
             to = account
         address = normalize_address(to)
         now = self._clock.now()
-        start, end = day_bounds(now)
-        own = account is not None and address.casefold() == account.strip().casefold()
-        try:
-            ensure_quota(await self._sends.count_between(user_id, start, end), now)
-            if not own:
-                # Une adresse tierce : les plafonds anti-relais s'appliquent.
-                ensure_recipient_quota(await self._sends.count_to_between(address, start, end), now)
-                retry_after = (
-                    self._origins.hit(f"send|{origin}") if self._origins and origin else None
-                )
-                if retry_after is not None:
-                    raise SendQuotaExceededError(retry_after=retry_after, scope="origin")
-        except SendQuotaExceededError as exc:
-            # Le journal d'abus : qui, quel plafond, vers un tiers ou non.
-            logger.warning(
-                "documents.send_refused",
-                user_id=str(user_id),
-                scope=exc.details.get("scope"),
-                third_party=not own,
-            )
-            raise
+        own = account is not None and canonical_address(address) == canonical_address(account)
         send = DocumentSend(
             id=uuid4(),
             user_id=user_id,
@@ -1272,7 +1276,12 @@ class SendDocuments:
             status=SendStatus.QUEUED,
             created_at=now,
         )
-        await self._sends.add(send)
+        # Comptage et insertion dans la même transaction, sous un verrou par
+        # compte : deux demandes simultanées ne passent pas toutes deux sous le plafond.
+        async with (self._uow or NullUnitOfWork()).atomic():
+            await self._sends.lock_account(user_id)
+            await self._guard(user_id, address, now, own=own, origin=origin)
+            await self._sends.add(send)
         try:
             await self._jobs.defer_send(send.id)
         except Exception as exc:
@@ -1283,6 +1292,37 @@ class SendDocuments:
             await self._sends.save(send)
         logger.info("documents.send_requested", send_id=str(send.id), documents=len(unique))
         return send
+
+    async def _guard(
+        self, user_id: UUID, address: str, now: datetime, *, own: bool, origin: str | None
+    ) -> None:
+        """Les plafonds ; un refus va au journal d'abus avec son détail, pas au client."""
+        start, end = day_bounds(now)
+        key = canonical_address(address)
+        try:
+            ensure_quota(await self._sends.count_between(user_id, start, end), now)
+            if not own:
+                # Une adresse tierce : les plafonds anti-relais s'appliquent.
+                ensure_recipient_quota(
+                    await self._sends.count_to_between(key, start, end, user_id=user_id),
+                    await self._sends.count_to_between(key, start, end),
+                    now,
+                )
+                # Une origine illisible partage un seau commun : jamais une exemption.
+                retry_after = (
+                    self._origins.hit(f"send|{origin or 'unknown'}") if self._origins else None
+                )
+                if retry_after is not None:
+                    raise SendQuotaExceededError(retry_after=retry_after, scope="origin")
+        except SendQuotaExceededError as exc:
+            logger.warning(
+                "documents.send_refused",
+                user_id=str(user_id),
+                scope=exc.scope,
+                third_party=not own,
+                origin=origin or "unknown",
+            )
+            raise
 
 
 class GetSend:

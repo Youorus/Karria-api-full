@@ -134,6 +134,12 @@ class DocumentSendModel(BaseDBModel):
     user_id: UUID = fields.UUIDField(db_index=True)
     generated_ids: list[str] = fields.JSONField(default=list, description="Exports joints.")
     to_address = fields.CharField(max_length=254, description="Destinataire.")
+    to_key = fields.CharField(
+        max_length=254,
+        default="",
+        db_index=True,
+        description="Clé canonique du destinataire (minuscules, sans étiquette +) : le quota se compte dessus.",
+    )
     status = fields.CharField(max_length=16, default="queued", description="queued, sent, failed.")
     sent_at = fields.DatetimeField(null=True)
     error = fields.CharField(max_length=200, null=True, description="Raison technique d'un échec.")

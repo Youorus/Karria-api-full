@@ -8,7 +8,7 @@ from uuid import UUID
 
 from tortoise.expressions import F
 
-from karria.modules.documents.domain.sends import DocumentSend, SendStatus
+from karria.modules.documents.domain.sends import DocumentSend, SendStatus, canonical_address
 from karria.modules.documents.domain.templates import (
     DocumentKind,
     ExplanationStatus,
@@ -332,6 +332,7 @@ class TortoiseSendRepository:
             user_id=send.user_id,
             generated_ids=[str(g) for g in send.generated_ids],
             to_address=send.to,
+            to_key=canonical_address(send.to),
             status=send.status.value,
             sent_at=send.sent_at,
             error=send.error,
@@ -346,15 +347,30 @@ class TortoiseSendRepository:
             status=send.status.value, sent_at=send.sent_at, error=send.error
         )
 
-    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
-        return await DocumentSendModel.filter(
-            user_id=user_id, created_at__gte=start, created_at__lt=end
-        ).count()
+    async def lock_account(self, user_id: UUID) -> None:
+        """Verrou consultatif PostgreSQL, levé à la fin de la transaction en cours."""
+        await DocumentSendModel._meta.db.execute_query(
+            "SELECT pg_advisory_xact_lock(hashtext($1))", [f"documents_sends:{user_id}"]
+        )
 
-    async def count_to_between(self, address: str, start: datetime, end: datetime) -> int:
-        return await DocumentSendModel.filter(
-            to_address=address, created_at__gte=start, created_at__lt=end
-        ).count()
+    async def count_between(self, user_id: UUID, start: datetime, end: datetime) -> int:
+        return (
+            await DocumentSendModel.filter(
+                user_id=user_id, created_at__gte=start, created_at__lt=end
+            )
+            .exclude(status=SendStatus.FAILED.value)
+            .count()
+        )
+
+    async def count_to_between(
+        self, recipient_key: str, start: datetime, end: datetime, *, user_id: UUID | None = None
+    ) -> int:
+        query = DocumentSendModel.filter(
+            to_key=recipient_key, created_at__gte=start, created_at__lt=end
+        ).exclude(status=SendStatus.FAILED.value)
+        if user_id is not None:
+            query = query.filter(user_id=user_id)
+        return await query.count()
 
     async def forget(self, user_id: UUID) -> None:
         await DocumentSendModel.filter(user_id=user_id).delete()
