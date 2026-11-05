@@ -5,6 +5,41 @@
 
 **Dernière mise à jour : 2026-11-05**
 
+### Session du 2026-11-05 (soir) — la couleur principale d'un CV, choisie par la personne (ADR-0034 — Fable) — EN PRODUCTION
+
+**Demande de Marc** : pouvoir changer la couleur primaire d'un CV dans l'atelier (palette, code,
+sélecteur avec variantes) et revenir à la couleur d'origine.
+
+**Livré** (commit `173e8cd`, `make check` vert, 3 537 tests ; **migration 20 appliquée en prod
+avant le code** par un conteneur ponctuel sur `karria-worker-y9xkmo:latest` avec le fichier monté
+depuis `/root/karria-applications-deploy/migrations/models/` — « Success upgrading to 20_… »,
+colonnes vérifiées dans `information_schema` ; poussé sur `main` → Dokploy) :
+- **`documents/domain/palette.py`** : `recolor_spec(spec, primary)`, transformation pure et non
+  destructive comme `ats_safe_spec` : toute occurrence de la couleur des titres de rubrique
+  (`primary_color_of`) sous `color`/`fill`/`stroke`/`background` prend la couleur choisie ; les
+  **teintes dérivées** (même teinte ± 10°, non grises) sont déclinées avec le même écart de clarté
+  et la même proportion de saturation (une bande pâle reste pâle) ; un modèle gris ne recolore
+  que les occurrences exactes ; `parse_hex_color` (`#rrggbb`, `rrggbb`, `#rgb` → `#RRGGBB`).
+  16 tests unitaires.
+- **`primary_color: str | None`** sur `RenderRequest`, `ExportRequest`, `LetterExportRequest`,
+  `SelectRequest` (normalisé, `422` sinon) ; appliquée **après** `ats_safe_spec` dans
+  `CvRenderer.prepare`, `RenderDocument` (CV, lettre, exemple) et `ExportLetter` ; sans
+  `template_id`, l'export prend la couleur du choix comme `ats_safe`.
+- **Retenue** : `Selection.primary_color` (`PUT /user-templates/me/selected` remplace le choix
+  entier ; `SelectionRead` rend `primary_color` et `default_primary_color` = `Template.primary_color`) ;
+  `Dossier.primary_color` — **`PUT /applications/{id}/color`** `{ "primary_color": "#rrggbb" | null }`
+  (`ChangeDossierColor`, route sœur de `/template`, idempotente, `404`, `422` ; **survit au
+  changement de modèle**) ; `GeneratedCv.primary_color` (rendu dans `GeneratedCvRead`, pour
+  « Mes CV »). `DossierRead`/`DossierCardRead.primary_color`. Pas de port nouveau (règle 4 : rien
+  à demander à un autre module).
+- Docs : ADR-0034 (« Proposée »), index des ADR, `DEPLOIEMENT.md` (migration 20),
+  `PLUS-TARD.md` (pictogrammes de contact rastérisés : ne suivent pas la couleur),
+  contrats `contrat-api-documents.md` § 1-2 et `contrat-api-candidatures.md` (+ copies dans
+  `karria_app/docs/`, et `contrat-api-modeles.md` côté app), README `applications`.
+
+**Reste** : valider l'ADR-0034 ; teinter les pictogrammes de contact (PLUS-TARD) ; côté app, la
+feuille « Quelle couleur ? » est livrée mais **non vue sur appareil** (`karria_app/docs/REPRISE.md`).
+
 ### Session du 2026-11-05 (après-midi) — le merci d'un paiement : courriel + notification push (ADR-0024 § 2026-11-05 — Fable) — EN PRODUCTION
 
 **Incident du matin** : un vrai café de 2,99 € encaissé à 08:15 ; webhook et statut en 500
