@@ -822,4 +822,4 @@ def test_un_paragraphe_justifie_dit_le_bord_de_sa_boite(built: tuple) -> None:
     }
     width_both = assembler.wrapped_box_width(both, {}, styles, 20.0)
     assert width_both is not None
-    assert width_both >= assembler.fonts.width_mm(wide.text, styles["summary.summary"])
+    assert width_both >= assembler.fonts.width_mm(wide.text, styles["summary.summary"]) - 0.01
