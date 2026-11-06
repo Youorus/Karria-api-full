@@ -425,6 +425,23 @@ que la pastille dessinée du modèle (0,5 mm contre 1,06 mm sur Minimalist), et 
 faudrait :** une puce image (`w:lvlPicBulletId`) ou une police de puces incorporée.
 **Déclencheur :** la revue Fable, ou un retour de Marc sur l'aspect du DOCX.
 
+### Ingestion v2 (ADR-0037) : ce que le DOCX ne rend pas encore
+
+Le DOCX empile la colonne latérale d'une frise (entreprise, dates) **au-dessus** du contenu de
+l'élément, dans la marge de gauche, au lieu de la poser à côté ; et il pose les filets de bande
+ou de flux à leur hauteur mesurée (Word n'étire pas une forme avec un tableau). **Ce qu'il
+faudrait :** un tableau imbriqué par élément de frise (deux cellules), et une forme ancrée à la
+cellule avec sa hauteur relue après mise en page. **Déclencheur :** un retour de Marc sur le
+DOCX d'un modèle à frise.
+
+### Ingestion v2 : les rubriques libres d'un vrai CV
+
+Une rubrique libre d'un modèle (« Réalisations clés », « Certifications ») est gardée avec son
+titre et rendue dans l'exemple ; le CV v2 n'a pas de rubrique libre, donc elle n'a rien à
+afficher pour une personne. **Ce qu'il faudrait :** une liste de rubriques libres dans le CV
+(titre + entrées), que `domain/view.py` apparierait par titre. **Déclencheur :** la décision de
+Marc d'ouvrir le CV à des rubriques libres.
+
 ### Marketing reste en revue
 
 Aileron est désormais servie (Fontsource, CC0) : PDF 0,82, DOCX 0,77, sous le seuil.

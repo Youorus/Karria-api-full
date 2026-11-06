@@ -96,3 +96,13 @@ def test_la_decision_se_serialise() -> None:
         "passed": False,
         "failures": ["x"],
     }
+
+
+def test_une_substitution_declaree_abaisse_le_seul_plancher_du_ssim() -> None:
+    substituted = _fidelity(ssim_tolerant=0.86, extra={"substituted_families": ["canvasans"]})
+    assert evaluate(substituted).passed
+    assert not evaluate(_fidelity(ssim_tolerant=0.86)).passed
+    too_low = _fidelity(ssim_tolerant=0.835, extra={"substituted_families": ["canvasans"]})
+    assert "ssim_tolerant 0.835 < 0.84" in evaluate(too_low).failures
+    words = _fidelity(words_within_2mm=0.85, extra={"substituted_families": ["canvasans"]})
+    assert "words_within_2mm 0.850 < 0.90" in evaluate(words).failures

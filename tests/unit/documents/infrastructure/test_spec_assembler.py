@@ -312,6 +312,36 @@ class TestEnTete:
         }
         assert sample["identity"]["first_name"] == "Romain"
 
+    def test_un_site_prend_la_ligne_sous_la_derniere_coordonnee(self, spec: Json) -> None:
+        by_field = {e["field"]: e for e in spec["header"]["elements"]}
+        website = by_field["website"]
+        assert website["synthesized"] is True
+        assert website["style"] == by_field["address"]["style"]
+        assert website["align"] == "right"
+        assert website["rx_mm"] == by_field["address"]["rx_mm"]
+        assert website["y_mm"] == pytest.approx(by_field["address"]["y_mm"] + 5.0, abs=0.3)
+        assert website["pitch_mm"] == pytest.approx(5.0, abs=0.3)
+
+    def test_sans_coordonnee_dans_lentete_aucun_site_synthetise(self) -> None:
+        def change(plan: Json) -> None:
+            plan["header"]["lines"] = [
+                h for h in plan["header"]["lines"] if h["field"] in ("full_name", "headline")
+            ]
+
+        spec, _, _, _ = build(change)
+        assert "website" not in {e["field"] for e in spec["header"]["elements"]}
+        assert SpecAssembler.synthesize_website(
+            [{"field": "phone", "style": "s", "x_mm": 1.0, "y_mm": 2.0, "w_mm": 3.0}]
+        ) == {
+            "field": "website",
+            "style": "s",
+            "x_mm": 1.0,
+            "y_mm": 2.0,
+            "w_mm": 3.0,
+            "synthesized": True,
+            "pitch_mm": None,
+        }
+
     def test_la_photo_est_celle_que_le_plan_designe(self, spec: Json) -> None:
         photo = spec["header"]["photo"]
         assert (photo["x_mm"], photo["y_mm"], photo["w_mm"]) == (15.0, 15.0, 30.0)
@@ -393,7 +423,9 @@ class TestEnTete:
 
         spec, _, _, assembler = build(change)
         assert assembler.check.unknown == ["L99"]
-        assert "website" not in {e["field"] for e in spec["header"]["elements"]}
+        # Le seul « site » de l'en-tête est la ligne synthétisée, pas la ligne inconnue.
+        websites = [e for e in spec["header"]["elements"] if e["field"] == "website"]
+        assert [e.get("synthesized") for e in websites] == [True]
 
 
 class TestVerification:
@@ -462,7 +494,12 @@ class TestRendus:
     ) -> None:
         cv = {
             "identity": {"first_name": "Ada", "last_name": "Lovelace", "headline": "Ingénieure"},
-            "contact": {"phone": "01", "email": "a@b.fr", "city": "Londres"},
+            "contact": {
+                "phone": "01",
+                "email": "a@b.fr",
+                "city": "Londres",
+                "links": [{"url": "https://www.linkedin.com/in/ada/"}],
+            },
             "summary": "Un profil.",
             "experiences": [
                 {
@@ -482,6 +519,10 @@ class TestRendus:
         assert "Ingénieure" in html
         assert "Babbage" in html
         assert "Machine analytique" in html
+        # Les coordonnées sont dans l'en-tête : aucune rubrique « Contact » empruntée,
+        # et le site prend la ligne synthétisée sous l'adresse.
+        assert ">Contact<" not in html
+        assert "linkedin.com/in/ada" in html
         assert estimate_pages(spec, view, fonts) == 1
         exp = sections(spec)["experiences"]
         sec = next(s for s in view["sections"] if s["kind"] == "experiences")

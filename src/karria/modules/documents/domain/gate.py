@@ -13,7 +13,8 @@ page au PDF source. Quatre composantes, chacune avec un plancher :
 | Décor | filets, pastilles, cadres retrouvés à ±1,5 mm | 0,75 |
 
 Score = 0,45 × SSIM tolérant + 0,25 × mots + 0,15 × style + 0,15 × décor ;
-**PDF : score ≥ 0,90 et chaque plancher**. Le DOCX est mesuré (aperçu
+**PDF : score ≥ 0,90 et chaque plancher** (SSIM tolérant ≥ 0,84 sous une
+substitution de police déclarée, ADR-0037 § 4). Le DOCX est mesuré (aperçu
 LibreOffice) et rapporté, avec un seuil informatif de 0,80 : il ne bloque
 pas la publication. Un modèle sous le seuil n'est **pas publié** : il part en
 revue avec ses mesures et ses substitutions de polices.
@@ -32,6 +33,12 @@ FLOORS: Final[dict[str, float]] = {
     "style": 0.95,
     "decoration": 0.75,
 }
+#: Plancher du SSIM tolérant quand une police de la source est servie par une
+#: **substitution déclarée** (ADR-0037 § 4) : les glyphes ne sont plus ceux de la
+#: source, le dessin l'est. Mesuré le 2026-11-06 : un modèle en Canva Sans (police
+#: propriétaire) rendu en Inter, tout le reste à 1,0 et les mots à 0,90, donne
+#: 0,866 ; un autre modèle en donne 0,58. À reprendre si un lot en dit autrement.
+SSIM_FLOOR_SUBSTITUTED: Final = 0.84
 WEIGHTS: Final[dict[str, float]] = {
     "ssim_tolerant": 0.45,
     "words_within_2mm": 0.25,
@@ -112,11 +119,19 @@ class GateDecision:
 
 
 def evaluate(pdf: Fidelity) -> GateDecision:
-    """Applique les seuils PDF : le score **et** chaque plancher."""
+    """Applique les seuils PDF : le score **et** chaque plancher.
+
+    Une substitution de police déclarée (`extra["substituted_families"]`)
+    abaisse le seul plancher du SSIM tolérant : la place des mots, le style et
+    le décor restent exigés tels quels.
+    """
     failures: list[str] = []
     if pdf.score < PDF_SCORE_MIN:
         failures.append(f"score {pdf.score:.3f} < {PDF_SCORE_MIN:.2f}")
-    for key, floor in FLOORS.items():
+    floors = dict(FLOORS)
+    if pdf.extra.get("substituted_families"):
+        floors["ssim_tolerant"] = SSIM_FLOOR_SUBSTITUTED
+    for key, floor in floors.items():
         value = pdf.components()[key]
         if value < floor:
             failures.append(f"{key} {value:.3f} < {floor:.2f}")

@@ -242,10 +242,14 @@ def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
         for s in c["sections"]
     }
     bands: list[Json] = [{"columns": [[] for _ in b["columns"]], "spec": b} for b in spec["bands"]]
+    # Des coordonnées déjà dans l'en-tête ne se répètent pas dans une rubrique empruntée.
+    header_contact = any(e["field"] in CONTACT_ROLES for e in spec["header"]["elements"])
     for sec in view["sections"]:
         if sec["kind"] in spec_secs:
             bi, ci, s = spec_secs[sec["kind"]]
             bands[bi]["columns"][ci].append((s, sec, False))
+            continue
+        if sec["kind"] == "contact" and header_contact:
             continue
         for sib in SIBLINGS.get(sec["kind"], []):
             if sib not in spec_secs:

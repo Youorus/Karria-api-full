@@ -378,6 +378,9 @@ class SpecAssembler(SpecBuilder):
                 e["icon"] = icons[e["field"]]
         if "headline" not in by_field:
             elements.append(self.synthesize_headline(elements, styles, first_top))
+        website = self.synthesize_website(elements)
+        if website is not None:
+            elements.append(website)
         photo = self.photo_from_plan()
         decor = [
             self.shape_entry(self.drawings[self.shape_index[a.shape]])
@@ -429,6 +432,37 @@ class SpecAssembler(SpecBuilder):
         else:
             sample["contact"][{"address": "city"}.get(field, field)] = text
         return e
+
+    @staticmethod
+    def synthesize_website(elements: list[Json]) -> Json | None:
+        """Le site ou LinkedIn d'une personne, sous la dernière coordonnée de l'en-tête.
+
+        Un modèle dont les coordonnées sont dans l'en-tête n'a souvent pas de
+        ligne pour un site (ADR-0020 § 3.3) : une ligne de plus, au style, à
+        l'alignement et au pas des coordonnées ; rien n'est affiché sans site.
+        """
+        contact = sorted(
+            (e for e in elements if e["field"] in ("phone", "email", "address", "website")),
+            key=lambda e: e["y_mm"],
+        )
+        if not contact or any(e["field"] == "website" for e in contact):
+            return None
+        last = contact[-1]
+        gaps = [b["y_mm"] - a["y_mm"] for a, b in itertools.pairwise(contact)]
+        pitch = med(gaps) if gaps else 0.0
+        element: Json = {
+            "field": "website",
+            "style": last["style"],
+            "x_mm": last["x_mm"],
+            "y_mm": round(last["y_mm"] + pitch, 2),
+            "w_mm": last["w_mm"],
+            "synthesized": True,
+            "pitch_mm": round(pitch, 3) if pitch else None,
+        }
+        for key in ("align", "rx_mm", "cx_mm"):
+            if key in last:
+                element[key] = last[key]
+        return element
 
     @staticmethod
     def lines_alignment(lines: list[Line]) -> str:
