@@ -3,7 +3,57 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-05**
+**Dernière mise à jour : 2026-11-06**
+
+### Session du 2026-11-06 — la lettre de motivation : modèle apparié ou lettre sobre (ADR-0036 — Fable) — branche `feat/lettres`, NON poussée
+
+**Demande de Marc** : la lettre du modèle quand il en a une, sinon une lettre sobre sur page
+blanche « bien comme il faut » ; les modèles s'ingèrent avec leur lettre ; la galerie montre
+exactement ce que l'atelier rend ; l'IA seulement là où elle est indispensable.
+
+**Livré côté API** (worktree `~/PycharmProjects/karria_api_v2-lettres`, branche `feat/lettres`,
+rebasée sur `2aa3ce8` ; `make check` vert, 3 641 tests, 22 S3 ignorés ; **migration 21** à
+appliquer avant le code) :
+- **Spécification de lettre** (ADR-0036 § 1) : `domain/plain_letter.py` (la lettre sobre, Carlito
+  11 pt, A4, marges 25 mm, `PLAIN_LETTER_SAMPLE`, `letter_style_served`) ;
+  `infrastructure/letter_spec_builder.py` (mesure d'une lettre appariée : piles d'en-tête
+  ancrées, colonne de texte, justification, préfixe de l'objet, `complete_spec` pour les champs
+  que le modèle n'a pas) ; `infrastructure/letter_analyzer.py` (`LetterLineLabeler`, tâche
+  `template_extract`, rôles `sender_name`… ; `LetterAnalyzer`, une seule remplaçante par famille).
+  `letter_renderer.py` réécrit pour lire une spécification de lettre (HTML : blocs absolus
+  empilés au pas, corps aux blancs mesurés ; DOCX : chaque ligne de base posée d'après la règle
+  **mesurée** de LibreOffice pour un interligne exact — `baseline_offset`, `place`).
+- **Ingestion** : `SubmitTemplate(letter=…)`, champ multipart `letter`, `--letter` du script ;
+  `ingest_paired_letter` (section dédiée en fin de `use_cases.py`, hook de quelques lignes dans
+  `_ingest`) : même mesure, même porte, échecs « lettre : … », version entière en revue ;
+  `letter_*` sur `TemplateVersion`/table/dépôt ; `report["fidelity"]["letter"|"letter_docx"]`.
+- **Choix** : `letter_style` sur `RenderRequest` / `LetterExportRequest`, `letter_style_served`
+  dans `RenderRead`, `letter_style` dans `GeneratedCvRead` ; `letter_spec_for` ;
+  `PUT /applications/{id}/letter-style` (`ChangeDossierLetterStyle`, `Dossier.letter_style`).
+- **Galerie** : `TemplateRead.cover_letters` (`template` « Lettre assortie » / `plain` « Lettre
+  sobre »), `has_letter`, `pages[].style` ; `plain_letter_pages` (cache 10 min par processus) ;
+  `PublishPlainLetterPreview` ← **`python -m scripts.templates plain-letter`** (à lancer en prod
+  par le coordinateur, Gotenberg joignable ; télécharge Carlito).
+- **Fidélité** : `measure(…, fonts_report=…)` juge la police servie quand la substitution est
+  déclarée (`served_families`) — vaut CV et lettre, **à valider par Marc** (ADR-0036 § 5).
+  `domain/fonts.py` : abréviations `-Rg/-Bd/-BdIt/-Md…`, graisse hors échelle → 400, « Inter 18pt »
+  → « Inter » (la police manquait au rendu).
+- Tests : 3 nouveaux fichiers (`test_plain_letter`, `test_letter_spec_builder`,
+  `test_letter_analyzer`), `test_letter_renderer` réécrit, lettre de test synthétique
+  (`infrastructure/fakes.py › letter_template_pdf`), ingestion/rendu/export/galerie/e2e/dossier.
+
+**Vérifié en local** (Gotenberg 3005, Anthropic `claude-opus-5-5`) : `submit cv1 --letter … --inline`
+→ version 6 de `sacha-dubois`, lettre **0,905** (SSIM tol. 0,820, mots ≤ 2 mm 0,946, style 0,996,
+décor 1,0), DOCX 0,920, lignes de base à ±0,4 mm ; seule faille « lettre : ssim_tolerant 0,820 <
+0,88 » — **polices Canva propriétaires substituées**, inatteignable sans elles (ADR-0036 § « Ce qui
+reste ouvert ») ; le CV cv1 lui-même à 0,50 (agent ingestion v2). Livrables dans le scratchpad de
+la session (`…/scratchpad/lettres/livrables/` : côte à côte, lettre sobre PNG/PDF/DOCX, DOCX de
+lettre appariée avec un autre contenu).
+
+**Reste** : valider ADR-0036 (et § 5) ; décider des polices non libres ; appliquer la migration 21
+puis `plain-letter` en prod ; fusionner avec `feat/ingestion-v2` (hooks dans `_ingest`,
+`analyzer.py` non touché) ; côté app voir `karria_app/docs/REPRISE.md`.
+
 
 ### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
 

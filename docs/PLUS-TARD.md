@@ -133,6 +133,27 @@ Faire : teinter le PNG au rendu (remplacer les pixels de la couleur d'origine,
 alpha conservé) dans `html_renderer`/`docx_renderer` quand `primary_color` est
 posée, ou retenir les tracés vectoriels à l'analyse.
 
+### Une lettre (ou un CV) aux polices non libres ne passe pas le SSIM (ADR-0036)
+
+La lettre appariée de `cv1` (TT Commons Pro, The Seasons, Canva Sans — toutes
+substituées) mesure 0,905 avec les mots à ±2 mm à 95 % et le style à 0,996, mais
+`ssim_tolerant` 0,82 < 0,88 : une autre famille de glyphes ne dessine pas la même
+page, et aucune mise en page n'y change rien. La version reste `review`.
+
+**Ce que ça coûte :** aucun modèle Canva à polices propriétaires n'est publiable
+avec sa lettre tant que Marc n'a pas tranché : fournir les polices (elles
+entreraient dans la bibliothèque), accepter une tolérance de SSIM quand toutes les
+substitutions sont déclarées (une ADR), ou publier à la main depuis la revue.
+**Déclencheur :** la décision de Marc sur ADR-0036 § « Ce qui reste ouvert ».
+
+### Le CV ne retient pas une seule remplaçante par famille (ADR-0036)
+
+`TemplateAnalyzer.resolve_fonts` juge police par police : le normal et le gras d'une
+même famille non libre peuvent tomber sur deux remplaçantes (Barlow et DM Sans).
+`LetterAnalyzer._unify_substitutes` aligne les graisses sur la famille de la
+normale pour la lettre ; le CV ne le fait pas encore (fichier de l'agent
+« ingestion v2 »). Faire : remonter l'unification dans `resolve_fonts`.
+
 ### `pages` du rendu de l'atelier est une estimation
 
 Le nombre de pages rendu par `POST /documents/{id}/render` vient d'une mesure
