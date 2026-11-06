@@ -25,7 +25,9 @@ from karria.shared.images import (
     ImagePolicy,
     NotAnImageError,
     normalize_image,
+    single_ink,
     sniff_content_type,
+    tint_ink,
 )
 
 pytestmark = pytest.mark.unit
@@ -163,3 +165,80 @@ class TestPieceDIdentite:
             piece, ImagePolicy(max_edge=3_000, quality=60), max_bytes=10 * UN_MEGA
         )
         assert len(resultat.payload) > len(en_photo.payload) * 1.3
+
+
+def _pictogram(color: str, *, background: tuple[int, ...] | None = (255, 255, 255)) -> bytes:
+    """Un rond anticrénelé d'une couleur, sur du blanc ou sur du transparent."""
+    from PIL import ImageDraw  # noqa: PLC0415 - fabrique de test
+
+    size = 32
+    big = Image.new("L", (size * 4, size * 4), 0)
+    ImageDraw.Draw(big).ellipse((6, 6, size * 4 - 6, size * 4 - 6), fill=255)
+    mask = big.resize((size, size), Image.Resampling.LANCZOS)
+    if background is None:
+        # Sur du transparent : l'encre partout, les bords dans l'alpha.
+        image = Image.new("RGBA", (size, size), color)
+        image.putalpha(mask)
+    else:
+        image = Image.new("RGB", (size, size), background)
+        image.paste(Image.new("RGB", (size, size), color), (0, 0), mask)
+    buffer = BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+class TestPictogrammes:
+    """Un pictogramme monochrome se mesure et se reteinte, bords et transparence gardés."""
+
+    def test_l_encre_d_un_pictogramme_sur_blanc_est_mesuree_malgre_les_bords(self) -> None:
+        assert single_ink(_pictogram("#1A5276")) == "#1A5276"
+        assert single_ink(_pictogram("#000000")) == "#000000"
+
+    def test_l_encre_d_un_pictogramme_sur_transparent_est_mesuree(self) -> None:
+        assert single_ink(_pictogram("#7B1E2B", background=None)) == "#7B1E2B"
+
+    def test_deux_encres_une_image_vide_ou_une_photo_n_ont_pas_d_encre(self) -> None:
+        bicolore = _ouvrir(_pictogram("#1A5276")).convert("RGB")
+        from PIL import ImageDraw  # noqa: PLC0415 - fabrique de test
+
+        ImageDraw.Draw(bicolore).rectangle((0, 0, 6, 6), fill="#C0392B")
+        buffer = BytesIO()
+        bicolore.save(buffer, "PNG")
+        assert single_ink(buffer.getvalue()) is None
+        blanc = BytesIO()
+        Image.new("RGB", (8, 8), "#FFFFFF").save(blanc, "PNG")
+        assert single_ink(blanc.getvalue()) is None
+        assert single_ink(sample_image(fmt="JPEG")) is None
+        assert single_ink(sample_image(256, 256, fmt="PNG")) is None, (
+            "un dégradé : des milliers de couleurs"
+        )
+        assert single_ink(b"pas une image") is None
+
+    def test_la_teinte_change_l_encre_et_garde_le_fond_blanc_et_les_bords(self) -> None:
+        source = _pictogram("#1A5276")
+
+        tinted = tint_ink(source, "#1A5276", "#7B1E2B")
+
+        assert single_ink(tinted) == "#7B1E2B"
+        image = _ouvrir(tinted).convert("RGBA")
+        assert image.getpixel((0, 0)) == (255, 255, 255, 255), "le coin reste du papier"
+        assert image.getpixel((16, 16)) == (0x7B, 0x1E, 0x2B, 255)
+        before = _ouvrir(source).convert("L")
+        after = image.convert("L")
+        # Les bords anticrénelés restent des bords : ni plus durs, ni plus doux.
+        edge = next(
+            (x, 16)
+            for x in range(16)
+            if 0 < before.getpixel((x, 16)) < 255  # type: ignore[operator]
+        )
+        assert 0 < after.getpixel(edge) < 255  # type: ignore[operator]
+
+    def test_la_teinte_garde_la_transparence(self) -> None:
+        source = _pictogram("#1A5276", background=None)
+
+        tinted = tint_ink(source, "#1A5276", "#2E7D32")
+
+        image = _ouvrir(tinted).convert("RGBA")
+        assert image.getpixel((0, 0))[3] == 0, "le coin reste transparent"  # type: ignore[index]
+        assert image.getpixel((16, 16)) == (0x2E, 0x7D, 0x32, 255)
+        assert single_ink(tinted) == "#2E7D32"
