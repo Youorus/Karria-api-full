@@ -168,24 +168,30 @@ class TestRubriques:
         spec, _, _, _ = build(change)
         assert [s["kind"] for s in spec["bands"][1]["columns"][1]["sections"]] == ["skills"]
 
-    def test_deux_rubriques_libres_du_meme_identifiant_se_distinguent(self) -> None:
+    def test_deux_rubriques_libres_du_meme_titre_se_distinguent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from karria.modules.documents.infrastructure import spec_assembler  # noqa: PLC0415
+
+        monkeypatch.setattr(spec_assembler, "slugify", lambda _text: "meme-titre")
+
         def change(plan: Json) -> None:
-            plan["bands"][1]["columns"][0]["sections"][0]["title_lines"] = []
-            plan["bands"][1]["columns"][1]["sections"][0].update(kind="other", title_lines=[])
-            plan["bands"][1]["columns"][1]["sections"][0]["ref"] = "S2"
+            plan["bands"][1]["columns"][1]["sections"][0].update(kind="other")
 
         spec, _, _, _ = build(change)
-        assert set(sections(spec)) >= {"other:s2", "other:s2-2"}
+        assert set(sections(spec)) >= {"other:meme-titre", "other:meme-titre-2"}
 
-    def test_une_rubrique_libre_sans_titre_prend_son_identifiant(self) -> None:
+    def test_une_rubrique_libre_sans_titre_prend_un_nom_sur_sans_son_identifiant(self) -> None:
         def change(plan: Json) -> None:
             plan["bands"][1]["columns"][0]["sections"][0]["title_lines"] = []
 
         spec, _, _, assembler = build(change)
-        assert "other:s2" in sections(spec)
+        # Le deuxième de la page ; jamais le `ref` du plan.
+        assert "other:section-2" in sections(spec)
+        assert "other:s2" not in sections(spec)
         assert "L9" in assembler.check.unplaced
 
-    def test_deux_rubriques_libres_de_meme_titre_se_distinguent(self) -> None:
+    def test_une_seconde_rubrique_libre_sans_titre_prend_son_rang(self) -> None:
         def change(plan: Json) -> None:
             first = plan["bands"][1]["columns"][0]["sections"][0]
             plan["bands"][1]["columns"][1]["sections"][0] = {
@@ -197,7 +203,8 @@ class TestRubriques:
             plan["bands"][1]["columns"][1]["sections"][0]["kind"] = "other"
 
         spec, _, _, _ = build(change)
-        assert "other:s9" in sections(spec)
+        assert "other:section-3" in sections(spec)
+        assert "other:s9" not in sections(spec)
 
 
 class TestDecorations:
@@ -435,6 +442,10 @@ class TestRendus:
     ) -> None:
         html = HtmlRenderer(spec, from_sample(spec, sample), fonts, photo="p.png").render()
         assert 'class="side"' in html
+        # Une rubrique libre a une classe de style valide (pas de « : », pas de « . »).
+        assert ".s-other-realisations-cles-bullet{" in html
+        assert 'class="t s-other-realisations-cles-bullet"' in html
+        assert "other:" not in html
         side = sections(spec)["experiences"]["side"]
         assert f"display:flex;align-items:flex-start;margin-left:{side['dx_mm']:.2f}mm" in html
         assert "REALISATIONS CLES" in html

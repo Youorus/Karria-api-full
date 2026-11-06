@@ -643,8 +643,10 @@ class FakeEngine:
         self.calls.append(("docx_to_pdf", docx))
         return b"%PDF-1.7 docx"
 
-    async def measure(self, source_pdf: bytes, rendered_pdf: bytes) -> Fidelity:
-        self.calls.append(("measure", rendered_pdf))
+    async def measure(
+        self, source_pdf: bytes, rendered_pdf: bytes, *, substituted: frozenset[str] = frozenset()
+    ) -> Fidelity:
+        self.calls.append(("measure", (rendered_pdf, substituted)))
         return self.fidelity_docx if rendered_pdf == b"%PDF-1.7 docx" else self.fidelity_pdf
 
     async def previews(self, pdf: bytes) -> Previews:
@@ -697,7 +699,7 @@ def make_analysis(
         fonts=[{"family": "Inter", "origin": "google"}],
         fonts_report=[
             {"family": "Inter", "origin": "google"},
-            {"family": "Avenir", "origin": "substitute"},
+            {"family": "Avenir", "origin": "substitute", "source": "Avenir-Regular"},
         ],
         unlabeled=unlabeled or [],
         passes=[{"pass": 1, "score": 0.95}],

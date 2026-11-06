@@ -55,6 +55,8 @@ STRETCH_MIN_MM: Final = 20.0
 #: Marge ajoutée à la boîte d'un champ d'en-tête écrit sur plusieurs lignes,
 #: pour que sa ligne la plus longue tienne sans retour forcé.
 BOX_SLACK_MM: Final = 1.5
+#: Marge ajoutée au bord droit mesuré d'une colonne (mm).
+COLUMN_SLACK_MM: Final = 1.0
 #: Tolérances d'alignement des éléments d'en-tête (mm).
 EDGE_TOLERANCE_MM: Final = 1.0
 CENTER_TOLERANCE_MM: Final = 1.5
@@ -125,7 +127,13 @@ class SpecAssembler(SpecBuilder):
         for cols in bands:
             band_top = min(s["top"] for secs in cols for s in secs)
             xs = [min(s["x"] for s in secs) for secs in cols]
-            rights = [max(ln.right for s in secs for ln in s["all_lines"]) for secs in cols]
+            # La ligne la plus longue d'un paragraphe touche le bord : un peu de
+            # marge, sinon une police servie d'une chasse légèrement différente
+            # replie un mot plus tôt que la source.
+            rights = [
+                max(ln.right for s in secs for ln in s["all_lines"]) + COLUMN_SLACK_MM
+                for secs in cols
+            ]
             columns: list[Json] = []
             for ci, secs in enumerate(cols):
                 col_x = xs[ci]
@@ -189,18 +197,29 @@ class SpecAssembler(SpecBuilder):
         """Bandes → colonnes → rubriques, avec leurs lignes ; les coquilles vides tombent."""
         seen_kinds: dict[str, int] = {}
         bands: list[list[list[Json]]] = []
+        index = 0
         for pb in self.plan.bands:
             cols: list[list[Json]] = []
             for pc in pb.columns:
-                secs = [s for ps in pc.sections if (s := self.section_lines(ps, seen_kinds))]
+                secs: list[Json] = []
+                for ps in pc.sections:
+                    index += 1
+                    s = self.section_lines(ps, seen_kinds, index)
+                    if s:
+                        secs.append(s)
                 if secs:
                     cols.append(secs)
             if cols:
                 bands.append(cols)
         return bands
 
-    def section_lines(self, ps: PlanSection, seen_kinds: dict[str, int]) -> Json | None:
-        """Les lignes d'une rubrique du plan (celles qu'elle possède), et son genre."""
+    def section_lines(self, ps: PlanSection, seen_kinds: dict[str, int], index: int) -> Json | None:
+        """Les lignes d'une rubrique du plan (celles qu'elle possède), et son genre.
+
+        Le genre d'une rubrique libre vient de son titre (`other:<slug>`) ; sans
+        titre, d'un repli sûr (`other:section-<n>`) — jamais de l'identifiant
+        du plan, qui finirait dans un nom de classe.
+        """
         title = [self.by_id[t] for t in ps.title_lines if self.owner.get(t) == ps.ref]
         lines = [
             self.by_id[pl.line]
@@ -212,7 +231,7 @@ class SpecAssembler(SpecBuilder):
             return None
         kind: str = ps.kind
         if kind == "other":
-            slug = slugify(" ".join(t.text for t in title)) or ps.ref.lower()
+            slug = slugify(" ".join(t.text for t in title)) or f"section-{index}"
             kind = f"{OTHER_PREFIX}{slug}"
             if kind in seen_kinds:
                 seen_kinds[kind] += 1

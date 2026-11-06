@@ -33,7 +33,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.infrastructure.pdf_reader import PdfPage
@@ -95,6 +95,11 @@ ITEM_KINDS: Final = frozenset({"experiences", "educations", "projects", "referen
 SMALL_SHAPE_MM: Final = 4.0
 #: Lignes hors de leur place rapportées au modèle, au plus.
 MAX_MISPLACED: Final = 40
+#: Un identifiant de rubrique (`ref`) : court, sans autre chose que des
+#: lettres, chiffres, tirets — vérifié en Python, pas dans le schéma envoyé
+#: (le mode strict d'Anthropic refuse `pattern`) ; un plan qui s'en écarte
+#: est hors schéma.
+REF_PATTERN: Final = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 
 class PlanHeaderLine(BaseModel):
@@ -138,6 +143,14 @@ class PlanSection(BaseModel):
     side_roles: list[LineRole] = Field(
         description="Rôles posés dans une colonne latérale à gauche du contenu (frise) ; vide sinon"
     )
+
+    @field_validator("ref")
+    @classmethod
+    def _ref_is_plain(cls, value: str) -> str:
+        if not REF_PATTERN.fullmatch(value):
+            msg = "ref : lettres, chiffres, tirets, 32 caractères au plus"
+            raise ValueError(msg)
+        return value
 
 
 class PlanColumn(BaseModel):

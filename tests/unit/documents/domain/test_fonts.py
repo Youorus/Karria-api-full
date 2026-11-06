@@ -16,11 +16,13 @@ from karria.modules.documents.domain.fonts import (
     classify,
     family_from_name,
     family_key,
+    family_match_key,
     italic_from_name,
     licence_allows_reuse,
     metric_distance,
     missing_characters,
     nearest_weight,
+    substituted_families,
     weight_from_name,
 )
 
@@ -288,3 +290,20 @@ class TestResolution:
 def test_roman_fait_partie_du_nom_de_famille() -> None:
     assert family_from_name("Times New Roman") == "Times New Roman"
     assert family_from_name("ABCDEF+TimesNewRomanPSMT") == "Times New Roman"
+
+
+class TestSubstitutionsDeclarees:
+    def test_la_cle_de_comparaison_dune_police(self) -> None:
+        assert family_match_key("ABCDEF+RalewayRoman-Bold") == "raleway"
+        assert family_match_key("Open Sans,Bold") == "open"
+        assert family_match_key("") == ""
+
+    def test_les_familles_substituees_du_rapport(self) -> None:
+        report = [
+            {"source": "CanvaSans-Bold", "origin": "substitute"},
+            {"source": "CanvaSans-RegularItalic", "origin": "substitute"},
+            {"source": "YesevaOne-Regular", "origin": "library"},
+            {"origin": "substitute"},
+        ]
+        assert substituted_families(report) == frozenset({"canvasans", ""})
+        assert substituted_families([]) == frozenset()

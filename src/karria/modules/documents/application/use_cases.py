@@ -67,6 +67,7 @@ from karria.modules.documents.domain.errors import (
     TemplateNotFreeError,
     TemplateNotOwnedError,
 )
+from karria.modules.documents.domain.fonts import substituted_families
 from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.letter import from_letter, letter_warnings
@@ -861,7 +862,9 @@ class IngestTemplateVersion:
         rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
         timings["render_pdf_s"] = round(time.monotonic() - t, 1)
         t = time.monotonic()
-        fidelity_pdf = await self._engine.measure(source, rendered.data)
+        # Une substitution de police déclarée se juge dans la revue, pas dans la porte.
+        substituted = substituted_families(analysis.fonts_report)
+        fidelity_pdf = await self._engine.measure(source, rendered.data, substituted=substituted)
         timings["measure_s"] = round(time.monotonic() - t, 1)
         decision = evaluate(fidelity_pdf)
         failures = list(decision.failures)
@@ -872,7 +875,7 @@ class IngestTemplateVersion:
             spec, view, assets=icons, photo=photo, fit=rendered.fit
         )
         docx_pdf = await self._engine.docx_to_pdf(docx)
-        fidelity_docx = await self._engine.measure(source, docx_pdf)
+        fidelity_docx = await self._engine.measure(source, docx_pdf, substituted=substituted)
         timings["docx_s"] = round(time.monotonic() - t, 1)
         previews = await self._engine.previews(rendered.data)
         keys = {

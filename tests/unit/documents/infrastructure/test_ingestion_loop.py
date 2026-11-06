@@ -31,9 +31,13 @@ class Measures:
     def __init__(self, *results: Fidelity) -> None:
         self._results = list(results)
         self.rendered: list[bytes] = []
+        self.substituted: list[frozenset[str]] = []
 
-    async def __call__(self, source: bytes, rendered: bytes) -> Fidelity:
+    async def __call__(
+        self, source: bytes, rendered: bytes, *, substituted: frozenset[str] = frozenset()
+    ) -> Fidelity:
         self.rendered.append(rendered)
+        self.substituted.append(substituted)
         return self._results.pop(0)
 
 
@@ -69,9 +73,11 @@ def pdf() -> bytes:
 
 async def test_une_passe_suffit_quand_la_porte_passe(pdf: bytes) -> None:
     planner = FakePlanner(CV_ROLES)
-    run, renders, _ = loop(planner, good_fidelity())
+    run, renders, measured = loop(planner, good_fidelity())
     out = await run.run(pdf)
     assert [c[0] for c in planner.calls] == ["plan"]
+    # Les polices de test sont incorporées et réutilisables : rien n'est substitué.
+    assert measured.substituted == [frozenset()]
     assert len(renders.calls) == 1
     assert renders.calls[0]["view"]["sample"] is True
     assert renders.calls[0]["photo"] is not None

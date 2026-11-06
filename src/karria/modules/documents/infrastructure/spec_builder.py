@@ -63,6 +63,19 @@ def med(values: list[float] | list[float | None], default: float = 0.0) -> float
     return float(statistics.median(known)) if known else default
 
 
+def reference(values: list[float]) -> float:
+    """La valeur de référence d'une mesure répétée : la médiane, ou la **première** quand il n'y en a que deux.
+
+    Deux mesures n'ont pas de médiane : la moyenne mettrait les deux éléments
+    à côté de leur place (mesuré sur un modèle Canva dont le second élément
+    est décalé de 4 mm par rapport au premier). Le premier élément est la
+    référence du dessin ; au-delà de deux, la médiane écarte l'exception.
+    """
+    if len(values) == 2:  # noqa: PLR2004
+        return float(values[0])
+    return med(values)
+
+
 def collapse_spaced(text: str) -> str:
     """« B E N J A M I N » (lettres séparées par des espaces tapées) → « BENJAMIN »."""
     joined = text.replace(" ", "")
@@ -423,7 +436,7 @@ class SpecBuilder:
                 "roles": v["roles"],
                 "margin_top_mm": round(med(v["margins"], 0.0), 2),
                 "repeat_margin_mm": round(med(v["repeat"], 0.0), 2) if v["repeat"] else None,
-                "dx_mm": round(med(v["dx"]), 2),
+                "dx_mm": round(reference(v["dx"]), 2),
                 "gap_mm": round(med(v["gaps"]), 2) if v["gaps"] else None,
                 "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
                 "separator": v.get("separator"),

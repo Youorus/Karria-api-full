@@ -92,7 +92,12 @@ class TestAncres:
         self, spec: Json, fonts: FontSet
     ) -> None:
         html = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None, anchored=True).render()
-        spans = re.findall(r'<span class="s-experiences-([a-z_]+)" data-chemin="([^"]+)"', html)
+        spans = [
+            (role.replace("-", "_"), path)
+            for role, path in re.findall(
+                r'<span class="s-experiences-([a-z-]+)" data-chemin="([^"]+)"', html
+            )
+        ]
         # Le modèle de test réunit des champs sur une ligne : chaque morceau garde son chemin.
         assert ("item_title", "experiences.0.position") in spans
         assert ("item_dates", "experiences.0.dates") in spans

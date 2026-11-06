@@ -181,8 +181,10 @@ class KarriaDocumentEngine:
     async def docx_to_pdf(self, docx: bytes) -> bytes:
         return await self._gotenberg.docx_to_pdf(docx)
 
-    async def measure(self, source_pdf: bytes, rendered_pdf: bytes) -> Fidelity:
-        return await asyncio.to_thread(measure, source_pdf, rendered_pdf)
+    async def measure(
+        self, source_pdf: bytes, rendered_pdf: bytes, *, substituted: frozenset[str] = frozenset()
+    ) -> Fidelity:
+        return await asyncio.to_thread(measure, source_pdf, rendered_pdf, substituted=substituted)
 
     async def previews(self, pdf: bytes) -> Previews:
         return await asyncio.to_thread(_previews, pdf)

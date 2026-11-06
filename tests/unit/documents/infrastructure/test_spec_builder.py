@@ -33,6 +33,7 @@ from karria.modules.documents.infrastructure.spec_builder import (
     SpecBuilder,
     collapse_spaced,
     med,
+    reference,
 )
 
 pytestmark = pytest.mark.unit
@@ -84,6 +85,11 @@ class TestOutils:
         assert med([1.0, None, 3.0]) == 2.0
         assert med([None], default=7.0) == 7.0
         assert med([]) == 0.0
+
+    def test_la_reference_de_deux_mesures_est_la_premiere(self) -> None:
+        assert reference([0.0, 4.0]) == 0.0
+        assert reference([0.0, 4.0, 0.2]) == 0.2
+        assert reference([3.0]) == 3.0
 
     def test_des_lettres_espacees_sont_recollees(self) -> None:
         assert collapse_spaced("B E N J A M I N") == "BENJAMIN"

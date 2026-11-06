@@ -27,6 +27,7 @@ from typing import Any, Final
 
 from karria.modules.documents.application.ports import RenderedPdf
 from karria.modules.documents.domain.errors import TemplateIngestionError
+from karria.modules.documents.domain.fonts import substituted_families
 from karria.modules.documents.domain.gate import Fidelity, evaluate
 from karria.modules.documents.domain.view import from_sample
 from karria.modules.documents.infrastructure.analyzer import (
@@ -48,7 +49,7 @@ logger = get_logger(__name__)
 
 Json = dict[str, Any]
 Render = Callable[..., Awaitable[RenderedPdf]]
-Measure = Callable[[bytes, bytes], Awaitable[Fidelity]]
+Measure = Callable[..., Awaitable[Fidelity]]
 
 #: Requêtes au modèle par version, au plus : le plan, puis une correction.
 MAX_PASSES: Final = 2
@@ -69,7 +70,7 @@ class IngestionLoop:
         """
         Args:
             render: `(spec, view, assets=…, photo=…) -> RenderedPdf` — le moteur.
-            measure: `(source_pdf, rendered_pdf) -> Fidelity` — la mesure.
+            measure: `(source_pdf, rendered_pdf, substituted=…) -> Fidelity` — la mesure.
         """
         self._analyzer = analyzer
         self._planner = planner
@@ -121,7 +122,9 @@ class IngestionLoop:
         photo = analyzed.assets.get(photo_name) if photo_name else None
         icons = {k: v for k, v in analyzed.assets.items() if not k.startswith("sample_")}
         rendered = await self._render(analyzed.spec, view, assets=icons, photo=photo)
-        fidelity = await self._measure(pdf, rendered.data)
+        fidelity = await self._measure(
+            pdf, rendered.data, substituted=substituted_families(analyzed.fonts_report)
+        )
         return analyzed, fidelity, rendered.data
 
     @staticmethod

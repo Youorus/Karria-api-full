@@ -32,7 +32,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 
 #: Ce qu'un CV français doit pouvoir écrire. Une police qui n'en a pas tous
 #: les glyphes laisserait des carrés dans le nom d'une personne.
@@ -323,3 +323,28 @@ def classify(  # noqa: PLR0911 - une table de décision, lue de haut en bas
     if any(k in lower for k in ("script", "hand", "brush")):
         return FontClass.HANDWRITING
     return None
+
+
+def family_match_key(font_name: str) -> str:
+    """La clé de comparaison d'une police d'un PDF (`ABCDEF+Raleway-Bold` → `raleway`).
+
+    Celle de la mesure de fidélité : le premier mot du nom de base, en minuscules ;
+    LibreOffice nomme l'instance par défaut d'une variable « <Famille>Roman ».
+    """
+    base = re.sub(r"^[A-Z]{6}\+", "", font_name or "")
+    first = re.split(r"[-,_ ]", base)[0]
+    return re.sub(r"roman$", "", first.lower())
+
+
+def substituted_families(fonts_report: list[dict[str, Any]]) -> frozenset[str]:
+    """Les familles de la source servies par une **substitution déclarée** (rapport de polices).
+
+    La porte de qualité ne compte pas en faute la police d'un mot de ces
+    familles : la substitution est journalisée et montrée dans la revue
+    (ADR-0037 § 2) ; une famille absente sans déclaration reste une faute.
+    """
+    return frozenset(
+        family_match_key(str(r.get("source") or ""))
+        for r in fonts_report
+        if r.get("origin") == "substitute"
+    )

@@ -21,6 +21,7 @@ from karria.modules.documents.domain.view import from_cv, from_sample
 from karria.modules.documents.infrastructure.fonts import FontSet
 from karria.modules.documents.infrastructure.html_renderer import (
     HtmlRenderer,
+    css_class,
     deco_css,
     esc,
     estimate,
@@ -116,6 +117,14 @@ def render(spec: Json, view: Json, fonts: FontSet, photo: str | None = None) -> 
 
 
 class TestOutils:
+    def test_un_nom_de_classe_ne_garde_que_lettres_chiffres_et_tirets(self) -> None:
+        assert css_class("experiences.bullet") == "s-experiences-bullet"
+        assert (
+            css_class("other:réalisations clés.item_text") == "s-other-r-alisations-cl-s-item-text"
+        )
+        assert css_class("header.full_name") == "s-header-full-name"
+        assert css_class('x" onload="y') == "s-x-onload-y"
+
     def test_le_texte_est_echappe_attributs_compris(self) -> None:
         assert esc('<b a="1">&') == "&lt;b a=&quot;1&quot;&gt;&amp;"
         assert esc(None) == ""
@@ -326,7 +335,7 @@ class TestRendu:
         self, spec: Json, fonts: FontSet
     ) -> None:
         html = render(spec, from_cv(spec, CV), fonts)
-        assert html.count('class="t s-skills-subsection_title"') == 2
+        assert html.count('class="t s-skills-subsection-title"') == 2
 
     def test_un_element_vide_ne_produit_rien(self, spec: Json, fonts: FontSet) -> None:
         view = {

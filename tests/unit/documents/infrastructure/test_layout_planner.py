@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from doubles import FakeLanguageModel, refused_result, text_result
 from karria.modules.documents.domain.errors import TemplateIngestionError
@@ -166,6 +167,18 @@ class TestEntreesMesurees:
 
 
 class TestVerification:
+    @pytest.mark.parametrize("ref", ["", "S 1", "a" * 33, "s1:x", "<b>", "é"])
+    def test_un_identifiant_de_rubrique_hors_forme_est_hors_schema(self, ref: str) -> None:
+        plan = json.loads(json.dumps(PLAN))
+        plan["bands"][0]["columns"][0]["sections"][0]["ref"] = ref
+        with pytest.raises(ValidationError):
+            LayoutPlan.model_validate(plan)
+
+    def test_un_identifiant_de_rubrique_simple_passe(self) -> None:
+        plan = json.loads(json.dumps(PLAN))
+        plan["bands"][0]["columns"][0]["sections"][0]["ref"] = "Section_1-a"
+        assert LayoutPlan.model_validate(plan).sections()[0].ref == "Section_1-a"
+
     def test_un_plan_complet_ne_signale_rien(self) -> None:
         check = check_plan(LayoutPlan.model_validate(PLAN), page())
         assert (check.unplaced, check.duplicated, check.unknown) == ([], [], [])

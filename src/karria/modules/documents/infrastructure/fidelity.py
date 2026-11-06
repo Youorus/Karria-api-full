@@ -23,6 +23,7 @@ from typing import Any, Final
 import numpy as np
 from numpy.typing import NDArray
 
+from karria.modules.documents.domain.fonts import family_match_key, substituted_families
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.infrastructure.pdf_reader import (
     PdfDocument,
@@ -89,9 +90,7 @@ def tolerant_ssim(a: Gray, b: Gray, tile: int = 64, radius: int = 3) -> float:
 
 
 def _family(font: str) -> str:
-    f = re.split(r"[-,_ ]", base_font_name(font))[0]
-    # LibreOffice nomme l'instance par défaut d'une police variable « <Famille>Roman ».
-    return re.sub(r"roman$", "", f.lower())
+    return family_match_key(base_font_name(font))
 
 
 def words(doc: PdfDocument, index: int = 0) -> list[dict[str, Any]]:
@@ -123,8 +122,19 @@ def words(doc: PdfDocument, index: int = 0) -> list[dict[str, Any]]:
     return out
 
 
-def structural(src: list[dict[str, Any]], ren: list[dict[str, Any]]) -> dict[str, Any]:
-    """Appariement des mots source ↔ rendu."""
+def structural(
+    src: list[dict[str, Any]],
+    ren: list[dict[str, Any]],
+    substituted: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Appariement des mots source ↔ rendu.
+
+    `substituted` : les familles de la source (clé de `_family`) servies par
+    une autre famille, **déclarée** (ADR-0020 § Mise en œuvre, ADR-0037) : un
+    mot d'une telle famille compte comme concordant en police — la
+    substitution est jugée dans la revue, pas dans la porte. Une famille
+    absente sans déclaration reste une faute.
+    """
     by_text: dict[str, list[dict[str, Any]]] = {}
     for w in ren:
         by_text.setdefault(w["t"], []).append(w)
@@ -139,7 +149,7 @@ def structural(src: list[dict[str, Any]], ren: list[dict[str, Any]]) -> dict[str
         matched += 1
         dists.append(d)
         close += d <= 2.0  # noqa: PLR2004
-        font_ok += best["font"] == w["font"]
+        font_ok += best["font"] == w["font"] or w["font"] in substituted
         size_ok += abs(best["size"] - w["size"]) <= 0.6  # noqa: PLR2004
         color_ok += best["color"] == w["color"]
     n = max(len(src), 1)
@@ -184,12 +194,17 @@ def decoration_recall(
     return found / len(src)
 
 
-def measure(source: bytes, render: bytes, *, dpi: int = 72) -> Fidelity:
-    """Compare la première page d'un rendu à celle de la source."""
+def measure(
+    source: bytes, render: bytes, *, dpi: int = 72, substituted: frozenset[str] = frozenset()
+) -> Fidelity:
+    """Compare la première page d'un rendu à celle de la source.
+
+    `substituted` : voir `structural` ; rapporté dans `extra`.
+    """
     with PdfDocument(source) as s, PdfDocument(render) as r:
         a = s.render_gray(0, dpi=dpi).astype(np.float64)
         b = r.render_gray(0, dpi=dpi).astype(np.float64)
-        st = structural(words(s), words(r))
+        st = structural(words(s), words(r), substituted)
         return Fidelity(
             ssim=ssim(a, b),
             ssim_tolerant=tolerant_ssim(a, b),
@@ -202,7 +217,8 @@ def measure(source: bytes, render: bytes, *, dpi: int = 72) -> Fidelity:
             decoration=decoration_recall(visible_shapes(s), visible_shapes(r)),
             pages_source=s.page_count,
             pages_render=r.page_count,
+            extra={"substituted_families": sorted(substituted)} if substituted else {},
         )
 
 
-__all__ = ["hex_color", "measure"]
+__all__ = ["hex_color", "measure", "substituted_families"]

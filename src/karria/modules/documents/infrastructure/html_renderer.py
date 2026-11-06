@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -62,6 +63,20 @@ PAGE_BREAK_COLOR: Final = "#cbd5e1"
 def identity_url(name: str) -> str:
     """Le résolveur par défaut : un fichier joint se référence par son nom."""
     return name
+
+
+_CLASS_UNSAFE: Final = re.compile(r"[^a-z0-9-]+")
+
+
+def css_class(key: str) -> str:
+    """Le nom de classe d'un style : `s-` puis des lettres, chiffres et tirets seulement.
+
+    Une clé de style vient de la spécification (`experiences.bullet`,
+    `other:realisations-cles.bullet`) : « . » et « : » ne sont pas des
+    caractères de classe (« : » ouvre une pseudo-classe), et rien de ce qui
+    vient d'un plan de modèle n'arrive tel quel dans le HTML.
+    """
+    return "s-" + _CLASS_UNSAFE.sub("-", key.lower()).strip("-")
 
 
 def anchor(path: str | None) -> str:
@@ -358,7 +373,7 @@ class HtmlRenderer:
         """Une classe CSS par style de la spécification."""
         f = "" if name.startswith("header.") else "*var(--f)"
         return (
-            f".s-{name.replace('.', '-')}{{font-family:'{st['family']}','{self.main_family}',sans-serif;"
+            f".{css_class(name)}{{font-family:'{st['family']}','{self.main_family}',sans-serif;"
             f"font-weight:{st['weight']};font-style:{'italic' if st['italic'] else 'normal'};"
             f"font-size:calc({st['size_pt']}pt{f});color:{st['color']};"
             f"letter-spacing:{st['letter_spacing_pt']}pt;line-height:calc({lh(st):.3f}mm{f});"
@@ -388,7 +403,7 @@ class HtmlRenderer:
     ) -> str:
         """Un bloc de texte positionné (ouvert : l'appelant ajoute puces et ornements puis ferme)."""
         return (
-            f'<div class="t s-{key.replace(".", "-")}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
+            f'<div class="t {esc(css_class(key))}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
             f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}">{esc(value)}'
         )
 
@@ -682,7 +697,7 @@ class HtmlRenderer:
                 else:
                     parts.append(f'<span style="display:inline-block;width:{gapx:.2f}mm"></span>')
             parts.append(
-                f'<span class="s-{style_key(self.styles, kind, role).replace(".", "-")}"{self.anchor(path)}>{esc(v)}</span>'
+                f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}"{self.anchor(path)}>{esc(v)}</span>'
             )
         return (
             f'<div class="t" style="margin-top:calc({margin:.2f}mm*var(--k));margin-left:{sl["dx_mm"]:.2f}mm;'
@@ -737,7 +752,7 @@ class HtmlRenderer:
             if not val:
                 continue
             st = self.styles[e["style"]]
-            cls = f'class="s-{e["style"].replace(".", "-")}"'
+            cls = f'class="{esc(css_class(e["style"]))}"'
             if self.view.get("sample") and e.get("sample_lines"):
                 # L'exemple du modèle : chaque ligne d'un champ écrit sur
                 # plusieurs lignes reprend sa place exacte dans la source.
