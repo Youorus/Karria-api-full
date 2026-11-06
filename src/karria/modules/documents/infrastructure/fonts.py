@@ -537,6 +537,13 @@ class FontLibrary:
                 # ingestion ultérieure (qui télécharge) doit encore la voir.
                 return None
             record = await self._fetch(family, key)
+        if record is not None and family_key(record.family) != key:
+            # Le nom lu dans la police porte parfois une taille optique
+            # (« Inter 18pt » pour la famille Inter) : une fiche rangée sous
+            # `inter` mais nommée ainsi ne se retrouvait plus par son propre
+            # nom, et le rendu retombait en `sans-serif`. Le nom servi est
+            # celui sous lequel la fiche se retrouve.
+            record.family = family
         self._records[key] = record
         return record
 
