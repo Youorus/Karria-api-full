@@ -299,3 +299,47 @@ class TestAppelAuModele:
         llm = FakeLanguageModel(text_result("pas du json"))
         with pytest.raises(TemplateIngestionError):
             await VisionLayoutPlanner(llm).plan(b"", measured_inputs(page()))
+
+
+class TestEtiquettesDevinees:
+    def test_une_ligne_other_courte_devant_une_coordonnee_est_une_etiquette(self) -> None:
+        plan = json.loads(json.dumps(PLAN))
+        plan["bands"][0]["columns"][0]["sections"][0]["items"] = [
+            {
+                "lines": [
+                    {"line": "L2", "role": "other"},
+                    {"line": "L3", "role": "phone"},
+                    {"line": "L4", "role": "other"},
+                    {"line": "L5", "role": "item_dates"},
+                ]
+            }
+        ]
+        plan["bands"][0]["columns"][0]["sections"][0]["title_lines"] = []
+        plan["bands"][0]["columns"][1]["sections"][0]["items"] = []
+        p = page()
+        # Une seule colonne, de haut en bas : Phone, 06…, un long texte, des dates.
+        p.lines[1].update(text="Phone", x=20, y=40)
+        p.lines[2].update(x=20, y=45)
+        p.lines[3].update(text="Lorem ipsum dolor sit amet consectetur", x=20, y=50)
+        p.lines[4].update(x=20, y=55)
+        labels = {
+            lb["line"]: lb["role"]
+            for lb in plan_to_labels(LayoutPlan.model_validate(plan), p)["lines"]
+        }
+        assert labels["L2"] == "label"
+        assert labels["L4"] == "item_text"  # trop long pour une étiquette
+        assert labels["L3"] == "phone"
+
+    def test_une_ligne_other_sans_coordonnee_derriere_est_du_texte(self) -> None:
+        plan = json.loads(json.dumps(PLAN))
+        plan["bands"][0]["columns"][0]["sections"][0]["items"] = [
+            {"lines": [{"line": "L3", "role": "other"}, {"line": "L99", "role": "other"}]}
+        ]
+        p = page()
+        p.lines[2]["text"] = "Divers"
+        labels = {
+            lb["line"]: lb["role"]
+            for lb in plan_to_labels(LayoutPlan.model_validate(plan), p)["lines"]
+        }
+        assert labels["L3"] == "item_text"
+        assert "L99" not in labels  # un identifiant inconnu n'est pas une étiquette

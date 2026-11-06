@@ -511,3 +511,18 @@ class TestRasterEtLecture:
             doc.drawings()
             assert doc._pages
         assert doc._pages == {}
+
+
+def test_une_zone_sans_epaisseur_ou_hors_page_se_rasterise_quand_meme() -> None:
+    from karria.shared.images import image_size  # noqa: PLC0415
+
+    b = PdfBuilder(30, 30)
+    b.line(5, 10, 25, 10, stroke="#000000")
+    with PdfDocument(b.to_bytes()) as doc:
+        # Un filet (hauteur nulle) : au moins un point de haut.
+        w, h = image_size(doc.render_png(0, dpi=72, box_mm=(5, 10, 20, 0)))
+        assert w > 0
+        assert h >= 1
+        # Une zone hors de la page : la page entière plutôt qu'une erreur.
+        whole = image_size(doc.render_png(0, dpi=72))
+        assert image_size(doc.render_png(0, dpi=72, box_mm=(40, 40, 5, 5))) == whole

@@ -422,12 +422,17 @@ class PdfDocument:
         crop = (0.0, 0.0, 0.0, 0.0)
         if box_mm is not None:
             x, y, w, h = box_mm
+            # Une zone plus fine qu'un point (un filet) s'élargit à un point :
+            # pdfium refuse un recadrage qui ne laisse rien.
+            w, h = max(w, 1 / MM), max(h, 1 / MM)
             crop = (
                 max(0.0, x * MM),
                 max(0.0, height - (y + h) * MM),
                 max(0.0, width - (x + w) * MM),
                 max(0.0, y * MM),
             )
+            if crop[0] + crop[2] >= width or crop[1] + crop[3] >= height:
+                crop = (0.0, 0.0, 0.0, 0.0)
         bitmap = page.render(scale=dpi / 72, crop=crop)
         buffer = io.BytesIO()
         bitmap.to_pil().save(buffer, "PNG")

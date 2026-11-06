@@ -490,7 +490,7 @@ class TestRendus:
         assert ">Profil<" not in html
 
     def test_le_html_dun_vrai_cv_passe_par_la_boite_du_poste_vise(
-        self, spec: Json, fonts: FontSet
+        self, spec: Json, sample: Json, fonts: FontSet
     ) -> None:
         cv = {
             "identity": {"first_name": "Ada", "last_name": "Lovelace", "headline": "Ingénieure"},
@@ -516,6 +516,12 @@ class TestRendus:
         view = from_cv(spec, cv)
         html = HtmlRenderer(spec, view, fonts, photo=None).render()
         assert "white-space:normal;line-height:5.0" in html
+        # Le poste visé d'une personne replie dans toute la place disponible, pas
+        # dans la boîte de l'exemple ; le titre d'une rubrique prend la colonne.
+        headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        assert f"width:{headline['box_w_mm']:.2f}mm" not in html
+        sample_html = HtmlRenderer(spec, from_sample(spec, sample), fonts, photo=None).render()
+        assert f"width:{headline['box_w_mm']:.2f}mm" not in sample_html  # lignes exactes
         assert "Ingénieure" in html
         assert "Babbage" in html
         assert "Machine analytique" in html

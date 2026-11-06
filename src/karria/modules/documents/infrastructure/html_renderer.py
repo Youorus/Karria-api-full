@@ -58,6 +58,11 @@ FONT_STEPS: Final = (1, 0.96, 0.92, 0.88)
 FIT_SLACK: Final = 0.78
 #: Couleur du filet qui marque une coupure de page dans l'atelier.
 PAGE_BREAK_COLOR: Final = "#cbd5e1"
+#: Réductions de corps d'un champ d'en-tête trop long, avant le retour à la ligne.
+FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8)
+#: Un nom se réduit davantage : replié, il écraserait ce qui est sous lui.
+NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5)
+NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
 
 
 def identity_url(name: str) -> str:
@@ -429,7 +434,9 @@ class HtmlRenderer:
         # Sans titre (un profil, des coordonnées sous la photo) : la rubrique
         # commence à sa première ligne, sans demi-blanc de titre à reprendre.
         margin = s["margin_top_mm"] - (0.0 if untitled else half(tst))
-        tw = s.get("title_w_mm") or col_w
+        # La boîte mesurée d'un titre sur deux lignes vaut pour l'exemple ; le
+        # titre d'une personne (« Expériences professionnelles ») prend la colonne.
+        tw = (s.get("title_w_mm") if self.view.get("sample") else None) or col_w
         out = [f'<section style="position:relative;margin-top:calc({margin:.2f}mm*var(--k))">']
         nowrap = "" if s.get("title_w_mm") else ";white-space:nowrap"
         if s.get("title_pitch_mm"):
@@ -815,8 +822,13 @@ class HtmlRenderer:
             return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
         return float(right_bound - e["x_mm"])
 
-    def fit_header_text(self, val: str, st: Json, avail: float) -> str:
-        """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne."""
+    def fit_header_text(self, val: str, st: Json, avail: float, *, name: bool = False) -> str:
+        """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne.
+
+        Un **nom** se réduit jusqu'à la moitié de son corps avant de se replier :
+        replié, il descendrait sur le poste visé et les coordonnées, posés en
+        absolu sous lui (mesuré avec « Moreau-Lefebvre » en 48 pt).
+        """
         if self.fonts.width_mm(val, st) <= avail:
             return ""
         ls = float(st["letter_spacing_pt"])
@@ -824,10 +836,15 @@ class HtmlRenderer:
             if self.fonts.width_mm(val, st, ls_pt=ls * k) <= avail:
                 return f";letter-spacing:{ls * k:.2f}pt"
         size = float(st["size_pt"])
-        for k in (0.95, 0.9, 0.85, 0.8):
+        steps = NAME_SIZE_STEPS if name else FIELD_SIZE_STEPS
+        for k in steps:
             if self.fonts.width_mm(val, st, size_pt=size * k, ls_pt=ls * 0.3) <= avail:
                 return f";letter-spacing:{ls * 0.3:.2f}pt;font-size:{size * k:.2f}pt"
-        return f";letter-spacing:{ls * 0.3:.2f}pt;white-space:normal;width:{avail:.2f}mm"
+        last = size * steps[-1]
+        return (
+            f";letter-spacing:{ls * 0.3:.2f}pt;font-size:{last:.2f}pt;white-space:normal;"
+            f"width:{avail:.2f}mm"
+        )
 
     def header(self) -> str:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""
@@ -850,7 +867,17 @@ class HtmlRenderer:
                 )
                 continue
             box = e.get("box_w_mm")
-            fit_css = "" if box else self.fit_header_text(val, st, self.header_limit(e, st))
+            if box and not self.view.get("sample"):
+                # Le CV d'une personne replie dans toute la place disponible,
+                # pas dans la boîte de la ligne la plus longue de l'exemple.
+                box = max(float(box), self.header_limit(e, st))
+            fit_css = (
+                ""
+                if box
+                else self.fit_header_text(
+                    val, st, self.header_limit(e, st), name=e["field"] in NAME_FIELDS
+                )
+            )
             icon = ""
             if e.get("icon"):
                 ic = e["icon"]

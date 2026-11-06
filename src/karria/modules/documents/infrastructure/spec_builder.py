@@ -824,6 +824,7 @@ class SpecBuilder:
                 and d["y"] < ln.bottom + 1
                 and d["y"] + d["h"] > ln.y - 1
                 and max(d["w"], d["h"]) < 8  # noqa: PLR2004
+                and min(d["w"], d["h"]) >= 0.5  # noqa: PLR2004 - un filet n'est pas un pictogramme
             ]
             if not near:
                 continue

@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
@@ -363,6 +364,44 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
 
 
+#: Les rôles qu'une étiquette fixe annonce (« Phone » devant un téléphone).
+LABELLED_ROLES: Final = frozenset(
+    {"phone", "email", "address", "website", "item_dates", "item_location"}
+)
+#: Une étiquette est courte : trois mots, vingt-quatre caractères, aucun chiffre.
+LABEL_MAX_WORDS: Final = 3
+LABEL_MAX_CHARS: Final = 24
+
+
+def label_roles(item_lines: list[PlanLine], by_id: Mapping[str, Json]) -> dict[str, str]:
+    """Les lignes `other` qui sont des étiquettes fixes (« Phone », « Email : ») devant un champ.
+
+    Le modèle les nomme parfois `other` ; une ligne courte, sans chiffre, dont
+    la suivante (ordre de lecture) porte un rôle de coordonnée ou de date,
+    est une étiquette, et se mesure comme telle (ADR-0037 § 2). Les rôles
+    `other` restants deviennent du texte (`item_text`).
+    """
+    known = [pl for pl in item_lines if pl.line in by_id]
+    ordered = sorted(known, key=lambda pl: (by_id[pl.line]["y"], by_id[pl.line]["x"]))
+    out: dict[str, str] = {}
+    for pl, nxt in zip(ordered, [*ordered[1:], None], strict=True):
+        if pl.role == "label":
+            continue
+        if pl.role != "other":
+            continue
+        text = str(by_id[pl.line]["text"]).strip()
+        short = (
+            len(text) <= LABEL_MAX_CHARS
+            and len(text.split()) <= LABEL_MAX_WORDS
+            and not any(ch.isdigit() for ch in text)
+        )
+        if short and nxt is not None and nxt.role in LABELLED_ROLES:
+            out[pl.line] = "label"
+        else:
+            out[pl.line] = "item_text"
+    return out
+
+
 def plan_to_labels(plan: LayoutPlan, page: PdfPage) -> Json:
     """Le plan sous la forme des étiquettes d'avant (rôle, rubrique, élément par ligne).
 
@@ -371,9 +410,10 @@ def plan_to_labels(plan: LayoutPlan, page: PdfPage) -> Json:
     """
     lines: list[Json] = []
     placed: set[str] = set()
+    by_id = {ln["id"]: ln for ln in page.lines}
 
     def put(line: str, role: str, section: str, item: int) -> None:
-        if line in placed:
+        if line in placed or line not in by_id:
             return
         placed.add(line)
         lines.append({"line": line, "role": role, "section": section, "item": item})
@@ -384,8 +424,9 @@ def plan_to_labels(plan: LayoutPlan, page: PdfPage) -> Json:
         for t in s.title_lines:
             put(t, "section_title", s.kind, 0)
         for no, it in enumerate(s.items, 1):
+            roles = label_roles(it.lines, by_id)
             for pl in it.lines:
-                put(pl.line, pl.role, s.kind, no if s.kind in ITEM_KINDS else 0)
+                put(pl.line, roles.get(pl.line, pl.role), s.kind, no if s.kind in ITEM_KINDS else 0)
     order = {ln["id"]: i for i, ln in enumerate(page.lines)}
     lines.sort(key=lambda lb: order.get(lb["line"], len(order)))
     g = plan.gallery
@@ -410,7 +451,7 @@ RÈGLES DU PLAN
 1. En-tête (`header`) : les lignes d'identité et de coordonnées — first_name, last_name (un nom sur deux lignes), full_name (sur une ligne), headline (le poste visé ; s'il est écrit sur deux lignes, deux lignes `headline`), phone, email, address, website — et la photo (identifiant d'image, ou null). Les coordonnées SANS titre de rubrique (sous la photo, en haut à droite, sous le nom) vont dans l'en-tête, même si elles descendent au niveau des premières rubriques. Un paragraphe de présentation n'est JAMAIS dans l'en-tête : c'est une rubrique `summary`, sans titre si le modèle n'en a pas.
 2. Bandes (`bands`), de haut en bas : une bande est une tranche horizontale de la page dont les colonnes vont ensemble. Une nouvelle bande commence quand la structure des colonnes change : un paragraphe pleine largeur puis deux colonnes ; deux colonnes puis une frise chronologique pleine largeur. Une bande porte une ou plusieurs colonnes, de gauche à droite ; chaque colonne porte ses rubriques de haut en bas. Deux rubriques l'une sous l'autre à la même abscisse sont dans la même colonne.
 3. Rubriques (`sections`) : `ref` unique (S1, S2…), `kind`, `title_lines` (les lignes de son titre : aucune si elle n'a pas de titre, deux si le titre tient sur deux lignes), `items`, `side_roles`. `kind` : contact, summary, experiences, educations, skills, languages, interests, projects, references ; `other` pour toute rubrique qui n'est pas standard (Réalisations, Certifications, Publications, Bénévolat…) — garde son titre tel quel, c'est elle qu'un CV retrouvera.
-4. Éléments (`items`) : dans experiences, educations, projects, references, other : un élément = une expérience, une formation, une entrée ; chaque ligne porte son rôle : item_title (poste, diplôme, intitulé), item_subtitle (entreprise, école), item_dates, item_location, bullet (une puce, ou une ligne de suite d'une puce), item_text (paragraphe). Dans skills, languages, interests : un élément par catégorie (une ligne subsection_title puis ses entrées skill / language / interest), ou un seul élément sans catégorie. Dans summary : un seul élément, lignes `summary`. Dans contact : un seul élément, lignes phone / email / address / website. Une ligne qui continue la précédente (retour à la ligne d'une puce, d'un paragraphe, d'un intitulé) porte le même rôle. `label` : une étiquette fixe du modèle qui annonce un champ (« Phone », « Email : », « Tél. »), sur sa propre ligne au-dessus de la valeur ou sur la même ligne devant elle — elle appartient au modèle, pas à la personne ; la valeur qui suit garde son rôle (phone, email…).
+4. Éléments (`items`) : dans experiences, educations, projects, references, other : un élément = une expérience, une formation, une entrée ; chaque ligne porte son rôle : item_title (poste, diplôme, intitulé), item_subtitle (entreprise, école), item_dates, item_location, bullet (une puce, ou une ligne de suite d'une puce), item_text (paragraphe). Dans skills, languages, interests : un élément par catégorie (une ligne subsection_title puis ses entrées skill / language / interest), ou un seul élément sans catégorie. Dans summary : un seul élément, lignes `summary`. Dans contact : un seul élément, lignes phone / email / address / website. Une ligne qui continue la précédente (retour à la ligne d'une puce, d'un paragraphe, d'un intitulé) porte le même rôle. `label` : une étiquette fixe du modèle qui annonce un champ (« Phone », « Email : », « Tél. », « Adresse »), sur sa propre ligne au-dessus de la valeur ou sur la même ligne devant elle — elle appartient au modèle, pas à la personne ; la valeur qui suit garde son rôle (phone, email…). Une étiquette n'est JAMAIS `other` : `other` ne sert qu'à un texte qui n'entre dans aucun rôle.
 5. Colonne latérale (`side_roles`) : dans une frise chronologique, l'entreprise et/ou les dates (ou le lieu) sont posées dans une colonne étroite à GAUCHE du contenu, souvent à gauche d'un filet vertical, pendant que l'intitulé et les puces sont à droite. Liste alors ces rôles dans `side_roles` (par exemple ["item_subtitle", "item_dates"]) ; leurs lignes restent dans `items`. Sinon, liste vide.
 6. Décorations (`decorations`) : pour CHAQUE forme listée dans <formes>, son ancrage :
    - header : ornement de l'en-tête (filet à côté du nom, bandeau derrière le nom) ;

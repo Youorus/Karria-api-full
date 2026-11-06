@@ -549,6 +549,20 @@ class TestCasLimites:
         ]
         assert len(b.elements(lines, {})) == 2
 
+    def test_un_filet_a_gauche_dune_coordonnee_nest_pas_un_pictogramme(self) -> None:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "CONTACT", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "0612", 24, 57),
+        ]
+        b = builder(
+            lines,
+            [("full_name", "header", 0), ("section_title", "contact", 0), ("phone", "contact", 0)],
+            drawings=[drawing("hline", 18, 59, 4, 0, stroke="#000000")],
+        )
+        spec, _, _ = b.build()
+        assert sections(spec)["contact"]["icons"] == {}
+
     def test_un_nom_en_deux_lignes_et_un_poste_existant(self) -> None:
         lines = [
             raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD, caps=True),

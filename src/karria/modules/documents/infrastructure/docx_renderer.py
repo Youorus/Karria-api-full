@@ -814,7 +814,7 @@ class DocxRenderer:
             )
             if first:
                 title.paragraph_format.space_before = Mm(lift)
-            if s.get("title_w_mm"):
+            if s.get("title_w_mm") and self.view.get("sample"):
                 title.paragraph_format.right_indent = Mm(
                     max(0.0, col_w - s["title_dx_mm"] - s["title_w_mm"])
                 )

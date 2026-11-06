@@ -439,6 +439,22 @@ class TestEnTete:
             205.0 - (photo["x_mm"] + photo["w_mm"] + 4)
         )
 
+    def test_un_nom_se_reduit_jusqua_la_moitie_avant_de_se_replier(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        renderer = HtmlRenderer(spec, {"header": {}, "sections": []}, fonts, photo=None)
+        st = spec["styles"]["header.full_name"]
+        text = "MOREAU-LEFEBVRE"
+        natural = fonts.width_mm(text, st)
+        field = renderer.fit_header_text(text, st, natural * 0.6)
+        assert "white-space:normal" in field  # un champ ordinaire se replie sous 80 %
+        name = renderer.fit_header_text(text, st, natural * 0.6, name=True)
+        assert "white-space:normal" not in name
+        assert ";font-size:" in name
+        wrapped = renderer.fit_header_text(text, st, natural * 0.3, name=True)
+        assert "white-space:normal" in wrapped
+        assert f";font-size:{float(st['size_pt']) * 0.5:.2f}pt" in wrapped
+
     @pytest.mark.parametrize(
         ("avail", "expected"),
         [
