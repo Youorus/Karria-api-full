@@ -37,13 +37,17 @@ redemande le rendu. Aucun fichier n'est écrit.
 - `?sample=true` (sans corps) : **l'exemple du modèle**, pour la galerie — sans ancres,
   permis même sur un modèle Premium non possédé.
 - `ats_safe: true` : la variante « optimisée ATS » (interlettrage plafonné), comme à l'export.
-- `primary_color` (ADR-0034, **2026-11-05**) : `#rrggbb` (ou `rrggbb`, `#rgb`), la couleur
-  principale choisie par la personne, à la place de celle du modèle (`primary_color` de la
-  galerie, celle des titres de rubrique) : toute occurrence de cette couleur — titres, puces,
-  filets, bandes — et ses teintes dérivées (une bande pâle reste pâle) ; le texte noir et les
-  gris ne bougent pas. Appliquée après `ats_safe`, à l'exemple comme au CV ou à la lettre.
-  `null` ou absent : la couleur du modèle. `422` (erreur de validation) sur un autre code.
-  Les pictogrammes de contact rastérisés gardent leur couleur (limite connue).
+- `primary_color` (ADR-0034, **2026-11-05**, sens précisé le **2026-11-06**) : `#rrggbb` (ou
+  `rrggbb`, `#rgb`), la couleur choisie par la personne à la place de celle du modèle
+  (`primary_color` de la galerie : la couleur de son **décor**, mesurée). Elle habille le
+  **décor seulement** — bandes, filets, frises, puces dessinées, séparateurs, pictogrammes de
+  contact monochromes — occurrences exactes et teintes dérivées (une bande pâle reste pâle ;
+  sur un décor noir ou gris, tout le décor suit). **Le texte ne change jamais de couleur**,
+  titres de rubrique compris — sauf un texte posé sur une bande recolorée qui ne se lirait
+  plus (contraste < 4,5:1) : il passe en blanc ou en noir profond. Appliquée après `ats_safe`,
+  à l'exemple comme au CV ou à la lettre. `null` ou absent : la couleur du modèle. `422`
+  (erreur de validation) sur un autre code. Un modèle sans décor (`primary_color` `null` en
+  galerie) ignore la couleur.
 
 ### Réponse
 

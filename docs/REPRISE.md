@@ -34,6 +34,58 @@ rechoisir. D'où une route sobre de plus, et rien d'autre.
   `contrat-api-consentement-ia.md`) mis à jour.
 - **Reste** : relire puis fusionner `feat/portrait` dans `main` (= production Dokploy) ; vérifier
   en prod une fois la vraie photo d'un CV passée au générateur (taille, délai, ~10 s attendues).
+### Session du 2026-11-06 — couleur d'un CV, version 2 : le décor change, le texte reste (ADR-0034 § 2026-11-06 — Fable) — branche `feat/couleurs`, NON poussée
+
+**Demande de Marc** (après avoir vu la v1 sur ses modèles) : « La couleur primaire ne doit
+jamais toucher le texte. Sur un CV à deux couleurs — texte noir, bande rouge — la couleur
+primaire change la bande, pas le texte. Le texte ne change que si c'est nécessaire (du noir
+sur un fond devenu noir). Styliser le CV au niveau des couleurs, pas du style. » Sur ses
+modèles (Sacha Dubois, Romain Dupont) comme sur Meridian/Minimalist, titres **et** décor sont
+noirs : la v1 (couleur = titres, remplacée partout) aurait recoloré les titres.
+
+**Livré** (worktree `karria_api_v2-couleurs`, branche `feat/couleurs`, `make check` vert) :
+- **`domain/palette.py` réécrit** : `primary_color_of(spec)` = couleur dominante du **décor**
+  par surface peinte (`fill`/`stroke`/`background` des décorations, `marker.color`,
+  séparateurs ; hors blanc, hors clarté ≥ 0,85 sauf si rien d'autre ; `None` sans décor) ;
+  `recolor_spec(spec, primary)` (**signature inchangée**) ne touche que le décor — teintes
+  dérivées à la même position vers le blanc/noir (plus d'écart additif), un décor gris suit
+  gris par gris, un gris dans un décor coloré reste ; `legible_styles` : un texte posé sur une
+  surface recolorée (élément d'en-tête dans un rectangle plein, colonne couverte ou à
+  `background`, barre de titre/ligne/élément) sous 4,5:1 passe en `#FFFFFF`/`#111111` selon le
+  meilleur pire-contraste sur toutes ses surfaces, et seulement si le gain est net (un style
+  partagé bande/papier — `section_title` l'est toujours — garde sa couleur). `tinted_ink`,
+  `contrast_ratio`, `decor_colors` exportés. 42 tests (`test_palette.py`).
+- **Pictogrammes teintés** : `shared.images.single_ink(png)` (monochrome sur blanc ou
+  transparent, bords anticrénelés = encre diluée, `getcolors` ≤ 4 096) et `tint_ink(png, ink,
+  new)` (redilution, alpha gardé ; `tobytes`/`frombytes`, `getdata` est déprécié en Pillow 12) ;
+  `application.tint_icons(assets, spec_origine, primary)` dans `CvRenderer.prepare`,
+  `RenderDocument._cv`/`_sample` (fil + cache borné par processus). Tests `test_images.py`
+  (5), `test_colors.py` (10).
+- **Galerie** : `gallery_traits()["primary_color"]` = `primary_color_of` ;
+  `RefreshTemplateColors` + `python -m scripts.templates refresh-colors [--dry-run]`
+  (idempotent). **À lancer en prod après déploiement** : Meridian passe de `#000000`… à
+  `#000000` (décor noir), Minimalist `#232323` → `#232323` ; vérifier avec `--dry-run`.
+  `SelectionRead.default_primary_color` suit (description). **Aucune migration.**
+- **`python -m scripts.templates render-sample NOM --out DOSSIER --color '#1F4FA3'
+  [--any-status]`** : l'exemple d'un modèle en PNG par couleur (Gotenberg). Vu sur
+  `sacha-dubois` et `romain-dupont` (v2 en revue, fidélité 0,51 — lot ingestion) en origine,
+  `#1F4FA3`, `#7B1E2B` : filets, frise, puces, séparateurs colorés, **texte noir intact** ;
+  PNG dans le scratchpad de la session (`…/scratchpad/couleurs/`).
+- Tests existants adaptés (`fakes.make_spec` porte un filet bleu `page_decorations` et une
+  `page` ; atelier/lettre/export vérifient le décor, pas les titres).
+- Docs : ADR-0034 addendum 2026-11-06 (+ index), README `documents`, `PLUS-TARD.md`
+  (pictogrammes bicolores/sur bande), `contrat-api-documents.md` § 1 (+ copie app),
+  `scripts/README.md`.
+
+**Côté app** (`karria_app-couleurs`, `feat/couleurs`) : sous-titre de la feuille « Ta couleur
+habille les bandes, les filets et les puces. Le texte reste lisible. » ; serveur simulé : la
+couleur habille la bande/filets/puces, titres intacts, texte de bande en noir si clair
+(`texteSur`) ; `contrat-api-modeles.md`. Rien à recoloriser côté app (WebView).
+
+**Reste** : valider l'addendum ; lancer `refresh-colors` en prod ; la **lettre** lit toujours
+`styles.section_title.color` comme accent (un texte : ne suit plus la couleur) — à décider
+dans le lot lettre (un filet à `primary_color_of(spec)`) ; un modèle à bande colorée réelle
+pour éprouver la règle de lisibilité sur un vrai PDF (testée sur spécifications fixes).
 
 ### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
 

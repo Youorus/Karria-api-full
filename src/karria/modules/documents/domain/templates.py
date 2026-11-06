@@ -29,6 +29,7 @@ from uuid import UUID, uuid4
 
 from karria.modules.documents.domain.errors import InvalidFormatError, TemplateLockedError
 from karria.modules.documents.domain.letter import letter_file_name
+from karria.modules.documents.domain.palette import primary_color_of
 
 FORMATS: Final = ("pdf", "docx")
 #: Lectures anonymes de la galerie permises par origine sur la fenêtre
@@ -250,7 +251,9 @@ def export_file_name(first_name: str, last_name: str, extension: str) -> str:
 def gallery_traits(spec: dict[str, Any]) -> dict[str, Any]:
     """Ce que la galerie affiche, **mesuré** dans la spécification.
 
-    - `primary_color` : la couleur des titres de rubrique ;
+    - `primary_color` : la couleur du **décor** (bandes, filets, puces), dominante
+      par surface (`palette.primary_color_of`, ADR-0034 § 2026-11-06) — pas celle
+      d'un texte ;
     - `font_family` : la famille la plus employée par les styles ;
     - `has_photo`, `columns` : lus dans l'en-tête et les bandes ;
     - `ats` : ce que le **dessin** coûte aux ATS avant tout contenu
@@ -272,7 +275,7 @@ def gallery_traits(spec: dict[str, Any]) -> dict[str, Any]:
     if columns > 1:
         warnings.append("multi_column")
     return {
-        "primary_color": styles.get("section_title", {}).get("color"),
+        "primary_color": primary_color_of(spec),
         "font_family": families.most_common(1)[0][0] if families else None,
         "has_photo": bool(spec["header"].get("photo")),
         "columns": columns,

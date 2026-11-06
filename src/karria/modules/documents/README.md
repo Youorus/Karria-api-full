@@ -77,12 +77,24 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   (`documents.font_substituted`) et rangée dans le rapport de la version.
 - **Poste visé** : toujours sous le nom (`domain/headline.py`), même quand le
   modèle n'a pas d'emplacement ; omis proprement si le CV n'en a pas.
+- **Couleur** (`domain/palette.py`, ADR-0034 § 2026-11-06) : la couleur d'un modèle est
+  celle de son **décor**, mesurée par surface (`primary_color_of` — bandes, filets, puces
+  dessinées, séparateurs ; jamais un texte). `recolor_spec(spec, primary)` ne change que le
+  décor (occurrences exactes et teintes, gris par gris sur un décor gris) ; un texte posé sur
+  une surface recolorée ne change que s'il ne se lit plus (4,5:1 → blanc ou noir profond,
+  `legible_styles`). Les pictogrammes monochromes à la couleur du décor suivent à l'envoi
+  (`application.tint_icons`, mesure et teinte par `shared.images.single_ink` / `tint_ink`,
+  cache par processus). La galerie porte cette couleur (`gallery_traits`) ;
+  `scripts/templates.py refresh-colors` la remesure sur les modèles déjà publiés.
 
 ## Exploitation
 
 - Déposer un modèle : `python -m scripts.templates submit F.pdf --name x --label X [--inline]`
   ou `POST /api/v1/internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`).
 - Revue : `python -m scripts.templates list` ou `GET /api/v1/internal/templates`.
+- Couleur de galerie : `python -m scripts.templates refresh-colors [--dry-run]` après un
+  changement de sa définition ; `render-sample NOM --out DOSSIER --color '#1F4FA3'
+  [--any-status]` pour voir l'exemple d'un modèle dans une couleur.
 - Travaux de file : `documents.ingest_template`, `documents.explain_ats`,
   `documents.send_documents`.
 - Ressources publiques : `python -m scripts.assets brand <dossier branding de l'app>`

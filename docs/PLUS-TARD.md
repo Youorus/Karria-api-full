@@ -124,14 +124,17 @@ passante mobile.
 de données. Un compteur et un cache partagés (Redis) derrière les mêmes
 fonctions.
 
-### Les pictogrammes de contact ne suivent pas la couleur choisie (ADR-0034)
+### Les pictogrammes de contact bicolores ne suivent pas la couleur choisie (ADR-0034 § 2026-11-06)
 
-Les icônes à gauche des lignes de contact sont rastérisées depuis le PDF du
-modèle (`icons[*].file`, PNG à 600 dpi) : `recolor_spec` ne les voit pas, elles
-gardent la couleur d'origine quand la personne change la couleur principale.
-Faire : teinter le PNG au rendu (remplacer les pixels de la couleur d'origine,
-alpha conservé) dans `html_renderer`/`docx_renderer` quand `primary_color` est
-posée, ou retenir les tracés vectoriels à l'analyse.
+Un pictogramme **monochrome** suit la couleur du décor depuis le 2026-11-06
+(`shared.images.single_ink` / `tint_ink`, `application.tint_icons`). Reste hors
+champ : un pictogramme à deux encres (un disque de couleur portant un glyphe
+d'une autre couleur que le blanc), et un pictogramme rastérisé **sur une bande**
+colorée (son fond est la bande, pas le papier : il suit comme fond, mais un
+glyphe blanc dessus reste blanc quand la bande devient claire).
+**Ce que ça coûte :** rien sur les modèles actuels (pictogrammes noirs sur blanc).
+**Déclencheur :** un modèle à pictogrammes bicolores ou sur bande. Faire : garder
+les tracés vectoriels des pictogrammes à l'analyse et les recolorer comme le décor.
 
 ### `pages` du rendu de l'atelier est une estimation
 

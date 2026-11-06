@@ -198,7 +198,8 @@ class SelectionRead(BaseModel):
         default=None, description="La couleur posée par la personne, ou `null`."
     )
     default_primary_color: str | None = Field(
-        default=None, description="La couleur d'origine du modèle choisi (mesurée)."
+        default=None,
+        description="La couleur d'origine du modèle choisi : celle de son décor, mesurée (ADR-0034 § 2026-11-06).",
     )
 
     @classmethod

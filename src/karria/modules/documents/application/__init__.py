@@ -40,12 +40,14 @@ from karria.modules.documents.application.use_cases import (
     PremiumTemplate,
     PreviewTemplate,
     RecordTemplateView,
+    RefreshTemplateColors,
     RenderDocument,
     RenderedDocument,
     SelectTemplate,
     SendDocuments,
     SubmitTemplate,
     TemplateShop,
+    tint_icons,
 )
 
 __all__ = [
@@ -80,6 +82,7 @@ __all__ = [
     "PreviewTemplate",
     "Previews",
     "RecordTemplateView",
+    "RefreshTemplateColors",
     "RenderDocument",
     "RenderedDocument",
     "RenderedHtml",
@@ -92,4 +95,5 @@ __all__ = [
     "TemplateRepository",
     "TemplateShop",
     "UserTemplateRepository",
+    "tint_icons",
 ]
