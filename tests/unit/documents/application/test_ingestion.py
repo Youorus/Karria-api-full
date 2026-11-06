@@ -14,7 +14,9 @@ from documents.fakes import (
     PDF_BYTES,
     PNG_BYTES,
     bad_fidelity,
+    good_fidelity,
     make_analysis,
+    make_letter_analysis,
     make_spec,
     make_template,
     make_version,
@@ -259,3 +261,123 @@ class TestIngestion:
 
         assert env.engine.called("analyze") == [SOURCE]
         assert PDF_BYTES in env.engine.called("previews")
+
+
+class TestLettreAppariee:
+    """ADR-0036 : la lettre d'un modèle suit la même chaîne et la même porte que son CV."""
+
+    async def test_le_depot_range_le_pdf_de_la_lettre_avec_celui_du_cv(self, env: Env) -> None:
+        version = await submit(env).execute(SOURCE, name="Sacha", letter=b"%PDF-1.7 lettre")
+
+        assert version.letter_source_key == f"templates/{version.template_id}/v1/letter_source.pdf"
+        assert (
+            await env.storage.get(Bucket.TEMPLATES, version.letter_source_key) == b"%PDF-1.7 lettre"
+        )
+        assert version.has_letter is False
+
+    async def test_une_lettre_qui_n_est_pas_un_pdf_est_refusee(self, env: Env) -> None:
+        with pytest.raises(TemplateIngestionError) as info:
+            await submit(env).execute(SOURCE, name="Sacha", letter=b"GIF89a")
+        assert info.value.details["detail"] == "la lettre n'est pas un PDF"
+
+    async def test_sans_lettre_rien_ne_change(self, env: Env) -> None:
+        version = await submit(env).execute(SOURCE, name="Sacha")
+        assert version.letter_source_key is None
+
+    async def _with_letter(self, env: Env) -> TemplateVersion:
+        version = await processing(env)
+        version = replace(
+            version, letter_source_key=f"{version_prefix(version.template_id, 1)}/letter_source.pdf"
+        )
+        await env.templates.save_version(version)
+        await env.storage.put(
+            Bucket.TEMPLATES,
+            version.letter_source_key or "",
+            b"%PDF-lettre-source",
+            content_type="application/pdf",
+        )
+        env.engine.analysis = make_analysis()
+        env.engine.letter_analysis = make_letter_analysis()
+        return version
+
+    async def test_une_lettre_fidele_est_publiee_avec_le_cv_et_ses_apercus(self, env: Env) -> None:
+        version = await self._with_letter(env)
+
+        done = await ingest(env).execute(version.id)
+
+        assert done is not None
+        assert done.status is VersionStatus.PUBLISHED
+        assert done.has_letter is True
+        assert done.letter_spec == make_letter_analysis().spec
+        assert done.letter_sample is not None
+        assert done.letter_sample["date_line"] == "Le 8 juin 2026,"
+        assert done.letter_labels == {
+            "lines": [{"line": "L1", "role": "sender_name", "paragraph": 0}]
+        }
+        assert done.letter_thumbnail_blurhash == "LKO2?U%2Tw=w"
+        prefix = version_prefix(version.template_id, 1)
+        for key in (
+            done.letter_thumbnail_key,
+            done.letter_preview_key,
+            done.letter_full_key,
+            f"{prefix}/letter/sample_render.pdf",
+            f"{prefix}/letter/sample_docx.pdf",
+        ):
+            assert key is not None
+            assert await env.storage.exists(Bucket.TEMPLATES, key)
+        assert done.report["fidelity"]["letter"]["score"] == good_fidelity().score
+        assert done.report["fidelity"]["letter_docx"]["target"] == 0.80
+        assert done.report["letter_gate"] == {"passed": True, "failures": []}
+        assert done.report["fonts_letter"] == make_letter_analysis().fonts_report
+        assert {"family": "Carlito", "weight": 400, "italic": False} in done.fonts
+        assert "letter_s" in done.report["timings"]
+        # La lettre est analysée avec la couleur d'accent du CV, et rendue avec son exemple.
+        [analyze] = env.engine.called("analyze_letter")
+        assert analyze["pdf"] == b"%PDF-lettre-source"
+        assert analyze["accent"] == make_analysis().spec["styles"]["section_title"]
+        letter_render = next(
+            c for c in env.engine.called("render_pdf") if c["view"].get("kind") == "letter"
+        )
+        assert letter_render["view"]["date_line"] == "Le 8 juin 2026,"
+        assert letter_render["view"]["header"]["full_name"] == "Sacha Dubois"
+        # La mesure reçoit les substitutions déclarées, pour le CV comme pour la lettre.
+        reports = [c["fonts_report"] for c in env.engine.called("measure")]
+        assert make_analysis().fonts_report in reports
+        assert make_letter_analysis().fonts_report in reports
+
+    async def test_une_lettre_sous_le_seuil_garde_la_version_entiere_en_revue(
+        self, env: Env
+    ) -> None:
+        version = await self._with_letter(env)
+        env.engine.fidelity_letter = bad_fidelity()
+
+        done = await ingest(env).execute(version.id)
+
+        assert done is not None
+        assert done.status is VersionStatus.REVIEW
+        assert done.report["fidelity"]["pdf"]["score"] == good_fidelity().score, "le CV passait"
+        assert all(f.startswith("lettre : ") for f in done.report["gate"]["failures"])
+        assert done.report["letter_gate"]["passed"] is False
+        assert env.templates.templates[version.template_id].published_version_id is None
+        # La spécification de la lettre est tout de même gardée pour la revue.
+        assert done.letter_spec is not None
+
+    async def test_une_ligne_de_lettre_sans_role_envoie_la_version_en_revue(self, env: Env) -> None:
+        version = await self._with_letter(env)
+        env.engine.letter_analysis = make_letter_analysis(unlabeled=["L4"])
+
+        done = await ingest(env).execute(version.id)
+
+        assert done is not None
+        assert done.status is VersionStatus.REVIEW
+        assert done.report["gate"]["failures"] == ["lettre : lignes sans rôle : L4"]
+
+    async def test_une_lettre_illisible_fait_echouer_la_version(self, env: Env) -> None:
+        version = await self._with_letter(env)
+        env.engine.letter_error = TemplateIngestionError("lettre : Aucun paragraphe reconnu")
+
+        done = await ingest(env).execute(version.id)
+
+        assert done is not None
+        assert done.status is VersionStatus.FAILED
+        assert done.error == "lettre : Aucun paragraphe reconnu"

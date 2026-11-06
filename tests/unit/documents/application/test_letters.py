@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from documents.application.conftest import Env
-from documents.fakes import DOCX_BYTES, NOW, PDF_BYTES, FakeLogoFetcher
+from documents.fakes import DOCX_BYTES, NOW, PDF_LETTER_BYTES, FakeLogoFetcher, make_letter_spec
 from doubles import sample_image
 from karria.modules.documents.application import ExportLetter
 from karria.modules.documents.domain.errors import (
@@ -69,7 +69,7 @@ class TestExportLettre:
         assert generated.created_at == NOW
         assert generated.pdf_key == f"generated-letters/{env.user}/{generated.id}/lettre.pdf"
         assert generated.docx_key == f"generated-letters/{env.user}/{generated.id}/lettre.docx"
-        assert await env.storage.get(Bucket.DOCUMENTS, generated.pdf_key) == PDF_BYTES
+        assert await env.storage.get(Bucket.DOCUMENTS, generated.pdf_key) == PDF_LETTER_BYTES
         assert await env.storage.get(Bucket.DOCUMENTS, generated.docx_key) == DOCX_BYTES
         assert env.generated.items[generated.id] == generated
         assert env.templates.templates[template.id].uses_count == 1
@@ -124,8 +124,8 @@ class TestExportLettre:
 
 
 class TestCouleurDeLaLettre:
-    async def test_la_lettre_suit_la_couleur_du_dossier(self, env: Env) -> None:
-        template, _ = env.templates.publish()
+    async def test_la_lettre_assortie_suit_la_couleur_du_dossier(self, env: Env) -> None:
+        template, _ = env.templates.publish(letter_spec=make_letter_spec(accent="#1A5276"))
 
         generated = await _export(env).execute(
             env.user,
@@ -137,5 +137,47 @@ class TestCouleurDeLaLettre:
         )
 
         assert generated.primary_color == "#7B1E2B"
+        assert generated.letter_style == "template"
         [call] = env.engine.called("render_pdf")
         assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+
+
+class TestStyleDeLettre:
+    """ADR-0036 : la lettre assortie du modèle, ou la lettre sobre ; l'export dit le style servi."""
+
+    async def test_sans_lettre_assortie_la_sobre_est_servie_quoi_qu_on_demande(
+        self, env: Env
+    ) -> None:
+        template, _ = env.templates.publish()
+        for asked in (None, "template", "plain"):
+            generated = await _export(env).execute(
+                env.user,
+                template_id=template.id,
+                letter=LETTER,
+                formats=["pdf"],
+                dossier_id=None,
+                letter_style=asked,
+            )
+            assert generated.letter_style == "plain"
+        for call in env.engine.called("render_pdf"):
+            assert call["spec"]["source"] == {"producer": "karria"}
+            assert call["spec"]["styles"]["paragraph"]["family"] == "Carlito"
+
+    async def test_avec_une_lettre_assortie_le_choix_est_respecte(self, env: Env) -> None:
+        template, version = env.templates.publish(letter_spec=make_letter_spec())
+        served = []
+        for asked in (None, "template", "plain"):
+            generated = await _export(env).execute(
+                env.user,
+                template_id=template.id,
+                letter=LETTER,
+                formats=["pdf"],
+                dossier_id=None,
+                letter_style=asked,
+            )
+            served.append(generated.letter_style)
+        assert served == ["template", "template", "plain"]
+        first, second, third = env.engine.called("render_pdf")
+        assert first["spec"] == version.letter_spec
+        assert second["spec"] == version.letter_spec
+        assert third["spec"]["source"] == {"producer": "karria"}

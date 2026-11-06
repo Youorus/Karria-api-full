@@ -14,8 +14,9 @@ modèle payé par `grant`).
 
 `build_forget_user` est la réaction à la suppression d'un compte ;
 `register_tasks` inscrit ses travaux de file (ingestion d'un modèle,
-explication d'un score, envoi par e-mail) ; `build_submit_template` et
-`build_ingest_template` servent la commande `scripts/templates.py`.
+explication d'un score, envoi par e-mail) ; `build_submit_template`,
+`build_ingest_template` et `build_publish_plain_letter` (les aperçus de la
+lettre sobre, ADR-0036) servent la commande `scripts/templates.py`.
 
 La façade de l'atelier (ADR-0029), pour un autre module (règle 4, via
 `bootstrap`) : `RenderDocument` / `RenderedDocument` (le cas d'usage et sa
@@ -31,6 +32,7 @@ from karria.modules.documents.api import router
 from karria.modules.documents.api.dependencies import (
     build_forget_user,
     build_ingest_template,
+    build_publish_plain_letter,
     build_render_document,
     build_submit_template,
     get_account_directory,
@@ -71,6 +73,7 @@ __all__ = [
     "TemplateShop",
     "build_forget_user",
     "build_ingest_template",
+    "build_publish_plain_letter",
     "build_render_document",
     "build_submit_template",
     "get_account_directory",

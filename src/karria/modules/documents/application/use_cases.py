@@ -15,8 +15,12 @@ Contrat
 - **Atelier** (`RenderDocument`, ADR-0029) : le CV **reçu** (le brouillon de
   l'app) ou une lettre (ADR-0030), rendus en HTML ancré par le même moteur
   que le PDF ; l'exemple du modèle pour la galerie. Aucun fichier écrit.
-- **Lettre** (`ExportLetter`) : PDF et DOCX dans la grammaire du modèle,
-  export `kind: letter`, sans score ATS.
+- **Lettre** (`ExportLetter`) : PDF et DOCX depuis une **spécification de
+  lettre** — la lettre appariée du modèle ou la lettre sobre (ADR-0036,
+  `letter_spec_for`) —, export `kind: letter` qui dit le style servi, sans
+  score ATS. L'ingestion d'une lettre appariée (`ingest_paired_letter`) suit
+  la même chaîne et la même porte que le CV ; sous le seuil, la version
+  entière reste en revue.
 - **Envoi** (`SendDocuments` puis `DeliverDocuments` dans le worker,
   ADR-0031) : journal, quota, pièces jointes par le centre d'e-mails.
 """
@@ -71,6 +75,13 @@ from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.letter import from_letter, letter_warnings
 from karria.modules.documents.domain.palette import recolor_spec
+from karria.modules.documents.domain.plain_letter import (
+    LETTER_STYLE_TEMPLATE,
+    PLAIN_LETTER_SAMPLE,
+    PLAIN_LETTER_VERSION,
+    letter_style_served,
+    plain_letter_spec,
+)
 from karria.modules.documents.domain.sends import (
     MAX_DOCUMENTS_PER_SEND,
     DocumentSend,
@@ -740,9 +751,13 @@ class SubmitTemplate:
         is_premium: bool = False,
         price: Any = None,
         defer: bool = True,
+        letter: bytes | None = None,
     ) -> TemplateVersion:
+        """`letter` : le PDF de la lettre appariée, déposé avec le CV (ADR-0036) ; `None` sans lettre."""
         if not pdf.startswith(b"%PDF"):
             raise TemplateIngestionError("le fichier n'est pas un PDF")
+        if letter is not None and not letter.startswith(b"%PDF"):
+            raise TemplateIngestionError("la lettre n'est pas un PDF")
         slug = slugify(name)
         now = self._clock.now()
         async with self._uow.atomic():
@@ -778,6 +793,10 @@ class SubmitTemplate:
             number = await self._templates.next_version_number(template.id)
             key = f"{version_prefix(template.id, number)}/source.pdf"
             await self._storage.put(Bucket.TEMPLATES, key, pdf, content_type=PDF)
+            letter_key = None
+            if letter is not None:
+                letter_key = f"{version_prefix(template.id, number)}/letter_source.pdf"
+                await self._storage.put(Bucket.TEMPLATES, letter_key, letter, content_type=PDF)
             version = TemplateVersion(
                 id=uuid4(),
                 template_id=template.id,
@@ -785,11 +804,17 @@ class SubmitTemplate:
                 status=VersionStatus.PROCESSING,
                 source_key=key,
                 created_at=now,
+                letter_source_key=letter_key,
             )
             await self._templates.save_version(version)
         if defer:
             await self._jobs.defer_ingestion(version.id)
-        logger.info("documents.template_submitted", template=slug, version=number)
+        logger.info(
+            "documents.template_submitted",
+            template=slug,
+            version=number,
+            letter=letter is not None,
+        )
         return version
 
 
@@ -861,7 +886,9 @@ class IngestTemplateVersion:
         rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
         timings["render_pdf_s"] = round(time.monotonic() - t, 1)
         t = time.monotonic()
-        fidelity_pdf = await self._engine.measure(source, rendered.data)
+        fidelity_pdf = await self._engine.measure(
+            source, rendered.data, fonts_report=analysis.fonts_report
+        )
         timings["measure_s"] = round(time.monotonic() - t, 1)
         decision = evaluate(fidelity_pdf)
         failures = list(decision.failures)
@@ -872,7 +899,9 @@ class IngestTemplateVersion:
             spec, view, assets=icons, photo=photo, fit=rendered.fit
         )
         docx_pdf = await self._engine.docx_to_pdf(docx)
-        fidelity_docx = await self._engine.measure(source, docx_pdf)
+        fidelity_docx = await self._engine.measure(
+            source, docx_pdf, fonts_report=analysis.fonts_report
+        )
         timings["docx_s"] = round(time.monotonic() - t, 1)
         previews = await self._engine.previews(rendered.data)
         keys = {
@@ -898,18 +927,34 @@ class IngestTemplateVersion:
         await self._storage.put(
             Bucket.TEMPLATES, f"{prefix}/sample_docx.pdf", docx_pdf, content_type=PDF
         )
+        # La lettre appariée (ADR-0036) : même chaîne, même porte, dans la même version.
+        letter = (
+            await ingest_paired_letter(
+                self._engine, self._storage, version, spec, prefix, timings, self._clock
+            )
+            if version.letter_source_key
+            else None
+        )
+        if letter is not None:
+            failures.extend(letter.failures)
         passed = not failures
         report = {
             "fidelity": {
                 "pdf": fidelity_pdf.to_json(),
                 "docx": {**fidelity_docx.to_json(), "target": DOCX_SCORE_TARGET},
+                **(letter.fidelity if letter else {}),
             },
             "gate": {"passed": passed, "failures": failures},
-            "fonts": analysis.fonts_report,
-            "substitutions": [f for f in analysis.fonts_report if f.get("origin") == "substitute"],
+            "fonts": analysis.fonts_report + (letter.fonts_report if letter else []),
+            "substitutions": [
+                f
+                for f in analysis.fonts_report + (letter.fonts_report if letter else [])
+                if f.get("origin") == "substitute"
+            ],
             "unlabeled": analysis.unlabeled,
             "fit": rendered.fit.to_json(),
             "timings": timings,
+            **(letter.report if letter else {}),
         }
         now = self._clock.now()
         status = VersionStatus.PUBLISHED if passed else VersionStatus.REVIEW
@@ -920,11 +965,12 @@ class IngestTemplateVersion:
             labels=analysis.labels,
             report=report,
             assets=asset_keys,
-            fonts=tuple(analysis.fonts),
+            fonts=tuple(analysis.fonts) + (letter.fonts if letter else ()),
             published_at=now if passed else None,
             thumbnail_blurhash=previews.blurhash,
             error=None,
             **keys,
+            **(letter.version_fields if letter else {}),
         )
         await self._templates.save_version(done)
         traits = gallery_traits(spec)
@@ -954,6 +1000,7 @@ class IngestTemplateVersion:
             status=status.value,
             fidelity_pdf=fidelity_pdf.score,
             fidelity_docx=fidelity_docx.score,
+            fidelity_letter=letter.score if letter else None,
             substitutions=sum(1 for f in analysis.fonts_report if f.get("origin") == "substitute"),
             failures=len(failures),
         )
@@ -965,11 +1012,16 @@ class IngestTemplateVersion:
 
 @dataclass(frozen=True, slots=True)
 class RenderedDocument:
-    """Ce que l'atelier affiche : le HTML ancré, les pages estimées, les avertissements."""
+    """Ce que l'atelier affiche : le HTML ancré, les pages estimées, les avertissements.
+
+    `letter_style` : pour une lettre, le style **réellement servi** (`template`
+    ou `plain`, ADR-0036) ; `None` pour un CV ou l'exemple.
+    """
 
     html: str
     pages: int
     warnings: tuple[str, ...]
+    letter_style: str | None = None
 
 
 async def stable_photo_url(storage: ObjectStorage, key: str) -> str:
@@ -1032,10 +1084,13 @@ class RenderDocument:
         sample: bool = False,
         ats_safe: bool = False,
         primary_color: str | None = None,
+        letter_style: str | None = None,
     ) -> RenderedDocument:
         """
         `primary_color` (`#RRGGBB`) : la couleur principale choisie, appliquée
         après la variante ATS, à l'exemple comme au CV ou à la lettre (ADR-0034).
+        `letter_style` (`template` | `plain` | `None`) : la lettre du modèle ou la
+        lettre sobre (ADR-0036) ; la réponse dit le style servi.
 
         Raises:
             TemplateNotFoundError: Modèle inconnu ou non publié.
@@ -1047,6 +1102,7 @@ class RenderDocument:
         template, version = await _published(self._templates, template_id)
         spec = ats_safe_spec(version.spec or {}) if ats_safe else (version.spec or {})
         spec = recolor_spec(spec, primary_color)
+        served: str | None = None
         if sample:
             kind = "sample"
             rendered, warnings = await self._sample(spec, version)
@@ -1055,7 +1111,10 @@ class RenderDocument:
                 raise TemplateNotOwnedError()
             if letter is not None:
                 kind = "letter"
-                rendered, warnings = await self._letter(spec, letter)
+                letter_spec, served = letter_spec_for(
+                    version, letter_style=letter_style, primary_color=primary_color
+                )
+                rendered, warnings = await self._letter(letter_spec, letter)
             elif cv is not None:
                 kind = "cv"
                 rendered, warnings = await self._cv(spec, version, user_id, cv)
@@ -1073,11 +1132,17 @@ class RenderDocument:
             "documents.rendered_html",
             template=template.name,
             kind=kind,
+            letter_style=served,
             pages=rendered.pages,
             bytes=size,
             ms=round((time.monotonic() - started) * 1000),
         )
-        return RenderedDocument(html=rendered.html, pages=rendered.pages, warnings=tuple(warnings))
+        return RenderedDocument(
+            html=rendered.html,
+            pages=rendered.pages,
+            warnings=tuple(warnings),
+            letter_style=served,
+        )
 
     async def _sample(
         self, spec: dict[str, Any], version: TemplateVersion
@@ -1097,7 +1162,7 @@ class RenderDocument:
     async def _letter(
         self, spec: dict[str, Any], letter: dict[str, Any]
     ) -> tuple[RenderedHtml, list[str]]:
-        """Une lettre, ancrée, avec le logo s'il est joignable."""
+        """Une lettre, ancrée, depuis sa spécification de lettre, avec le logo s'il est joignable."""
         view = from_letter(spec, letter, today=self._clock.now().date())
         warnings = letter_warnings(letter)
         logo_url = (letter.get("recipient") or {}).get("logo_url")
@@ -1163,8 +1228,13 @@ class ExportLetter:
         formats: list[str] | None,
         dossier_id: UUID | None,
         primary_color: str | None = None,
+        letter_style: str | None = None,
     ) -> GeneratedCv:
-        """`primary_color` : la couleur principale du dossier, pour que la lettre suive le CV."""
+        """`primary_color` : la couleur principale du dossier, pour que la lettre suive le CV.
+
+        `letter_style` : `template` (la lettre appariée du modèle, s'il en a
+        une) ou `plain` (la lettre sobre) ; l'export garde le style servi.
+        """
         wanted = check_formats(formats)
         if template_id is None:
             selection = await self._owned.selection(user_id)
@@ -1175,7 +1245,9 @@ class ExportLetter:
                 primary_color = selection.primary_color
         template, version = await _published(self._templates, template_id)
         ensure_usable(template, owned=await self._owned.owns(user_id, template_id))
-        spec = recolor_spec(version.spec or {}, primary_color)
+        spec, served = letter_spec_for(
+            version, letter_style=letter_style, primary_color=primary_color
+        )
         view = from_letter(spec, letter, today=self._clock.now().date())
         assets: dict[str, bytes] = {}
         logo = await fetch_logo(self._logos, (letter.get("recipient") or {}).get("logo_url"))
@@ -1218,12 +1290,14 @@ class ExportLetter:
             dossier_id=dossier_id,
             company_name=view["recipient"]["company"],
             primary_color=primary_color,
+            letter_style=served,
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)
         logger.info(
             "documents.letter_exported",
             template=template.name,
+            letter_style=served,
             formats=",".join(wanted),
             pages=rendered.fit.pages,
             logo=logo is not None,
@@ -1435,3 +1509,226 @@ class DeliverDocuments:
             if found is not None and safe_display_name(found.full_name):
                 return safe_display_name(found.full_name)
         return "Une personne"
+
+
+# ---------------------------------------------------------------------- lettre appariée et lettre sobre (ADR-0036)
+
+
+def letter_spec_for(
+    version: TemplateVersion, *, letter_style: str | None, primary_color: str | None
+) -> tuple[dict[str, Any], str]:
+    """La spécification de lettre à rendre, et le style **réellement servi**.
+
+    `template` → la lettre appariée de la version, recolorée comme le CV ; sans
+    lettre appariée, ou `plain` → la lettre sobre, qui ne porte aucune couleur
+    de modèle (`recolor_spec` la rend telle quelle). Sans choix : `template` si
+    le modèle a une lettre, sinon `plain`.
+    """
+    served = letter_style_served(letter_style, has_template_letter=version.has_letter)
+    if served == LETTER_STYLE_TEMPLATE and version.letter_spec is not None:
+        return recolor_spec(version.letter_spec, primary_color), served
+    return plain_letter_spec(), served
+
+
+@dataclass(frozen=True, slots=True)
+class PairedLetterResult:
+    """Ce que l'ingestion d'une lettre appariée rapporte à la version."""
+
+    failures: tuple[str, ...]
+    fidelity: dict[str, Any]
+    report: dict[str, Any]
+    fonts_report: list[dict[str, Any]]
+    fonts: tuple[dict[str, Any], ...]
+    version_fields: dict[str, Any]
+    score: float
+
+
+async def ingest_paired_letter(  # noqa: PLR0917 - la chaîne d'ingestion, étape par étape
+    engine: DocumentEngine,
+    storage: ObjectStorage,
+    version: TemplateVersion,
+    cv_spec: dict[str, Any],
+    prefix: str,
+    timings: dict[str, float],
+    clock: Clock,
+) -> PairedLetterResult:
+    """La lettre appariée : analyse, rendu de l'exemple, mesure, porte, aperçus (ADR-0036).
+
+    Même chaîne que le CV, même mesure (`fidelity.py`), même porte
+    (`gate.evaluate`) : ses échecs s'ajoutent à ceux du CV, et la version
+    entière reste en revue sous le seuil. La spécification garde le style des
+    titres de rubrique du CV comme référence de couleur (`styles.section_title`),
+    pour que `recolor_spec` recolore les deux documents d'un dossier ensemble.
+
+    Raises:
+        TemplateIngestionError: PDF illisible, lettre sans paragraphe, étiquetage indisponible.
+    """
+    assert version.letter_source_key is not None  # noqa: S101 - garde d'appel
+    t = time.monotonic()
+    source = await storage.get(Bucket.TEMPLATES, version.letter_source_key)
+    analysis = await engine.analyze_letter(
+        source, accent=(cv_spec.get("styles") or {}).get("section_title")
+    )
+    spec, sample = analysis.spec, analysis.sample
+    view = from_letter(spec, sample, today=clock.now().date())
+    rendered = await engine.render_pdf(spec, view, assets={}, photo=None)
+    fidelity = await engine.measure(source, rendered.data, fonts_report=analysis.fonts_report)
+    decision = evaluate(fidelity)
+    failures = [f"lettre : {f}" for f in decision.failures]
+    if analysis.unlabeled:
+        failures.append(f"lettre : lignes sans rôle : {', '.join(analysis.unlabeled)}")
+    docx = await engine.render_docx(spec, view, assets={}, photo=None, fit=rendered.fit)
+    docx_pdf = await engine.docx_to_pdf(docx)
+    fidelity_docx = await engine.measure(source, docx_pdf, fonts_report=analysis.fonts_report)
+    previews = await engine.previews(rendered.data)
+    keys = {
+        "letter_thumbnail_key": f"{prefix}/letter/vignette.webp",
+        "letter_preview_key": f"{prefix}/letter/apercu.png",
+        "letter_full_key": f"{prefix}/letter/apercu_pleine_page.png",
+    }
+    await storage.put(
+        Bucket.TEMPLATES,
+        keys["letter_thumbnail_key"],
+        previews.thumbnail_webp,
+        content_type="image/webp",
+    )
+    await storage.put(
+        Bucket.TEMPLATES, keys["letter_preview_key"], previews.preview_png, content_type="image/png"
+    )
+    await storage.put(
+        Bucket.TEMPLATES, keys["letter_full_key"], previews.full_png, content_type="image/png"
+    )
+    await storage.put(
+        Bucket.TEMPLATES, f"{prefix}/letter/sample_render.pdf", rendered.data, content_type=PDF
+    )
+    await storage.put(
+        Bucket.TEMPLATES, f"{prefix}/letter/sample_docx.pdf", docx_pdf, content_type=PDF
+    )
+    timings["letter_s"] = round(time.monotonic() - t, 1)
+    logger.info(
+        "documents.letter_ingested",
+        version_id=str(version.id),
+        fidelity=fidelity.score,
+        fidelity_docx=fidelity_docx.score,
+        failures=len(failures),
+    )
+    return PairedLetterResult(
+        failures=tuple(failures),
+        fidelity={
+            "letter": fidelity.to_json(),
+            "letter_docx": {**fidelity_docx.to_json(), "target": DOCX_SCORE_TARGET},
+        },
+        report={
+            "letter_gate": decision.to_json(),
+            "fonts_letter": analysis.fonts_report,
+            "unlabeled_letter": analysis.unlabeled,
+            "letter_fit": rendered.fit.to_json(),
+        },
+        fonts_report=analysis.fonts_report,
+        fonts=tuple(f for f in analysis.fonts if f not in version.fonts),
+        version_fields={
+            "letter_spec": spec,
+            "letter_sample": sample,
+            "letter_labels": analysis.labels,
+            "letter_thumbnail_blurhash": previews.blurhash,
+            **keys,
+        },
+        score=fidelity.score,
+    )
+
+
+#: Où vivent les aperçus de la lettre sobre (bucket `templates`), par version du dessin.
+PLAIN_LETTER_PREFIX: Final = f"plain-letter/v{PLAIN_LETTER_VERSION}"
+#: Un seul contrôle d'existence par processus et par dix minutes : la galerie
+#: ne doit pas interroger le stockage à chaque lecture.
+PLAIN_LETTER_CHECK_SECONDS: Final = 600.0
+_plain_letter_cache: dict[str, Any] = {"until": 0.0, "pages": None}
+
+
+def plain_letter_keys() -> dict[str, str]:
+    """Les clés des aperçus de la lettre sobre : vignette, aperçu, pleine page, fiche."""
+    return {
+        "thumbnail_key": f"{PLAIN_LETTER_PREFIX}/vignette.webp",
+        "preview_key": f"{PLAIN_LETTER_PREFIX}/apercu.png",
+        "full_key": f"{PLAIN_LETTER_PREFIX}/apercu_pleine_page.png",
+        "meta_key": f"{PLAIN_LETTER_PREFIX}/meta.json",
+    }
+
+
+async def plain_letter_pages(storage: ObjectStorage) -> dict[str, Any] | None:
+    """Les aperçus de la lettre sobre pour la galerie, ou `None` tant que la commande n'a pas tourné.
+
+    Lu une fois par processus (puis toutes les dix minutes) : `meta.json`,
+    déposé en dernier par `PublishPlainLetterPreview`, atteste que les trois
+    images sont là et porte le BlurHash.
+    """
+    now = time.monotonic()
+    if _plain_letter_cache["until"] > now:
+        pages: dict[str, Any] | None = _plain_letter_cache["pages"]
+        return pages
+    keys = plain_letter_keys()
+    found: dict[str, Any] | None
+    try:
+        meta = json.loads(await storage.get(Bucket.TEMPLATES, keys["meta_key"]))
+        found = {**keys, "blurhash": meta.get("blurhash")}
+    except ObjectNotFoundError:
+        found = None
+    _plain_letter_cache["pages"] = found
+    _plain_letter_cache["until"] = now + PLAIN_LETTER_CHECK_SECONDS
+    return found
+
+
+class PublishPlainLetterPreview:
+    """Rend la lettre sobre avec son contenu d'exemple et dépose ses aperçus (commande `plain-letter`).
+
+    Jamais au démarrage (AGENTS § 6.4) : une commande explicite, à relancer quand
+    `PLAIN_LETTER_VERSION` change. Les polices doivent avoir été téléchargées
+    avant (la commande s'en charge) : un rendu ne va jamais sur Internet.
+    """
+
+    def __init__(self, engine: DocumentEngine, storage: ObjectStorage, clock: Clock) -> None:
+        self._engine, self._storage, self._clock = engine, storage, clock
+
+    async def execute(self) -> dict[str, Any]:
+        spec = plain_letter_spec()
+        view = from_letter(spec, PLAIN_LETTER_SAMPLE, today=self._clock.now().date())
+        rendered = await self._engine.render_pdf(spec, view, assets={}, photo=None)
+        previews = await self._engine.previews(rendered.data)
+        keys = plain_letter_keys()
+        await self._storage.put(
+            Bucket.TEMPLATES,
+            keys["thumbnail_key"],
+            previews.thumbnail_webp,
+            content_type="image/webp",
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["preview_key"], previews.preview_png, content_type="image/png"
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["full_key"], previews.full_png, content_type="image/png"
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES,
+            f"{PLAIN_LETTER_PREFIX}/sample_render.pdf",
+            rendered.data,
+            content_type=PDF,
+        )
+        meta = {
+            "version": PLAIN_LETTER_VERSION,
+            "blurhash": previews.blurhash,
+            "fit": rendered.fit.to_json(),
+            "published_at": self._clock.now().isoformat(),
+        }
+        await self._storage.put(
+            Bucket.TEMPLATES,
+            keys["meta_key"],
+            json.dumps(meta).encode("utf-8"),
+            content_type="application/json",
+        )
+        _plain_letter_cache["until"] = 0.0
+        logger.info(
+            "documents.plain_letter_published",
+            version=PLAIN_LETTER_VERSION,
+            pages=rendered.fit.pages,
+        )
+        return meta
