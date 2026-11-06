@@ -43,6 +43,7 @@ from karria.modules.documents.application import (
     OriginThrottle,
     PreviewTemplate,
     RecordTemplateView,
+    RefreshTemplateColors,
     RenderDocument,
     SelectTemplate,
     SendDocuments,
@@ -450,6 +451,11 @@ def build_submit_template(storage: ObjectStorage, jobs: TemplateJobs) -> SubmitT
     return SubmitTemplate(
         get_template_repository(), storage, jobs, get_clock(), TortoiseUnitOfWork()
     )
+
+
+def build_refresh_template_colors() -> RefreshTemplateColors:
+    """La remesure de la couleur de galerie, pour `scripts/templates.py refresh-colors`."""
+    return RefreshTemplateColors(get_template_repository(), get_clock())
 
 
 def build_explain_ats(settings: Settings) -> ExplainAts:

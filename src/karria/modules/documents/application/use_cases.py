@@ -70,7 +70,12 @@ from karria.modules.documents.domain.errors import (
 from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.letter import from_letter, letter_warnings
-from karria.modules.documents.domain.palette import recolor_spec
+from karria.modules.documents.domain.palette import (
+    parse_hex_color,
+    primary_color_of,
+    recolor_spec,
+    tinted_ink,
+)
 from karria.modules.documents.domain.sends import (
     MAX_DOCUMENTS_PER_SEND,
     DocumentSend,
@@ -104,7 +109,7 @@ from karria.modules.documents.domain.view import from_cv, from_sample
 from karria.shared.clock import Clock
 from karria.shared.database import NullUnitOfWork, UnitOfWork
 from karria.shared.errors.exceptions import InvalidInputError
-from karria.shared.images import resize_to_png
+from karria.shared.images import resize_to_png, single_ink, tint_ink
 from karria.shared.logging import get_logger
 from karria.shared.mail import MailDeliveryError
 from karria.shared.storage import Bucket, ObjectNotFoundError, ObjectStorage
@@ -155,6 +160,52 @@ async def _assets(
         if name.startswith("sample_") and not sample:
             continue
         out[name] = await storage.get(Bucket.TEMPLATES, key)
+    return out
+
+
+#: Les pictogrammes teintés, par (empreinte du PNG, couleur d'origine, couleur
+#: choisie) : la mesure et la teinte se font une fois par processus, pas à
+#: chaque frappe de l'atelier. Bornée.
+ICON_TINT_CACHE_SIZE: Final = 512
+_tinted_icons: OrderedDict[tuple[str, str, str], bytes] = OrderedDict()
+
+
+def tint_icons(
+    assets: dict[str, bytes], spec: dict[str, Any], primary: str | None
+) -> dict[str, bytes]:
+    """Les pictogrammes (`icon_*.png`) à la couleur choisie, quand ils sont à celle du décor.
+
+    Un pictogramme rastérisé depuis le PDF du modèle n'est pas dans la
+    spécification : `recolor_spec` ne le voit pas. S'il est **monochrome**
+    (une encre sur le fond, bords anticrénelés compris) et que cette encre est
+    la couleur du décor ou l'une de ses teintes, il prend la couleur qu'elle
+    prendrait (`tinted_ink`), alpha et bords gardés. Sinon il reste tel quel.
+    `spec` est la spécification **d'origine** (celle du modèle, avant
+    recoloration) ; sans couleur choisie, ou avec celle d'origine, rien ne change.
+    """
+    if primary is None:
+        return assets
+    origin = primary_color_of(spec)
+    if origin is None:
+        return assets
+    chosen = parse_hex_color(primary)
+    if chosen == origin:
+        return assets
+    out = dict(assets)
+    for name, data in assets.items():
+        if not name.startswith("icon_"):
+            continue
+        key = (hashlib.sha256(data).hexdigest(), origin, chosen)
+        cached = _tinted_icons.get(key)
+        if cached is None:
+            ink = single_ink(data)
+            new = tinted_ink(ink, origin, chosen) if ink else None
+            cached = tint_ink(data, ink, new) if ink and new else data
+            _tinted_icons[key] = cached
+            while len(_tinted_icons) > ICON_TINT_CACHE_SIZE:
+                _tinted_icons.popitem(last=False)
+        _tinted_icons.move_to_end(key)
+        out[name] = cached
     return out
 
 
@@ -401,6 +452,7 @@ class CvRenderer:
             except ObjectNotFoundError:
                 logger.warning("documents.cv_photo_missing", user_id=str(user_id))
         assets = await _assets(self._storage, version, sample=False)
+        assets = await asyncio.to_thread(tint_icons, assets, version.spec or {}, primary_color)
         return template, version, spec, view, snapshot, photo, assets
 
 
@@ -960,6 +1012,38 @@ class IngestTemplateVersion:
         return done
 
 
+class RefreshTemplateColors:
+    """Remesure la couleur de galerie des modèles publiés depuis leur version publiée.
+
+    La définition de `primary_color` a changé (ADR-0034 § 2026-11-06 : la
+    couleur du décor, plus celle des titres) ; les modèles déjà ingérés
+    portent l'ancienne mesure. Commande `scripts/templates.py refresh-colors`,
+    idempotente : un modèle déjà à jour n'est pas réécrit.
+    """
+
+    def __init__(self, templates: TemplateRepository, clock: Clock) -> None:
+        self._templates, self._clock = templates, clock
+
+    async def execute(self, *, apply: bool = True) -> list[tuple[Template, str | None]]:
+        """Les modèles dont la couleur change, avec la nouvelle ; écrits si `apply`."""
+        changes: list[tuple[Template, str | None]] = []
+        for template in await self._templates.list_all():
+            if template.published_version_id is None:
+                continue
+            version = await self._templates.get_version(template.published_version_id)
+            if version is None or version.spec is None:
+                continue
+            color = gallery_traits(version.spec)["primary_color"]
+            if color == template.primary_color:
+                continue
+            changes.append((template, color))
+            if apply:
+                await self._templates.save(
+                    replace(template, primary_color=color, updated_at=self._clock.now())
+                )
+        return changes
+
+
 # ---------------------------------------------------------------------- atelier (ADR-0029)
 
 
@@ -1049,7 +1133,7 @@ class RenderDocument:
         spec = recolor_spec(spec, primary_color)
         if sample:
             kind = "sample"
-            rendered, warnings = await self._sample(spec, version)
+            rendered, warnings = await self._sample(spec, version, primary_color)
         else:
             if template.is_premium and not await self._owned.owns(user_id, template_id):
                 raise TemplateNotOwnedError()
@@ -1058,7 +1142,7 @@ class RenderDocument:
                 rendered, warnings = await self._letter(spec, letter)
             elif cv is not None:
                 kind = "cv"
-                rendered, warnings = await self._cv(spec, version, user_id, cv)
+                rendered, warnings = await self._cv(spec, version, user_id, cv, primary_color)
             else:
                 raise InvalidInputError(
                     "Il faut un CV, une lettre ou l'exemple du modèle.",
@@ -1080,11 +1164,12 @@ class RenderDocument:
         return RenderedDocument(html=rendered.html, pages=rendered.pages, warnings=tuple(warnings))
 
     async def _sample(
-        self, spec: dict[str, Any], version: TemplateVersion
+        self, spec: dict[str, Any], version: TemplateVersion, primary_color: str | None
     ) -> tuple[RenderedHtml, list[str]]:
         """L'exemple du modèle, sans ancres, photo d'exemple comprise."""
         view = from_sample(spec, version.sample or {})
         assets = await _assets(self._storage, version, sample=True)
+        assets = await asyncio.to_thread(tint_icons, assets, version.spec or {}, primary_color)
         photo_name = (spec["header"].get("photo") or {}).get("sample_file")
         photo = assets.pop(photo_name, None) if photo_name else None
         if photo is not None:
@@ -1113,7 +1198,12 @@ class RenderDocument:
         return rendered, warnings
 
     async def _cv(
-        self, spec: dict[str, Any], version: TemplateVersion, user_id: UUID, cv: dict[str, Any]
+        self,
+        spec: dict[str, Any],
+        version: TemplateVersion,
+        user_id: UUID,
+        cv: dict[str, Any],
+        primary_color: str | None,
     ) -> tuple[RenderedHtml, list[str]]:
         """Le CV reçu, ancré, avec la photo de la personne si le modèle en a la place."""
         view = from_cv(spec, cv)
@@ -1128,6 +1218,7 @@ class RenderDocument:
             else:
                 warnings.append("photo_missing")
         assets = await _assets(self._storage, version, sample=False)
+        assets = await asyncio.to_thread(tint_icons, assets, version.spec or {}, primary_color)
         rendered = await self._engine.render_html(
             spec, view, assets=assets, photo_url=photo_url, anchored=True
         )
