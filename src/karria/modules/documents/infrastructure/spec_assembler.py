@@ -56,7 +56,7 @@ STRETCH_MIN_MM: Final = 20.0
 #: pour que sa ligne la plus longue tienne sans retour forcé.
 BOX_SLACK_MM: Final = 1.5
 #: Marge ajoutée au bord droit mesuré d'une colonne (mm).
-COLUMN_SLACK_MM: Final = 1.0
+COLUMN_SLACK_MM: Final = 0.5
 #: Tolérances d'alignement des éléments d'en-tête (mm).
 EDGE_TOLERANCE_MM: Final = 1.0
 CENTER_TOLERANCE_MM: Final = 1.5

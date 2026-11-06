@@ -300,8 +300,13 @@ class TestRendu:
         spec, sample, _ = copy.deepcopy(cv_built)
         spec["header"]["photo"]["shape"] = "rounded"
         html = render(spec, from_sample(spec, sample), fonts, photo="sample_photo.png")
-        assert "object-position:50.0% 50.0%" in html
+        # L'exemple pose l'image à son échelle réelle ; sans cette mesure, l'ancienne position.
+        assert "object-fit" not in html
+        assert "position:absolute;left:0.0mm;top:-2.5mm;width:25.0mm;height:30.0mm" in html
         assert "border-radius:8%" in html
+        del spec["header"]["photo"]["sample_image"]
+        html = render(spec, from_sample(spec, sample), fonts, photo="sample_photo.png")
+        assert "object-position:50.0% 50.0%" in html
 
     def test_sans_fichier_photo_aucun_cadre(self, spec: Json, fonts: FontSet) -> None:
         assert "object-fit:cover" not in render(spec, from_cv(spec, CV), fonts)
@@ -402,6 +407,36 @@ class TestEnTete:
         photo = spec["header"]["photo"]
         assert renderer.header_limit(phone, st_phone) == pytest.approx(
             photo["x_mm"] - 4 - phone["x_mm"]
+        )
+
+    def test_un_element_a_droite_ou_centre_setend_vers_la_gauche(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        view = from_cv(spec, CV)
+        renderer = HtmlRenderer(spec, view, fonts, photo=None)
+        name, phone = spec["header"]["elements"][0], spec["header"]["elements"][1]
+        st = spec["styles"][phone["style"]]
+        margin = min(c["x_mm"] for b in spec["bands"] for c in b["columns"])
+        right = {**phone, "align": "right", "rx_mm": 190.0}
+        # Le nom est sur la même ligne, à gauche : la place s'arrête après lui.
+        assert renderer.header_limit(right, st) == pytest.approx(
+            190.0 - (name["x_mm"] + name["w_mm"] + 4)
+        )
+        centered = {**phone, "align": "center", "cx_mm": 150.0, "y_mm": phone["y_mm"] + 30}
+        assert renderer.header_limit(centered, st) == pytest.approx(
+            2 * min(150.0 - margin, 210.0 - margin - 150.0)
+        )
+        # Un élément sous la ligne du téléphone (boîtes disjointes) n'est pas son voisin.
+        below = {**name, "y_mm": phone["y_mm"] + st["box_h_mm"]}
+        assert renderer.header_limit(below, spec["styles"][name["style"]]) > phone["x_mm"]
+        # À droite de la photo, la place commence après elle.
+        with_photo = HtmlRenderer(spec, view, fonts, photo="p.jpg")
+        photo = spec["header"]["photo"]
+        beside = {**phone, "x_mm": photo["x_mm"] + photo["w_mm"] + 1, "y_mm": photo["y_mm"] + 2}
+        assert with_photo.header_limit(beside, st) == pytest.approx(210.0 - margin - beside["x_mm"])
+        beside_right = {**beside, "align": "right", "rx_mm": 205.0}
+        assert with_photo.header_limit(beside_right, st) == pytest.approx(
+            205.0 - (photo["x_mm"] + photo["w_mm"] + 4)
         )
 
     @pytest.mark.parametrize(

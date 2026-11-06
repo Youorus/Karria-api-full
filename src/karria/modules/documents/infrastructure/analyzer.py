@@ -40,6 +40,7 @@ from karria.modules.documents.domain.fonts import (
     weight_from_name,
 )
 from karria.modules.documents.infrastructure.fonts import (
+    FontFacts,
     FontFile,
     FontLibrary,
     FontSet,
@@ -133,8 +134,12 @@ class TemplateAnalyzer:
         groups: dict[str, list[SourceFont]] = defaultdict(list)
         for name in names:
             font = embedded.get(name)
-            weight = weight_from_name(name, default=font.weight if font and font.weight else 400)
-            italic = italic_from_name(name) or bool(font and font.italic)
+            # La graisse lue dans la police incorporée (OS/2) ; pdfium la devine
+            # mal (mesuré : 1016 pour un italique régulier, 265 pour un romain).
+            facts = embedded_facts(font.data) if font and font.data else None
+            default = facts.weight if facts and facts.weight else 400
+            weight = weight_from_name(name, default=default)
+            italic = italic_from_name(name) or bool(facts.italic if facts else font and font.italic)
             family = family_from_name(name)
             groups[family].append(
                 source_font(
@@ -222,6 +227,14 @@ class TemplateAnalyzer:
             if plan is None:
                 plan = (await self._planner.plan(prepared.page_png, prepared.measured)).plan
             return await self.assemble(prepared, plan)
+
+
+def embedded_facts(data: bytes) -> FontFacts | None:
+    """Ce que fontTools lit d'une police incorporée, ou rien si elle ne se lit pas."""
+    try:
+        return facts_of(data)
+    except Exception:
+        return None
 
 
 def fonts_report(resolutions: dict[str, FontResolution]) -> list[Json]:

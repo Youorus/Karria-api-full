@@ -26,6 +26,7 @@ from karria.modules.documents.domain.fonts import FontOrigin, FontResolution, So
 from karria.modules.documents.infrastructure.analyzer import TemplateAnalyzer
 from karria.modules.documents.infrastructure.fonts import FontFile
 from karria.modules.documents.infrastructure.layout_planner import LayoutPlan
+from karria.modules.documents.infrastructure.pdf_reader import PdfDocument
 
 pytestmark = pytest.mark.unit
 
@@ -206,3 +207,26 @@ class TestPreparation:
         with pytest.raises(TemplateIngestionError) as big:
             await analyzer.prepare(huge)
         assert "trop grande" in str(big.value.details["detail"])
+
+
+class TestGraisseDesPolicesIncorporees:
+    async def test_la_graisse_vient_de_la_police_pas_de_pdfium(self) -> None:
+        """Une police nommée sans graisse (« Testa-Italic ») prend celle de sa table OS/2."""
+        from documents.infrastructure.fakes import build_font  # noqa: PLC0415
+
+        fonts = {"Testa-Italic": build_font(style="Italic", weight=400, italic_angle=-12)}
+        b = PdfBuilder(100, 60, embedded=fonts)
+        b.text("NOM", 10, 10, size=14, font="Testa-Italic")
+        b.text("PROFIL", 10, 30, size=11, font="Testa-Italic")
+        b.text("Texte", 10, 37, size=9, font="Testa-Italic")
+        library = FakeLibrary()
+        analyzer = TemplateAnalyzer(library, FakePlanner({}))  # type: ignore[arg-type]
+        with PdfDocument(b.to_bytes()) as doc:
+            await analyzer.resolve_fonts(doc)
+        (source,) = library.resolved
+        assert (source.weight, source.italic) == (400, True)
+
+    def test_une_police_illisible_na_pas_de_faits(self) -> None:
+        from karria.modules.documents.infrastructure.analyzer import embedded_facts  # noqa: PLC0415
+
+        assert embedded_facts(b"pas une police") is None

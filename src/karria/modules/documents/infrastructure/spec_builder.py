@@ -899,6 +899,15 @@ class SpecBuilder:
             "h_mm": round(fh, 2),
             "shape": shape,
             "sample_object_position": f"{ox}% {oy}%",
+            # L'image d'exemple à son échelle réelle dans le cadre (Canva zoome
+            # une grande photo dans un petit cadre) ; la photo d'une personne,
+            # elle, couvre le cadre, centrée.
+            "sample_image": {
+                "x_mm": round(img["x"] - fx, 2),
+                "y_mm": round(img["y"] - fy, 2),
+                "w_mm": round(img["w"], 2),
+                "h_mm": round(img["h"], 2),
+            },
             "sample_file": "sample_photo.png",
         }
 

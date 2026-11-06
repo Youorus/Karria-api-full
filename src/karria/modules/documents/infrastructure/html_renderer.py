@@ -706,27 +706,43 @@ class HtmlRenderer:
         )
 
     def header_limit(self, e: Json, st: Json) -> float:
-        """Place disponible pour un élément d'en-tête : jusqu'à la photo, au voisin ou à la marge."""
+        """Place disponible pour un élément d'en-tête : jusqu'à la photo, au voisin ou à la marge.
+
+        Un voisin est un élément **sur la même ligne** (les boîtes se recouvrent
+        d'au moins la moitié de la plus petite : un nom en grand corps et un
+        téléphone sur sa ligne de base, oui ; deux coordonnées empilées, non) ;
+        un élément aligné à droite s'étend vers la gauche, un élément centré des
+        deux côtés.
+        """
         h = self.spec["header"]
         p_box = h.get("photo") if self.photo else None
         pw = self.spec["page"]["width_mm"]
         margin = min(c["x_mm"] for b in self.spec["bands"] for c in b["columns"])
-        limit = pw - margin
-        if (
-            p_box
-            and e["y_mm"] < p_box["y_mm"] + p_box["h_mm"]
-            and e["y_mm"] + st["box_h_mm"] > p_box["y_mm"]
-            and e["x_mm"] < p_box["x_mm"]
-        ):
-            limit = p_box["x_mm"] - 4.0
+        left_bound, right_bound = margin, pw - margin
+        box = float(st["box_h_mm"])
+        if p_box and e["y_mm"] < p_box["y_mm"] + p_box["h_mm"] and e["y_mm"] + box > p_box["y_mm"]:
+            if e["x_mm"] < p_box["x_mm"]:
+                right_bound = min(right_bound, p_box["x_mm"] - 4.0)
+            else:
+                left_bound = max(left_bound, p_box["x_mm"] + p_box["w_mm"] + 4.0)
         for other in h["elements"]:
-            if (
-                other is not e
-                and other["x_mm"] > e["x_mm"] + 5
-                and abs(other["y_mm"] - e["y_mm"]) < st["box_h_mm"] + 2
-            ) and self.view["header"].get(other["field"]):
-                limit = min(limit, other["x_mm"] - 4.0)
-        return float(limit - e["x_mm"])
+            if other is e or not self.view["header"].get(other["field"]):
+                continue
+            other_box = float(self.styles[other["style"]]["box_h_mm"])
+            overlap = min(e["y_mm"] + box, other["y_mm"] + other_box) - max(
+                e["y_mm"], other["y_mm"]
+            )
+            if overlap < 0.5 * min(box, other_box):
+                continue
+            if other["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, other["x_mm"] - 4.0)
+            elif other["x_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, other["x_mm"] + other.get("w_mm", 0.0) + 4.0)
+        if e.get("align") == "right":
+            return float(e["rx_mm"] - left_bound)
+        if e.get("align") == "center":
+            return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
+        return float(right_bound - e["x_mm"])
 
     def fit_header_text(self, val: str, st: Json, avail: float) -> str:
         """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne."""
@@ -793,11 +809,20 @@ class HtmlRenderer:
         p = h.get("photo")
         if p and self.photo:
             radius = {"circle": "50%", "rounded": "8%"}.get(p["shape"], "0")
-            pos = p["sample_object_position"] if self.view.get("sample") else "50% 30%"
+            sample = p.get("sample_image") if self.view.get("sample") else None
+            if sample:
+                # L'exemple du modèle : l'image à son échelle et à son décalage réels.
+                image = (
+                    f"position:absolute;left:{sample['x_mm']}mm;top:{sample['y_mm']}mm;"
+                    f"width:{sample['w_mm']}mm;height:{sample['h_mm']}mm"
+                )
+            else:
+                pos = p["sample_object_position"] if self.view.get("sample") else "50% 30%"
+                image = f"width:100%;height:100%;object-fit:cover;object-position:{pos}"
             out.append(
                 f'<div style="position:absolute;left:{p["x_mm"]}mm;top:{p["y_mm"]}mm;width:{p["w_mm"]}mm;'
                 f'height:{p["h_mm"]}mm;border-radius:{radius};overflow:hidden">'
-                f'<img src="{esc(self.url(self.photo))}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:{pos}"></div>'
+                f'<img src="{esc(self.url(self.photo))}" alt="" style="{image}"></div>'
             )
         return "".join(out)
 
@@ -809,7 +834,11 @@ class HtmlRenderer:
             f"@page{{size:{page['width_mm']}mm {page['height_mm']}mm;margin:0}}",
             "html,body{margin:0;padding:0}*{box-sizing:border-box}.t{white-space:normal;overflow-wrap:anywhere}",
             ":root{--k:1;--f:1}",
-            f".page{{position:relative;width:{page['width_mm']}mm;height:{page['height_mm']}mm;overflow:hidden;background:{page['background']}}}",
+            # Ni ligatures ni alternances contextuelles : Chromium écrit un glyphe
+            # substitué (le trait d'union d'Inter entre deux chiffres) sous un code
+            # privé, et un ATS lit « 123456 » sans trait d'union (mesuré le 2026-11-06).
+            f".page{{position:relative;width:{page['width_mm']}mm;height:{page['height_mm']}mm;overflow:hidden;background:{page['background']};"
+            'font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0,"clig" 0}',
             "section,.item{display:block}",
             *(self.css_style(k, v) for k, v in self.styles.items()),
         ]
