@@ -30,6 +30,7 @@ from karria.modules.cv.application import (
     PHOTO_FOLLOW_UP,
     TOO_SHORT_FOLLOW_UP,
     CvFinalized,
+    EnhanceCurrentPhoto,
     FinalizeDraft,
     GeneratedImage,
     GetDraft,
@@ -61,6 +62,7 @@ from karria.modules.cv.domain import (
     Identity,
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
+    PhotoMissingError,
     ReceivedFile,
     UnsupportedUploadError,
 )
@@ -511,6 +513,67 @@ class TestUploadPhoto:
 
         with pytest.raises(PayloadRejectedError):
             await use_case.execute(USER, b"%PDF-1.4", "image/jpeg", enhance=False)
+
+
+class TestEnhanceCurrentPhoto:
+    def _use_case(
+        self, cvs: InMemoryCvRepository, store: InMemoryObjectStorage, enhancer: FakeEnhancer
+    ) -> tuple[EnhanceCurrentPhoto, InMemoryPhotoRepository]:
+        photos = InMemoryPhotoRepository()
+        upload = UploadPhoto(enhancer, store, photos, FakeClock())
+        return EnhanceCurrentPhoto(cvs, store, upload), photos
+
+    async def test_relit_la_photo_du_cv_et_range_lamelioree_en_attente(self) -> None:
+        store = storage()
+        key = f"users/{USER}/cv-photo/originale.jpg"
+        await store.put(Bucket.MEDIA, key, sample_image(640, 480), content_type="image/jpeg")
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv(image_key=key))
+        enhancer = FakeEnhancer(result=GeneratedImage(sample_image(400, 500), "image/jpeg"))
+        use_case, photos = self._use_case(cvs, store, enhancer)
+
+        photo = await use_case.execute(USER)
+
+        assert photo.enhanced
+        assert photo.user_id == USER
+        assert photos.photos[photo.id] is photo
+        assert photo.image_key != key
+        assert await store.exists(Bucket.MEDIA, photo.image_key)
+        [(size, content_type)] = enhancer.calls
+        assert size > 0
+        assert content_type == "image/jpeg"
+        # Le CV n'a pas bougé : c'est la personne qui retient, ou non.
+        assert cvs.cvs[USER].image_key == key
+
+    async def test_sans_cv_ou_sans_photo_rien_ne_part_au_generateur(self) -> None:
+        enhancer = FakeEnhancer()
+        cvs = InMemoryCvRepository()
+        use_case, _ = self._use_case(cvs, storage(), enhancer)
+
+        with pytest.raises(CvNotFoundError):
+            await use_case.execute(USER)
+
+        await cvs.save(existing_cv(image_key=None))
+        with pytest.raises(PhotoMissingError) as excinfo:
+            await use_case.execute(USER)
+
+        assert excinfo.value.details == {"reason": "photo_missing"}
+        assert enhancer.calls == []
+
+    async def test_un_refus_du_generateur_remonte_tel_quel(self) -> None:
+        store = storage()
+        key = f"users/{USER}/cv-photo/originale.jpg"
+        await store.put(Bucket.MEDIA, key, sample_image(), content_type="image/jpeg")
+        cvs = InMemoryCvRepository()
+        await cvs.save(existing_cv(image_key=key))
+        use_case, photos = self._use_case(
+            cvs, store, FakeEnhancer(error=PhotoEnhanceRefusedError("SAFETY"))
+        )
+
+        with pytest.raises(PhotoEnhanceRefusedError):
+            await use_case.execute(USER)
+
+        assert photos.photos == {}
 
 
 EXTRACTED = {

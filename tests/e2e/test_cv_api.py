@@ -139,6 +139,7 @@ class TestAuthentification:
             ("PUT", "/cv/draft/chapters/identity"),
             ("POST", "/cv/draft/finalize"),
             ("POST", "/cv/photo"),
+            ("POST", "/cv/me/photo/enhance"),
             ("POST", "/cv/import"),
             ("POST", "/voice/transcribe"),
         ],
@@ -418,6 +419,70 @@ class TestPhoto:
 
         assert response.status_code == 422
         assert response.json()["error"]["details"]["fields"][0]["field"] == "image_id"
+
+
+async def cv_with_photo(client: AsyncClient) -> dict[str, Any]:
+    """Un CV finalisé qui porte une photo (non améliorée)."""
+    await complete_all_but_photo(client)
+    uploaded = (await client.post(f"{API}/cv/photo", **photo_form(False))).json()
+    await validate(client, "photo", {"data": {"image_id": uploaded["image_id"]}})
+    response = await client.post(f"{API}/cv/draft/finalize")
+    assert response.status_code == 201, response.text
+    return response.json()  # type: ignore[no-any-return]
+
+
+class TestEnhanceCurrentPhoto:
+    async def test_lamelioree_revient_en_attente_et_se_retient_par_son_identifiant(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        before = await cv_with_photo(client)
+
+        response = await client.post(f"{API}/cv/me/photo/enhance")
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["enhanced"] is True
+        assert body["image_url"].startswith("https://storage.local/")
+        assert len(fakes.enhancer.calls) == 1
+        # Le CV garde l'originale tant que la personne n'a pas choisi.
+        unchanged = (await client.get(f"{API}/cv/me")).json()
+        assert unchanged["image_url"] == before["image_url"]
+
+        kept = await client.put(
+            f"{API}/cv/me/chapters/photo", json={"data": {"image_id": body["image_id"]}}
+        )
+        assert kept.status_code == 200
+        assert kept.json()["image_url"] != before["image_url"]
+        assert fakes.photos.photos == {}
+
+    async def test_sans_photo_un_409_sans_cv_un_404(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        missing_cv = await client.post(f"{API}/cv/me/photo/enhance")
+        await complete_all_but_photo(client)
+        await validate(client, "photo", {"data": {"image_id": None}})
+        await client.post(f"{API}/cv/draft/finalize")
+        missing_photo = await client.post(f"{API}/cv/me/photo/enhance")
+
+        assert missing_cv.status_code == 404
+        assert missing_cv.json()["error"]["details"]["reason"] == "cv_not_found"
+        assert missing_photo.status_code == 409
+        assert missing_photo.json()["error"]["details"]["reason"] == "photo_missing"
+        assert fakes.enhancer.calls == []
+
+    async def test_un_refus_est_un_422_et_une_panne_un_503(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        await cv_with_photo(client)
+        fakes.enhancer = FakeEnhancer(error=PhotoEnhanceRefusedError("IMAGE_SAFETY"))
+        refused = await client.post(f"{API}/cv/me/photo/enhance")
+        fakes.enhancer = FakeEnhancer(error=PhotoEnhanceUnavailableError("HTTP 503"))
+        down = await client.post(f"{API}/cv/me/photo/enhance")
+
+        assert refused.status_code == 422
+        assert refused.json()["error"]["details"]["reason"] == "photo_enhance_refused"
+        assert down.status_code == 503
+        assert down.json()["error"]["details"]["reason"] == "photo_enhance_unavailable"
 
 
 class TestImport:

@@ -43,6 +43,16 @@ class CvNotFoundError(DomainError):
         )
 
 
+class PhotoMissingError(BusinessRuleViolationError):
+    """Retravailler la photo du CV suppose qu'il en ait une."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Ton CV n'a pas encore de photo : ajoute-en une d'abord.",
+            details={"reason": "photo_missing"},
+        )
+
+
 class DraftIncompleteError(BusinessRuleViolationError):
     """La finalisation exige que chaque chapitre soit validé ou passé."""
 

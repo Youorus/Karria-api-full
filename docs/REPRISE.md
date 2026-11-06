@@ -3,7 +3,37 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-05**
+**Dernière mise à jour : 2026-11-06**
+
+### Session du 2026-11-06 — la photo déjà sur le CV se retravaille sans la rechoisir (module `cv` — Fable) — BRANCHE `feat/portrait`, NON POUSSÉE
+
+**Demande de Marc** : « au niveau de l'onglet CV, quand l'utilisateur change son avatar, lui
+donner la possibilité d'optimiser sa photo par IA pour la rendre professionnelle ». Côté app,
+l'édition de la photo ne proposait pas l'amélioration ; côté API, elle n'existait **qu'à l'envoi**
+(`POST /cv/photo`, `enhance=true`) — impossible de retravailler la photo déjà en place sans la
+rechoisir. D'où une route sobre de plus, et rien d'autre.
+
+- **`POST /cv/me/photo/enhance` → `201 PhotoRead`** (`api/routers.py`), `AiConsentedPrincipalDep`
+  (but `PHOTO_ENHANCEMENT`, `403 ai_consent_required`). Cas d'usage
+  `EnhanceCurrentPhoto(cvs, storage, upload)` (`application/use_cases.py`) : relit l'objet du
+  bucket `media` par `cv.image_key`, le confie à `UploadPhoto.execute(…, enhance=True)` — même
+  double normalisation (ADR-0009), même rangement, même `CvPhoto` **en attente**. Le CV ne change
+  pas : l'app compare, puis retient par `PUT /cv/me/chapters/photo { data: { image_id } }` ou garde
+  l'originale (rien à faire ; la retravaillée en attente est oubliée à la prochaine écriture de la
+  photo ou avec le compte, comme avant).
+- **Erreurs** : `404 cv_not_found` ; nouvelle `PhotoMissingError` → `409 photo_missing`
+  (`domain/errors.py`) ; `422 photo_enhance_refused` / `503 photo_enhance_unavailable` inchangées.
+  Le modèle d'image est celui de la tâche LLM `portrait` (Gemini image), rien de changé là.
+- **Tests** : `tests/unit/cv/test_use_cases.py › TestEnhanceCurrentPhoto` (3 cas : rangement et CV
+  intact, sans CV / sans photo rien ne part au générateur, refus remonte tel quel) ;
+  `tests/e2e/test_cv_api.py › TestEnhanceCurrentPhoto` (3 cas : 201 + retenue par `image_id` et
+  purge des photos en attente, 404/409, 422/503) ; la route dans la liste des routes
+  authentifiées. `make check` vert (3 550 tests ; intégration MinIO sautée, pas de MinIO local).
+- **Pas d'ADR** : aucune décision nouvelle, la route applique ADR-0008/0009/0014/0025 telles
+  quelles. README du module et contrats de l'app (`karria_app/docs/contrat-api-cv.md`,
+  `contrat-api-consentement-ia.md`) mis à jour.
+- **Reste** : relire puis fusionner `feat/portrait` dans `main` (= production Dokploy) ; vérifier
+  en prod une fois la vraie photo d'un CV passée au générateur (taille, délai, ~10 s attendues).
 
 ### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
 
