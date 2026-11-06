@@ -155,6 +155,7 @@ class TestEntreesMesurees:
 
     def test_une_petite_forme_est_une_puce(self) -> None:
         assert is_small_shape(drawing("curve", 0, 0, 1, 1)) is True
+        assert is_small_shape(drawing("curve", 0, 0, 6, 5)) is True  # un pictogramme
         assert is_small_shape(drawing("hline", 0, 0, 1, 0)) is False
         assert is_small_shape(drawing("rect", 0, 0, 10, 10)) is False
 
