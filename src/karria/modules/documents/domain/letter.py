@@ -1,4 +1,4 @@
-"""La lettre de motivation : une donnée structurée, rendue dans la grammaire du modèle de CV (ADR-0030).
+"""La lettre de motivation : une donnée structurée, rendue depuis une spécification de lettre (ADR-0030, ADR-0036).
 
 Contrat
 -------
@@ -8,7 +8,9 @@ Contrat
   CV). Jamais de texte libre hors de ces champs.
 - `from_letter` produit la **vue** commune aux deux moteurs (`kind: "letter"`),
   avec les chemins `data-chemin` à côté des textes (`view["paths"]`), comme
-  pour le CV (`domain/view.py`).
+  pour le CV (`domain/view.py`). La mise en page vient d'une **spécification
+  de lettre** — celle appariée au modèle, ou la lettre sobre
+  (`domain/plain_letter.py`) — plus de la grammaire du CV (ADR-0036).
 - Les bonnes pratiques RH françaises sont des règles ici, pas dans l'app :
   une page, trois à quatre paragraphes, objet explicite (« Candidature au
   poste de … »), lieu et date, politesse sobre, signature. `letter_warnings`
@@ -109,8 +111,13 @@ def letter_warnings(letter: Json) -> list[str]:
 def from_letter(spec: Json, letter: Json, *, today: date) -> Json:
     """La lettre vers la vue commune aux moteurs, avec ses chemins.
 
-    La spécification du modèle n'est lue que par les moteurs (styles, marges) ;
-    ici elle ne sert qu'à rester symétrique de `from_cv`.
+    La spécification de lettre n'est lue que par les moteurs (styles,
+    positions) ; ici elle ne sert qu'à rester symétrique de `from_cv`. Le nom
+    est donné entier **et** en deux champs : un modèle de lettre l'écrit sur
+    une ou deux lignes (ADR-0036). `date_line`, s'il est posé dans la lettre,
+    remplace lieu et date calculés : c'est le **contenu d'exemple** d'un modèle
+    (la date imprimée dans son PDF), jamais une donnée de l'app, dont le schéma
+    ne le connaît pas.
     """
     del spec
     sender = letter.get("sender") or {}
@@ -124,12 +131,15 @@ def from_letter(spec: Json, letter: Json, *, today: date) -> Json:
         if (p.get("text") or "").strip()
     ]
     header = {
+        "first_name": first,
+        "last_name": last,
         "full_name": full_name,
         "headline": (sender.get("headline") or "").strip(),
         "phone": (sender.get("phone") or "").strip(),
         "email": (sender.get("email") or "").strip(),
         "address": (sender.get("city") or "").strip(),
     }
+    fixed_date = (letter.get("date_line") or "").strip()
     return {
         "kind": "letter",
         "header": header,
@@ -137,7 +147,7 @@ def from_letter(spec: Json, letter: Json, *, today: date) -> Json:
             "company": (recipient.get("company") or "").strip(),
             "city": (recipient.get("city") or "").strip(),
         },
-        "date_line": place_and_date(sender.get("city"), today),
+        "date_line": fixed_date or place_and_date(sender.get("city"), today),
         "subject": explicit_subject(letter.get("subject")),
         "greeting": (letter.get("greeting") or DEFAULT_GREETING).strip(),
         "paragraphs": paragraphs,
@@ -146,6 +156,8 @@ def from_letter(spec: Json, letter: Json, *, today: date) -> Json:
         "sections": [],
         "paths": {
             "header": {
+                "first_name": "sender.first_name",
+                "last_name": "sender.last_name",
                 "full_name": "sender.full_name",
                 "headline": "sender.headline",
                 "phone": "sender.phone",

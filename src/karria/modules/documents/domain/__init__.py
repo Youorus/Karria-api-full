@@ -26,6 +26,11 @@ from karria.modules.documents.domain.palette import (
     primary_color_of,
     recolor_spec,
 )
+from karria.modules.documents.domain.plain_letter import (
+    LETTER_STYLES,
+    letter_style_served,
+    plain_letter_spec,
+)
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
     DocumentSend,
@@ -54,6 +59,7 @@ __all__ = [
     "DAILY_SEND_LIMIT",
     "GUEST_RATE_LIMIT",
     "GUEST_RATE_WINDOW_SECONDS",
+    "LETTER_STYLES",
     "RENDER_MAX_HTML_BYTES",
     "RENDER_RATE_LIMIT",
     "RENDER_RATE_WINDOW_SECONDS",
@@ -93,9 +99,11 @@ __all__ = [
     "ensure_quota",
     "evaluate",
     "from_letter",
+    "letter_style_served",
     "letter_warnings",
     "normalize_address",
     "parse_hex_color",
+    "plain_letter_spec",
     "primary_color_of",
     "recolor_spec",
 ]

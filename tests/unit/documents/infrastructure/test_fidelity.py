@@ -13,6 +13,7 @@ from karria.modules.documents.infrastructure.fidelity import (
     _gauss1d,
     decoration_recall,
     measure,
+    served_families,
     ssim,
     structural,
     tolerant_ssim,
@@ -167,3 +168,45 @@ class TestMesure:
         assert out.words_within_2mm == 0.0
         assert out.median_shift_mm == pytest.approx(3.0, abs=0.05)
         assert out.decoration == 0.0
+
+
+class TestSubstitutionsDeclarees:
+    """ADR-0036 : une remplaçante déclarée n'est pas une infidélité de police."""
+
+    def test_le_rapport_de_polices_devient_une_carte_de_familles(self) -> None:
+        report = [
+            {"source": "TTCommonsPro-Rg", "family": "Barlow", "origin": "substitute"},
+            {"source": "ABCDEF+TheSeasons-Bd", "family": "Red Hat Display"},
+            {"source": "", "family": "x"},
+            {"family": "sans source"},
+        ]
+        assert served_families(report) == {"ttcommonspro": "barlow", "theseasons": "red"}
+
+    def test_l_appariement_juge_la_famille_servie_quand_la_carte_la_donne(self) -> None:
+        src = [
+            {
+                "t": "jean",
+                "cx": 10.0,
+                "cy": 10.0,
+                "font": "ttcommonspro",
+                "size": 12.0,
+                "color": "#000000",
+            }
+        ]
+        ren = [
+            {
+                "t": "jean",
+                "cx": 10.0,
+                "cy": 10.0,
+                "font": "barlow",
+                "size": 12.0,
+                "color": "#000000",
+            }
+        ]
+        assert structural(src, ren)["font"] == 0.0
+        assert structural(src, ren, {"ttcommonspro": "barlow"})["font"] == 1.0
+        assert structural(src, ren, {"autre": "barlow"})["font"] == 0.0
+
+    def test_la_mesure_accepte_la_carte(self) -> None:
+        page = _page()
+        assert measure(page, page, font_map={"helvetica": "helvetica"}).font_match == 1.0

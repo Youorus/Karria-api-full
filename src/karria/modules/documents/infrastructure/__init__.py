@@ -3,6 +3,7 @@
 from karria.modules.documents.infrastructure.engine import KarriaDocumentEngine
 from karria.modules.documents.infrastructure.fonts import FontLibrary
 from karria.modules.documents.infrastructure.gotenberg import GotenbergClient
+from karria.modules.documents.infrastructure.letter_analyzer import LetterLineLabeler
 from karria.modules.documents.infrastructure.llm import LlmAtsExplainer, VisionLineLabeler
 from karria.modules.documents.infrastructure.logos import StorageLogoFetcher
 from karria.modules.documents.infrastructure.mail import MailDocumentMailer
@@ -18,6 +19,7 @@ __all__ = [
     "FontLibrary",
     "GotenbergClient",
     "KarriaDocumentEngine",
+    "LetterLineLabeler",
     "LlmAtsExplainer",
     "MailDocumentMailer",
     "ProcrastinateTemplateJobs",

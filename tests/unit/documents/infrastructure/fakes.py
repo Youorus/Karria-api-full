@@ -595,3 +595,147 @@ def cv_font_set() -> Any:
             FontFile("Testa", 700, False, fonts[BOLD]),
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Une lettre appariée complète (ADR-0036)
+# ---------------------------------------------------------------------------
+
+
+def letter_spec_testa() -> Any:
+    """La lettre sobre, servie en Testa (les polices de test) : une spécification de lettre fixe."""
+    from karria.modules.documents.domain.plain_letter import plain_letter_spec  # noqa: PLC0415
+
+    spec = plain_letter_spec()
+    ratio = 1.15  # Testa : ascendante 900, descendante −250, pour 1 000
+    for st in spec["styles"].values():
+        st["family"] = "Testa"
+        st["box_h_mm"] = round(float(st["size_pt"]) * ratio * 25.4 / 72, 3)
+    spec["fonts"] = [
+        {"family": "Testa", "weight": 400, "italic": False},
+        {"family": "Testa", "weight": 700, "italic": False},
+    ]
+    return spec
+
+
+#: Le rôle (et le paragraphe) de chaque ligne de la lettre de test, par son texte.
+LETTER_ROLES: dict[str, tuple[str, int]] = {
+    "AWA DIALLO": ("sender_name", 0),
+    "Vendeuse": ("sender_headline", 0),
+    "06 12 34 56 78": ("sender_contact", 0),
+    "awa@mail.fr": ("sender_contact", 0),
+    "Montreuil": ("sender_contact", 0),
+    "Acme": ("recipient_name", 0),
+    "Lyon": ("recipient_address", 0),
+    "Montreuil, le 5 novembre 2026": ("date_line", 0),
+    "Objet : Candidature au poste de vendeuse": ("subject", 0),
+    "Madame, Monsieur,": ("greeting", 0),
+    "Je vous prie de croire, Madame, Monsieur,": ("closing", 0),
+    "en mes salutations distinguees.": ("closing", 0),
+    "Awa Diallo": ("signature", 0),
+    "Mentions legales du modele": ("other", 0),
+}
+#: Sans « a » ni chiffre : pdfium rend ces glyphes de la police de test avec une
+#: chasse nulle, et le mesureur ne le sait pas.
+_WORDS = ("vente", "conseil", "clients", "poste", "equipe", "sourire", "rigueur", "ecoute")
+_LETTER_LEFT, _LETTER_RIGHT = 20.0, 190.0
+#: Blanc minimal entre deux mots d'une ligne justifiée (mm) : bien sous le seuil
+#: au-delà duquel `pdf_reader` ouvre une nouvelle ligne (1,5 × le corps).
+_MIN_GAP_MM = 1.5
+_paragraph_lines: list[list[list[str]]] | None = None
+
+
+def _measurer(data: bytes) -> Any:
+    from karria.modules.documents.infrastructure.fonts import FontMeasurer  # noqa: PLC0415
+
+    return FontMeasurer(data)
+
+
+def _letter_paragraphs() -> list[list[list[str]]]:
+    """Trois paragraphes (3, 2 et 1 lignes) de mots du jeu, chaque ligne remplie
+    jusqu'à la marge droite au blanc minimal — la dernière de chaque paragraphe
+    s'arrête à la moitié."""
+    global _paragraph_lines  # noqa: PLW0603 - un seul calcul par processus
+    if _paragraph_lines is not None:
+        return _paragraph_lines
+    reg = _measurer(cv_fonts()[REGULAR])
+    width = _LETTER_RIGHT - _LETTER_LEFT
+    out: list[list[list[str]]] = []
+    k = 0
+    for lines in (3, 2, 1):
+        para: list[list[str]] = []
+        for i in range(lines):
+            line: list[str] = []
+            limit = width if i < lines - 1 else width / 2
+            while True:
+                word = f"{_WORDS[k % len(_WORDS)]}{'bcdefghklm'[k // len(_WORDS) % 10]}"
+                candidate = [*line, word]
+                natural = sum(reg.width_pt(w, 10) / MM for w in candidate)
+                if line and natural + (len(candidate) - 1) * _MIN_GAP_MM > limit:
+                    break
+                line.append(word)
+                k += 1
+            para.append(line)
+        out.append(para)
+    _paragraph_lines = out
+    return out
+
+
+def letter_template_pdf() -> bytes:
+    """Le modèle de lettre : expéditeur à gauche, destinataire et date à droite, filet,
+    objet, civilité, trois paragraphes justifiés (sauf la dernière ligne de chacun),
+    formule sur deux lignes, signature, et une mention hors lettre."""
+    fonts = cv_fonts()
+    reg, bold = _measurer(fonts[REGULAR]), _measurer(fonts[BOLD])
+    b = PdfBuilder(embedded=fonts)
+    b.text("AWA DIALLO", _LETTER_LEFT, 25, size=24, font=BOLD)
+    b.text("Vendeuse", _LETTER_LEFT, 32, size=11, font=REGULAR, color="#444444")
+    for i, text in enumerate(("06 12 34 56 78", "awa@mail.fr", "Montreuil")):
+        b.text(text, _LETTER_LEFT, 40 + 5 * i, size=10, font=REGULAR)
+    b.line(_LETTER_LEFT, 55, _LETTER_RIGHT, 55, stroke="#999999", stroke_pt=0.5)
+
+    def right(text: str, baseline: float, size: float, font: str, m: Any) -> None:
+        b.text(text, _LETTER_RIGHT - m.width_pt(text, size) / MM, baseline, size=size, font=font)
+
+    right("Acme", 62, 11, BOLD, bold)
+    right("Lyon", 67, 11, REGULAR, reg)
+    right("Montreuil, le 5 novembre 2026", 76, 11, REGULAR, reg)
+    b.text("Objet : Candidature au poste de vendeuse", _LETTER_LEFT, 88, size=11, font=BOLD)
+    b.text("Madame, Monsieur,", _LETTER_LEFT, 98, size=11, font=REGULAR)
+    y = 108.0
+    for para in _letter_paragraphs():
+        for i, words in enumerate(para):
+            last = i == len(para) - 1
+            if last:
+                b.text(" ".join(words), _LETTER_LEFT, y, size=10, font=REGULAR)
+            else:
+                natural = [reg.width_pt(w, 10) / MM for w in words]
+                gap = (_LETTER_RIGHT - _LETTER_LEFT - sum(natural)) / (len(words) - 1)
+                x = _LETTER_LEFT
+                for w, nw in zip(words, natural, strict=True):
+                    b.text(w, x, y, size=10, font=REGULAR)
+                    x += nw + gap
+            y += 5.0
+        y += 5.0
+    b.text("Je vous prie de croire, Madame, Monsieur,", _LETTER_LEFT, y, size=10, font=REGULAR)
+    b.text("en mes salutations distinguees.", _LETTER_LEFT, y + 5, size=10, font=REGULAR)
+    b.text("Awa Diallo", _LETTER_LEFT, y + 18, size=10, font=REGULAR)
+    b.text("Mentions legales du modele", _LETTER_LEFT, 290, size=6, font=REGULAR, color="#999999")
+    return b.to_bytes(producer="Canva")
+
+
+def letter_labels_for(lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """Les étiquettes que rendrait le modèle de vision pour la lettre de test."""
+    paragraphs = _letter_paragraphs()
+    words_to_para = {w: n for n, para in enumerate(paragraphs, 1) for line in para for w in line}
+    out = []
+    for line in lines:
+        text = line["text"]
+        if text in LETTER_ROLES:
+            role, _ = LETTER_ROLES[text]
+            out.append({"line": line["id"], "role": role, "paragraph": 0})
+            continue
+        first = text.split()[0] if text.split() else ""
+        if first in words_to_para:
+            out.append({"line": line["id"], "role": "paragraph", "paragraph": words_to_para[first]})
+    return {"lines": out}

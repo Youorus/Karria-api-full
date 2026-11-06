@@ -15,6 +15,7 @@ from documents.infrastructure.fakes import (
     cv_fonts,
     cv_template_pdf,
     labels_for,
+    letter_spec_testa,
     png,
 )
 from documents.infrastructure.test_engine import FakeGotenberg, FakeLabeler
@@ -103,8 +104,9 @@ class TestRenduHtml:
         assert 'src="https://storage.karria.fr/media/p.jpg?s=1"' in out.html
         assert out.pages == 1
 
-    async def test_la_lettre_prend_le_moteur_de_lettre_et_le_logo_en_data(self, spec: Json) -> None:
+    async def test_la_lettre_prend_le_moteur_de_lettre_et_le_logo_en_data(self) -> None:
         engine, _, _ = _engine()
+        spec = letter_spec_testa()
         view = from_letter(spec, LETTER, today=date(2026, 11, 5))
         out = await engine.render_html(
             spec, view, assets={"logo.png": png()}, photo_url=None, anchored=True
@@ -120,11 +122,10 @@ class TestRenduHtml:
 
 
 class TestLettreImprimee:
-    async def test_le_pdf_d_une_lettre_passe_par_gotenberg_avec_le_logo_joint(
-        self, spec: Json
-    ) -> None:
+    async def test_le_pdf_d_une_lettre_passe_par_gotenberg_avec_le_logo_joint(self) -> None:
         pdf = blank_pdf(title="fit k=1 f=1 pages=1")
         engine, _, gotenberg = _engine(pdf)
+        spec = letter_spec_testa()
         view = from_letter(spec, LETTER, today=date(2026, 11, 5))
         out = await engine.render_pdf(spec, view, assets={"logo.png": png()}, photo=None)
         html, files = gotenberg.html[0]
@@ -134,8 +135,9 @@ class TestLettreImprimee:
         assert "Testa-400.ttf" in files
         assert out.fit == Fit()
 
-    async def test_le_docx_d_une_lettre_prend_le_moteur_de_lettre(self, spec: Json) -> None:
+    async def test_le_docx_d_une_lettre_prend_le_moteur_de_lettre(self) -> None:
         engine, _, _ = _engine()
+        spec = letter_spec_testa()
         view = from_letter(spec, LETTER, today=date(2026, 11, 5))
         data = await engine.render_docx(spec, view, assets={}, photo=None, fit=Fit())
         assert data.startswith(b"PK")
