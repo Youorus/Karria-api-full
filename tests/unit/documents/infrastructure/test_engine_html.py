@@ -17,7 +17,7 @@ from documents.infrastructure.fakes import (
     labels_for,
     png,
 )
-from documents.infrastructure.test_engine import FakeGotenberg, FakeLabeler
+from documents.infrastructure.test_engine import FakeGotenberg, FakePlanner
 from karria.modules.documents.domain.letter import from_letter
 from karria.modules.documents.domain.templates import Fit
 from karria.modules.documents.domain.view import from_cv
@@ -81,7 +81,7 @@ def spec(built: tuple) -> Json:
 
 def _engine(pdf: bytes = b"") -> tuple[KarriaDocumentEngine, ServedLibrary, FakeGotenberg]:
     library, gotenberg = ServedLibrary(), FakeGotenberg(pdf)
-    engine = KarriaDocumentEngine(library, FakeLabeler(), gotenberg)  # type: ignore[arg-type]
+    engine = KarriaDocumentEngine(library, FakePlanner(), gotenberg)  # type: ignore[arg-type]
     return engine, library, gotenberg
 
 

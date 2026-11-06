@@ -14,6 +14,9 @@ Contrat
 - `render_html` (ADR-0029) rend la page de l'atelier : polices par URL
   publique stable, pictogrammes et logo en `data:`, photo par l'URL reçue,
   ancres `data-chemin`, nombre de pages estimé sans navigateur.
+- `analyze` (ADR-0037) fait tourner la boucle d'ingestion bornée : le plan du
+  modèle de vision, l'assemblage, le rendu de l'exemple et sa mesure, une
+  passe de correction au plus ; la meilleure passe est rendue avec son journal.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from karria.modules.documents.application.ports import (
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.templates import Fit
-from karria.modules.documents.infrastructure.analyzer import LineLabeler, TemplateAnalyzer
+from karria.modules.documents.infrastructure.analyzer import TemplateAnalyzer
 from karria.modules.documents.infrastructure.ats_reader import read_docx, read_pdf
 from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer
 from karria.modules.documents.infrastructure.fidelity import measure
@@ -42,6 +45,8 @@ from karria.modules.documents.infrastructure.html_renderer import (
     estimate_pages,
     parse_fit,
 )
+from karria.modules.documents.infrastructure.ingestion_loop import IngestionLoop
+from karria.modules.documents.infrastructure.layout_planner import LayoutPlanner
 from karria.modules.documents.infrastructure.letter_renderer import (
     LOGO_FILE,
     LetterDocxRenderer,
@@ -55,10 +60,11 @@ class KarriaDocumentEngine:
     """Le moteur de documents : PDF par Chromium (Gotenberg), DOCX par python-docx."""
 
     def __init__(
-        self, library: FontLibrary, labeler: LineLabeler, gotenberg: GotenbergClient
+        self, library: FontLibrary, planner: LayoutPlanner, gotenberg: GotenbergClient
     ) -> None:
         self._library = library
-        self._analyzer = TemplateAnalyzer(library, labeler)
+        self._planner = planner
+        self._analyzer = TemplateAnalyzer(library, planner)
         self._gotenberg = gotenberg
 
     async def fonts(self, spec: dict[str, Any]) -> FontSet:
@@ -71,7 +77,11 @@ class KarriaDocumentEngine:
         return FontSet(files)
 
     async def analyze(self, pdf: bytes) -> Analysis:
-        analyzed = await self._analyzer.analyze(pdf)
+        """L'analyse d'un PDF de modèle : la boucle bornée plan → rendu → mesure (ADR-0037)."""
+        loop = IngestionLoop(
+            self._analyzer, self._planner, render=self.render_pdf, measure=self.measure
+        )
+        analyzed = await loop.run(pdf)
         return Analysis(
             spec=analyzed.spec,
             sample=analyzed.sample,
@@ -82,6 +92,7 @@ class KarriaDocumentEngine:
             ],
             fonts_report=analyzed.fonts_report,
             unlabeled=analyzed.unlabeled,
+            passes=analyzed.passes,
         )
 
     async def render_pdf(

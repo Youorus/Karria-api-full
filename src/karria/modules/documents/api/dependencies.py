@@ -73,7 +73,7 @@ from karria.modules.documents.infrastructure import (
     TortoiseSendRepository,
     TortoiseTemplateRepository,
     TortoiseUserTemplateRepository,
-    VisionLineLabeler,
+    VisionLayoutPlanner,
 )
 from karria.shared.auth import CurrentPrincipalDep, Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
@@ -227,8 +227,8 @@ def build_engine(settings: Settings, storage: ObjectStorage) -> DocumentEngine:
         settings.documents.gotenberg_url,
         timeout_seconds=settings.documents.gotenberg_timeout_seconds,
     )
-    labeler = VisionLineLabeler(build_language_model(settings))
-    return KarriaDocumentEngine(FontLibrary(storage), labeler, gotenberg)
+    planner = VisionLayoutPlanner(build_language_model(settings))
+    return KarriaDocumentEngine(FontLibrary(storage), planner, gotenberg)
 
 
 def get_engine(settings: SettingsDep, storage: ObjectStorageDep) -> DocumentEngine:

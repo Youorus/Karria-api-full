@@ -733,22 +733,36 @@ class DocxRenderer:
             spacer.paragraph_format.space_after = Pt(0)
             spacer.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
             spacer.paragraph_format.line_spacing = Mm(spacer_h)
-            for d in self.spec["page_decorations"]:
-                if d.get("anchor") == "band" and d["band"] == bi - 1:
-                    spacer.add_run()._r.append(
-                        anchored_shape(
-                            x_mm=max(d["x_mm"], 0.0),
-                            y_mm=d["dy_mm"] * self.k,
-                            w_mm=d["w_mm"] + min(d["x_mm"], 0.0),
-                            h_mm=d["h_mm"],
-                            relative_h="page",
-                            relative_v="paragraph",
-                            kind=d["kind"],
-                            fill=d.get("fill"),
-                            stroke=d.get("stroke"),
-                            stroke_pt=float(d.get("stroke_pt") or 0.75),
-                        )
+            # Les filets qui courent le long d'une bande ou de tout le contenu
+            # (frise, filet de colonne) gardent ici leur hauteur mesurée : Word
+            # n'étire pas une forme avec un tableau (PLUS-TARD).
+            shapes = [
+                (d, d["dy_mm"] * self.k)
+                for d in self.spec["page_decorations"]
+                if d.get("anchor") == "band" and d["band"] == bi - 1
+            ]
+            shapes.extend((d, gap_before + d["dy_mm"]) for d in band["spec"].get("decorations", []))
+            if bi == 0:
+                shapes.extend(
+                    (d, gap_before + d["dy_mm"])
+                    for d in self.spec["page_decorations"]
+                    if d.get("anchor") == "flow"
+                )
+            for d, y_mm in shapes:
+                spacer.add_run()._r.append(
+                    anchored_shape(
+                        x_mm=max(d["x_mm"], 0.0),
+                        y_mm=y_mm,
+                        w_mm=d["w_mm"] + min(d["x_mm"], 0.0),
+                        h_mm=d["h_mm"],
+                        relative_h="page",
+                        relative_v="paragraph",
+                        kind=d["kind"],
+                        fill=d.get("fill"),
+                        stroke=d.get("stroke"),
+                        stroke_pt=float(d.get("stroke_pt") or 0.75),
                     )
+                )
             table = self.doc.add_table(rows=1, cols=len(widths))
             no_borders(table)
             table.alignment = WD_TABLE_ALIGNMENT.LEFT
@@ -781,35 +795,34 @@ class DocxRenderer:
         """Une rubrique : titre, éléments, puces, frise et pastilles."""
         kind = sec["kind"]
         margin = 0.0 if first else s["margin_top_mm"]
-        title = self.para(
-            cell, "section_title", sec["title"], before_mm=margin, indent_mm=s["title_dx_mm"]
-        )
-        if first:
-            title.paragraph_format.space_before = Mm(lift)
-        if s.get("title_w_mm"):
-            title.paragraph_format.right_indent = Mm(
-                max(0.0, col_w - s["title_dx_mm"] - s["title_w_mm"])
+        untitled = bool(s.get("untitled"))
+        title: Paragraph | None = None
+        # Sans titre, l'écart de la rubrique passe sur son premier paragraphe.
+        pending_before = (lift if first else margin) if untitled else 0.0
+        if not untitled:
+            title = self.para(
+                cell, "section_title", sec["title"], before_mm=margin, indent_mm=s["title_dx_mm"]
             )
-        if s.get("title_pitch_mm"):
-            # Interligne exact : l'excédent passe au-dessus de chaque ligne,
-            # la première ligne garde sa place en rendant cet excédent sur l'espace avant.
-            extra = s["title_pitch_mm"] - self.pitch(self.styles["section_title"])
-            title.paragraph_format.line_spacing = Mm(s["title_pitch_mm"])
-            before = title.paragraph_format.space_before
-            before_mm = before / EMU_PER_MM if isinstance(before, int) else 0.0
-            title.paragraph_format.space_before = Mm(max(0.0, before_mm - extra))
-        for d in s["decorations"]:
-            if d["anchor"] == "section":
-                height = d["h_mm"]
-                if d.get("stretch"):
-                    height = max(
-                        d["h_mm"],
-                        estimate(self.styles, s, sec, col_w, self.fonts)
-                        - s["margin_top_mm"]
-                        - d["dy_mm"],
-                    )
-                self.ornament(title, d, d["dx_mm"], d["dy_mm"] + self.lead("section_title"), height)
+            if first:
+                title.paragraph_format.space_before = Mm(lift)
+            if s.get("title_w_mm"):
+                title.paragraph_format.right_indent = Mm(
+                    max(0.0, col_w - s["title_dx_mm"] - s["title_w_mm"])
+                )
+            if s.get("title_pitch_mm"):
+                # Interligne exact : l'excédent passe au-dessus de chaque ligne,
+                # la première ligne garde sa place en rendant cet excédent sur l'espace avant.
+                extra = s["title_pitch_mm"] - self.pitch(self.styles["section_title"])
+                title.paragraph_format.line_spacing = Mm(s["title_pitch_mm"])
+                before = title.paragraph_format.space_before
+                before_mm = before / EMU_PER_MM if isinstance(before, int) else 0.0
+                title.paragraph_format.space_before = Mm(max(0.0, before_mm - extra))
+        section_shapes = [d for d in s["decorations"] if d["anchor"] == "section"]
+        if title is not None:
+            self.section_ornaments(title, s, sec, col_w, section_shapes)
+            section_shapes = []
         slots, order = extra_contact_slots(s, sec)
+        side = s.get("side")
         for i, item in enumerate(sec["items"]):
             gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
             if i and kind in LIST_KINDS and gap < 1.0:
@@ -817,6 +830,30 @@ class DocxRenderer:
             first_row = True
             item_first: Paragraph | None = None
             item_paras: list[tuple[Paragraph, str]] = []
+            if side:
+                # La colonne latérale d'une frise (entreprise, dates) : au-dessus
+                # du contenu, dans la marge de gauche, alignée comme dans le modèle.
+                for sl in side["slots"]:
+                    for role in sl["roles"]:
+                        val = item.get(role)
+                        vals = val if isinstance(val, list) else ([val] if val else [])
+                        for v in vals:
+                            before = (gap if first_row else sl["margin_top_mm"]) + pending_before
+                            first_row, pending_before = False, 0.0
+                            p = self.para(
+                                cell,
+                                style_key(self.styles, kind, role),
+                                v,
+                                before_mm=before,
+                                indent_mm=side["dx_mm"],
+                                align="right" if side["align"] == "right" else "left",
+                            )
+                            p.paragraph_format.right_indent = Mm(
+                                max(0.0, col_w - side["dx_mm"] - side["w_mm"])
+                            )
+                            if item_first is None:
+                                item_first = p
+                            item_paras.append((p, role))
             for key in order:
                 sl = slots[key]
                 roles = sl["roles"]
@@ -836,8 +873,8 @@ class DocxRenderer:
                     if pairs:
                         rows.append((pairs, sl["margin_top_mm"]))
                 for vals, m in rows:
-                    before = gap if first_row else m
-                    first_row = False
+                    before = (gap if first_row else m) + pending_before
+                    first_row, pending_before = False, 0.0
                     role0 = vals[0][0]
                     key0 = style_key(self.styles, kind, role0)
                     if len(vals) == 1:
@@ -850,16 +887,36 @@ class DocxRenderer:
                         item_first = p
                     item_paras.append((p, role0))
             if item_first is not None:
+                if section_shapes:
+                    self.section_ornaments(item_first, s, sec, col_w, section_shapes)
+                    section_shapes = []
                 self.item_ornaments(
                     s, item_paras, last_item=i == len(sec["items"]) - 1, col_w=col_w
                 )
         last = cell.paragraphs[-1] if cell.paragraphs else title
+        if last is None:
+            return
         for d in s["decorations"]:
             if d["anchor"] == "after":
                 # Sous la rubrique (filet de séparation) : sous la dernière ligne
                 # du dernier paragraphe, à l'écart mesuré.
                 _, lines, pitch, _ = self.para_box(last, col_w)
                 self.ornament(last, d, d["dx_mm"], lines * pitch + d["dy_mm"] * self.k, d["h_mm"])
+
+    def section_ornaments(
+        self, anchor: Paragraph, s: Json, sec: Json, col_w: float, shapes: list[Json]
+    ) -> None:
+        """Les filets et cadres propres à la rubrique, ancrés à son titre (ou à son premier paragraphe)."""
+        for d in shapes:
+            height = d["h_mm"]
+            if d.get("stretch"):
+                height = max(
+                    d["h_mm"],
+                    estimate(self.styles, s, sec, col_w, self.fonts)
+                    - s["margin_top_mm"]
+                    - d["dy_mm"],
+                )
+            self.ornament(anchor, d, d["dx_mm"], d["dy_mm"] + self.lead("section_title"), height)
 
     def list_para(
         self, cell: _Cell, s: Json, sl: Json, key0: str, role0: str, *, text: str, before: float

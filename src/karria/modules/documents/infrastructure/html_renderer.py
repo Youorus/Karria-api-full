@@ -291,17 +291,20 @@ def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: F
     kind = sec["kind"]
     tst = styles["section_title"]
     title_lines = max(1, -(-fonts.width_mm(sec["title"], tst) // (s.get("title_w_mm") or col_w)))
-    h = s["margin_top_mm"] + lh(tst) * title_lines
+    h = s["margin_top_mm"] + (0.0 if s.get("untitled") else lh(tst) * title_lines)
     slots = {sl["key"]: sl for sl in s["slots"]}
+    side = s.get("side")
+    side_slots = [(sl, side["w_mm"]) for sl in side["slots"]] if side else []
     for i, item in enumerate(sec["items"]):
         h += s["first_gap_mm"] if i == 0 else max(s["item_gap_mm"], 1.0)
-        for key in s["slot_order"]:
-            sl = slots[key]
+        rows = [(slots[key], col_w - slots[key]["dx_mm"]) for key in s["slot_order"]]
+        # La colonne latérale d'une frise est comptée en plus : une estimation
+        # haute, qui garde la page estimée du bon côté.
+        for sl, width in rows + side_slots:
             for role in sl["roles"]:
                 val = item.get(role)
                 vals = val if isinstance(val, list) else ([val] if val else [])
                 st = styles[style_key(styles, kind, role)]
-                width = col_w - sl["dx_mm"]
                 for v in vals:
                     lines = max(1, -(-fonts.width_mm(v, st) // max(width, 10)))
                     h += sl["margin_top_mm"] + lh(st) * lines
@@ -399,7 +402,10 @@ class HtmlRenderer:
         """Une rubrique : titre, éléments, puces, ornements ancrés."""
         kind = sec["kind"]
         tst = self.styles["section_title"]
-        margin = s["margin_top_mm"] - half(tst)
+        untitled = bool(s.get("untitled"))
+        # Sans titre (un profil, des coordonnées sous la photo) : la rubrique
+        # commence à sa première ligne, sans demi-blanc de titre à reprendre.
+        margin = s["margin_top_mm"] - (0.0 if untitled else half(tst))
         tw = s.get("title_w_mm") or col_w
         out = [f'<section style="position:relative;margin-top:calc({margin:.2f}mm*var(--k))">']
         nowrap = "" if s.get("title_w_mm") else ";white-space:nowrap"
@@ -410,13 +416,20 @@ class HtmlRenderer:
             # la première ligne et la suite de la rubrique restent à leur place.
             extra_lead = (s["title_pitch_mm"] - lh(tst)) / 2
             nowrap += f";line-height:{s['title_pitch_mm']:.3f}mm;top:{-extra_lead:.2f}mm;margin-bottom:{-2 * extra_lead:.2f}mm"
-        out.append(
-            self.text(
-                "section_title", sec["title"], margin=0, dx=s["title_dx_mm"], width=tw, extra=nowrap
+        if not untitled:
+            out.append(
+                self.text(
+                    "section_title",
+                    sec["title"],
+                    margin=0,
+                    dx=s["title_dx_mm"],
+                    width=tw,
+                    extra=nowrap,
+                )
+                + "</div>"
             )
-            + "</div>"
-        )
-        prev_half = half(tst)
+        prev_half = 0.0 if untitled else half(tst)
+        side = s.get("side")
         slots, order = extra_contact_slots(s, sec)
         for i, item in enumerate(sec["items"]):
             gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
@@ -454,8 +467,15 @@ class HtmlRenderer:
                 continue
             first_st = self.styles[style_key(self.styles, kind, rows[0][1][0][0])]
             item_margin = gap - prev_half - half(first_st)
+            # Avec une colonne latérale (frise), l'élément est une rangée : la
+            # colonne latérale, une gouttière, le contenu ; sa hauteur est celle
+            # du plus haut des deux, comme dans la source.
+            origin = side["dx_mm"] if side else 0.0
+            flex = (
+                f"display:flex;align-items:flex-start;margin-left:{origin:.2f}mm;" if side else ""
+            )
             out.append(
-                f'<div class="item" style="position:relative;margin-top:calc({item_margin:.2f}mm*var(--k))">'
+                f'<div class="item" style="position:relative;{flex}margin-top:calc({item_margin:.2f}mm*var(--k))">'
             )
             last_item = i == len(sec["items"]) - 1
             for d in s["decorations"]:
@@ -469,10 +489,26 @@ class HtmlRenderer:
                     inset = d["last_bottom_inset_mm"]
                 extra = f"height:auto;bottom:{inset:.2f}mm;" if d.get("stretch") else ""
                 out.append(
-                    f'<div style="{deco_css(d, d["dx_mm"], d["dy_mm"] + half(first_st), extra)}"></div>'
+                    f'<div style="{deco_css(d, d["dx_mm"] - origin, d["dy_mm"] + half(first_st), extra)}"></div>'
                 )
             row_decor = {d["ref_role"]: d for d in s["decorations"] if d.get("attach") == "row"}
             done_roles: set[str] = set()
+            if side:
+                out.append(
+                    self.side_block(
+                        sec,
+                        i,
+                        item,
+                        side=side,
+                        first_st=first_st,
+                        row_decor=row_decor,
+                        done=done_roles,
+                    )
+                )
+                out.append(
+                    f'<div style="flex:none;width:{-origin - side["w_mm"]:.2f}mm"></div>'
+                    '<div class="main" style="flex:1 1 0;min-width:0;position:relative">'
+                )
             last_half = half(first_st)
             for r_i, (sl, vals, m) in enumerate(rows):
                 key0 = style_key(self.styles, kind, vals[0][0])
@@ -494,18 +530,21 @@ class HtmlRenderer:
                         )
                         + self.marker(s, role, st0)
                         + self.icon(s, kind, role, st0)
-                        + self.row_ornament(row_decor, done_roles, role, sl)
+                        + self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
                         + "</div>"
                     )
                 else:
                     # Une pastille de frise peut marquer un champ d'une ligne
                     # composée (« Poste | 2016 ») : elle se pose dans cette ligne.
                     ornament = "".join(
-                        self.row_ornament(row_decor, done_roles, role, sl) for role, _, _ in vals
+                        self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
+                        for role, _, _ in vals
                     )
                     row = self.joined_row(kind, sl, vals, margin=margin_row, width=width, st0=st0)
                     out.append(row[: -len("</div>")] + ornament + "</div>")
                 last_half = half(st0)
+            if side:
+                out.append("</div>")
             out.append("</div>")
             prev_half = last_half
         for d in s["decorations"]:
@@ -550,8 +589,11 @@ class HtmlRenderer:
         )
 
     @staticmethod
-    def row_ornament(row_decor: dict[str, Json], done: set[str], role: str, sl: Json) -> str:
-        """Une pastille de frise centrée sur la ligne qu'elle marque."""
+    def row_ornament(row_decor: dict[str, Json], done: set[str], role: str, origin: float) -> str:
+        """Une pastille de frise centrée sur la ligne qu'elle marque.
+
+        `origin` : l'abscisse (depuis la colonne) du bloc de texte qui la porte.
+        """
         if role not in row_decor or role in done:
             return ""
         d = row_decor[role]
@@ -559,9 +601,61 @@ class HtmlRenderer:
         shift = d["h_mm"] / 2 - d["center_offset_mm"]
         return (
             '<div style="'
-            + deco_css(d, d["dx_mm"] - sl["dx_mm"], 0, f"top:calc(50% - {shift:.2f}mm);")
+            + deco_css(d, d["dx_mm"] - origin, 0, f"top:calc(50% - {shift:.2f}mm);")
             + '"></div>'
         )
+
+    def side_block(
+        self,
+        sec: Json,
+        index: int,
+        item: Json,
+        *,
+        side: Json,
+        first_st: Json,
+        row_decor: dict[str, Json],
+        done: set[str],
+    ) -> str:
+        """La colonne latérale d'un élément de frise (entreprise, dates), empilée et alignée."""
+        kind = sec["kind"]
+        rows: list[tuple[str, str, str | None, float]] = []
+        for sl in side["slots"]:
+            for role in sl["roles"]:
+                val = item.get(role)
+                vals = val if isinstance(val, list) else ([val] if val else [])
+                rows.extend(
+                    (role, v, item_path(sec, index, role, j), sl["margin_top_mm"])
+                    for j, v in enumerate(vals)
+                )
+        if not rows:
+            return f'<div class="side" style="flex:none;width:{side["w_mm"]:.2f}mm"></div>'
+        st0 = self.styles[style_key(self.styles, kind, rows[0][0])]
+        top = side["top_offset_mm"] + half(first_st) - half(st0)
+        out = [
+            f'<div class="side" style="flex:none;width:{side["w_mm"]:.2f}mm;margin-top:{top:.2f}mm;'
+            f'text-align:{side["align"]}">'
+        ]
+        last_half = half(st0)
+        for r_i, (role, v, path, m) in enumerate(rows):
+            key = style_key(self.styles, kind, role)
+            st = self.styles[key]
+            margin_row = 0.0 if r_i == 0 else m - last_half - half(st)
+            out.append(
+                self.text(
+                    key,
+                    v,
+                    margin=margin_row,
+                    dx=0.0,
+                    width=side["w_mm"],
+                    align=side["align"],
+                    path=path,
+                )
+                + self.row_ornament(row_decor, done, role, side["dx_mm"])
+                + "</div>"
+            )
+            last_half = half(st)
+        out.append("</div>")
+        return "".join(out)
 
     def joined_row(
         self,
@@ -637,12 +731,24 @@ class HtmlRenderer:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""
         h = self.spec["header"]
         out = [f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>' for d in h["decorations"]]
+        pw = float(self.spec["page"]["width_mm"])
         for e in h["elements"]:
             val = self.view["header"].get(e["field"], "")
             if not val:
                 continue
             st = self.styles[e["style"]]
-            fit_css = self.fit_header_text(val, st, self.header_limit(e, st))
+            cls = f'class="s-{e["style"].replace(".", "-")}"'
+            if self.view.get("sample") and e.get("sample_lines"):
+                # L'exemple du modèle : chaque ligne d'un champ écrit sur
+                # plusieurs lignes reprend sa place exacte dans la source.
+                out.extend(
+                    f'<div {cls} style="position:absolute;left:{sl["x_mm"]}mm;'
+                    f'top:{sl["y_mm"] - half(st):.2f}mm;white-space:nowrap">{esc(sl["text"])}</div>'
+                    for sl in e["sample_lines"]
+                )
+                continue
+            box = e.get("box_w_mm")
+            fit_css = "" if box else self.fit_header_text(val, st, self.header_limit(e, st))
             icon = ""
             if e.get("icon"):
                 ic = e["icon"]
@@ -650,12 +756,24 @@ class HtmlRenderer:
                     f'<img src="{esc(self.url(ic["file"]))}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
                     f'top:{ic["dy_mm"] + half(st):.2f}mm;width:{ic["w_mm"]}mm;height:{ic["h_mm"]}mm">'
                 )
+            align = e.get("align") or "left"
             left = f"left:{e['x_mm']}mm"
-            if e.get("align") == "center":
-                left = f"left:{e['cx_mm']}mm;transform:translateX(-50%)"
+            if align == "center":
+                left = (
+                    f"left:{e['cx_mm'] - box / 2:.2f}mm"
+                    if box
+                    else f"left:{e['cx_mm']}mm;transform:translateX(-50%)"
+                )
+            elif align == "right":
+                left = f"right:{pw - e['rx_mm']:.2f}mm"
+            wrap = (
+                f";width:{box:.2f}mm;white-space:normal;line-height:{e['pitch_mm']:.3f}mm;text-align:{align}"
+                if box
+                else ";white-space:nowrap"
+            )
             out.append(
-                f'<div class="s-{e["style"].replace(".", "-")}"{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
-                f'top:{e["y_mm"] - half(st):.2f}mm;white-space:nowrap{fit_css}">{esc(val)}{icon}</div>'
+                f'<div {cls}{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
+                f'top:{e["y_mm"] - half(st):.2f}mm{wrap}{fit_css}">{esc(val)}{icon}</div>'
             )
         p = h.get("photo")
         if p and self.photo:
@@ -694,8 +812,13 @@ class HtmlRenderer:
                 )
                 prev_right = cspec["x_mm"] + cspec["w_mm"]
             margin = 0.0 if bi == 0 else self.spec["bands"][bi - 1].get("gap_after_mm", 8.0)
+            # Un filet qui court le long de la bande (la ligne d'une frise) s'étire avec elle.
+            band_decor = "".join(
+                f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"], self.stretch_css(d))}"></div>'
+                for d in band["spec"].get("decorations", [])
+            )
             bands_html.append(
-                f'<div class="band" style="display:flex;align-items:flex-start;margin-top:calc({margin:.2f}mm*var(--k))">{"".join(cols)}</div>'
+                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;margin-top:calc({margin:.2f}mm*var(--k))">{band_decor}{"".join(cols)}</div>'
             )
             bands_html.extend(
                 f'<div style="position:relative;height:0"><div style="{deco_css(d, d["x_mm"], d["dy_mm"])}"></div></div>'
@@ -708,18 +831,37 @@ class HtmlRenderer:
             if d.get("anchor") == "page"
         )
         tst = self.styles["section_title"]
-        first_margin = (
-            self.spec["bands"][0]["columns"][0]["sections"][0]["margin_top_mm"]
-            if self.spec["bands"][0]["columns"][0]["sections"]
-            else 0.0
+        # Le haut du flux : la première bande commence à sa rubrique la plus
+        # haute, quelle que soit sa colonne (les autres gardent leur écart mesuré).
+        first_margin = min(
+            (
+                c["sections"][0]["margin_top_mm"]
+                for c in self.spec["bands"][0]["columns"]
+                if c["sections"]
+            ),
+            default=0.0,
         )
         top = self.spec["first_band_top_mm"] - half(tst) - (first_margin - half(tst))
+        # Un filet qui court le long de tout le contenu s'étire avec lui.
+        shift = self.spec["first_band_top_mm"] - top
+        flows = "".join(
+            f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"] + shift, self.stretch_css(d))}"></div>'
+            for d in self.spec["page_decorations"]
+            if d.get("anchor") == "flow"
+        )
         fit = fit_script(self.spec, live=self.anchored)
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
-            f"{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
+            f"{flows}{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
         )
+
+    @staticmethod
+    def stretch_css(d: Json) -> str:
+        """Le CSS qui étire un ornement jusqu'au bas de son conteneur, au retrait mesuré."""
+        if not d.get("stretch"):
+            return ""
+        return f"height:auto;bottom:{d.get('bottom_inset_mm', 0.0):.2f}mm;"
 
 
 def parse_fit(title: str) -> tuple[float, float, int]:

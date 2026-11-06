@@ -158,7 +158,11 @@ def from_cv(spec: Json, cv: Json) -> Json:
             }
         )
     exp_spec = kinds.get("experiences", {})
-    has_subtitle = any("item_subtitle" in slot["roles"] for slot in exp_spec.get("slots", []))
+    # L'entreprise a son emplacement dans le contenu ou dans la colonne latérale d'une frise.
+    exp_slots = list(exp_spec.get("slots", [])) + list(
+        (exp_spec.get("side") or {}).get("slots", [])
+    )
+    has_subtitle = any("item_subtitle" in slot["roles"] for slot in exp_slots)
     sep = separator([exp_spec.get("title_sep", "")])
     items = []
     paths = []
@@ -356,6 +360,24 @@ def from_sample(spec: Json, sample: Json) -> Json:
         entries = grouped(role, [(s["name"], s.get("category")) for s in sample.get(kind) or []])
         if entries:
             out.append({"kind": kind, "items": entries})
+    # Les rubriques libres du modèle (« Réalisations », « Certifications »…),
+    # avec leur titre et leurs éléments tels quels (ADR-0037).
+    for kind, other in (sample.get("others") or {}).items():
+        if kind not in titles:
+            continue
+        entries = [
+            {
+                "item_title": e["title_raw"] or None,
+                "item_subtitle": e["subtitle_raw"] or None,
+                "item_dates": e["dates_raw"] or None,
+                "item_location": e["location"],
+                "bullet": e["bullets"],
+                "item_text": e["description"],
+            }
+            for e in other.get("items") or []
+        ]
+        if entries:
+            out.append({"kind": kind, "items": entries})
     for section in out:
-        section["title"] = titles.get(section["kind"], TITLES_FR[section["kind"]])
+        section["title"] = titles.get(section["kind"], TITLES_FR.get(section["kind"], ""))
     return {"header": header, "sections": out, "sample": True}

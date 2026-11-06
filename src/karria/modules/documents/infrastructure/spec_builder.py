@@ -47,6 +47,14 @@ MM: Final = 72 / 25.4
 SPEC_VERSION: Final = 1
 ITEM_SECTIONS: Final = frozenset({"experiences", "educations", "projects", "references"})
 LIST_ROLES: Final = frozenset({"skill", "language", "interest"})
+#: Préfixe des rubriques libres (« Réalisations », « Certifications »…), gardées
+#: avec leur titre : `other:<slug>` (ADR-0037).
+OTHER_PREFIX: Final = "other:"
+
+
+def is_item_kind(kind: str) -> bool:
+    """Une rubrique dont les éléments se répètent (expériences, formations, rubrique libre)."""
+    return kind in ITEM_SECTIONS or kind.startswith(OTHER_PREFIX)
 
 
 def med(values: list[float] | list[float | None], default: float = 0.0) -> float:
@@ -301,22 +309,37 @@ class SpecBuilder:
     def section_spec(  # noqa: PLR0912, PLR0915 - mesure d'un gabarit, emplacement par emplacement
         self, s: Json, col_x: float, prev_bottom: float, styles: dict[str, Json], sample: Json
     ) -> Json:
-        """Le gabarit d'une rubrique : titre, emplacements, puces, décor."""
+        """Le gabarit d'une rubrique : titre, emplacements, puces, décor, colonne latérale.
+
+        `s["title"]` peut être vide (rubrique sans titre : un profil, des
+        coordonnées sous la photo) ; `s["side_roles"]` nomme les rôles posés
+        dans une colonne latérale à gauche du contenu (frise chronologique) :
+        leurs lignes se mesurent à part (`side`), le reste comme avant.
+        """
         kind = s["kind"]
         title = s["title"]
-        self._col_right = max([ln.right for ln in s["lines"]] + [t.right for t in title])
-        styles.setdefault("section_title", self.style_of(title))
-        lines = sorted(s["lines"], key=lambda ln: (ln.y, ln.x))
-        title_bottom = title[-1].y + (styles["section_title"]["pitch_mm"] or title[-1].h)
+        side_roles = frozenset(s.get("side_roles") or ())
+        all_lines = sorted(s["lines"], key=lambda ln: (ln.y, ln.x))
+        lines = [ln for ln in all_lines if ln.role not in side_roles]
+        side_lines = [ln for ln in all_lines if ln.role in side_roles]
+        self._col_right = max([ln.right for ln in all_lines] + [t.right for t in title])
+        top = min([t.y for t in title] + [ln.y for ln in all_lines])
+        if title:
+            styles.setdefault("section_title", self.style_of(title))
+            title_bottom = title[-1].y + (styles["section_title"]["pitch_mm"] or title[-1].h)
+        else:
+            title_bottom = top
         markers = self.markers_for(lines)
         elements = self.elements(lines, markers)
-        bottom = max([title_bottom] + [e["bottom"] for e in elements])
+        side_elements = self.elements(side_lines, {}) if side_lines else []
+        bottom = max([title_bottom] + [e["bottom"] for e in elements + side_elements])
         s["bottom"] = bottom
         spec: Json = {
             "kind": kind,
             "title_sample": " ".join(t.text for t in title),
-            "margin_top_mm": round(title[0].y - prev_bottom, 2),
-            "title_dx_mm": round(title[0].x - col_x, 2),
+            "untitled": not title,
+            "margin_top_mm": round(top - prev_bottom, 2),
+            "title_dx_mm": round(title[0].x - col_x, 2) if title else 0.0,
             "title_w_mm": round(max(t.w for t in title) + 1.5, 2) if len(title) > 1 else None,
             # Un titre sur plusieurs lignes garde son interligne mesuré.
             "title_pitch_mm": round(med([b.y - a.y for a, b in itertools.pairwise(title)]), 3)
@@ -326,9 +349,17 @@ class SpecBuilder:
         }
         groups: dict[int, list[Json]] = defaultdict(list)
         for e in elements:
-            groups[e["item"] if kind in ITEM_SECTIONS else 0].append(e)
+            groups[e["item"] if is_item_kind(kind) else 0].append(e)
+        side_groups: dict[int, list[Json]] = defaultdict(list)
+        for e in side_elements:
+            side_groups[e["item"] if is_item_kind(kind) else 0].append(e)
+        # Les éléments principaux d'abord : une pastille centrée sur une ligne
+        # composée s'attache au champ du contenu, pas à celui de la colonne latérale.
+        all_groups: dict[int, list[Json]] = defaultdict(list)
+        for no in sorted(set(groups) | set(side_groups)):
+            all_groups[no] = groups.get(no, []) + side_groups.get(no, [])
         by_role: dict[str, list[Json]] = defaultdict(list)
-        for e in elements:
+        for e in elements + side_elements:
             by_role[e["role"]].append(e)
         for role, es in by_role.items():
             skey = f"{kind}.{role}"
@@ -344,14 +375,15 @@ class SpecBuilder:
         gaps_item: list[float] = []
         first_gap: list[float] = []
         previous_item_bottom: float | None = None
-        for item_no in sorted(groups):
-            elems = groups[item_no]
-            rows = self.rows(elems)
+        for item_no in sorted(all_groups):
+            rows = self.rows(groups[item_no]) if groups.get(item_no) else []
+            all_rows = self.rows(all_groups[item_no])
+            item_top = rows[0]["top"] if rows else all_rows[0]["top"]
             if previous_item_bottom is None:
-                first_gap.append(rows[0]["top"] - title_bottom)
+                first_gap.append(item_top - title_bottom)
             else:
-                gaps_item.append(rows[0]["top"] - previous_item_bottom)
-            prev = rows[0]["top"]
+                gaps_item.append(item_top - previous_item_bottom)
+            prev = item_top
             prev_role: str | None = None
             for row in rows:
                 key = "+".join(e["role"] for e in row["elems"])
@@ -382,7 +414,7 @@ class SpecBuilder:
                         slot["align"].append(self.alignment(e["lines"]))
                 prev = row["bottom"]
                 prev_role = key
-            previous_item_bottom = prev
+            previous_item_bottom = max(r["bottom"] for r in all_rows)
         spec["first_gap_mm"] = round(med(first_gap), 2)
         spec["item_gap_mm"] = round(med(gaps_item, 0.0), 2)
         spec["slots"] = [
@@ -399,11 +431,65 @@ class SpecBuilder:
             for k, v in slots.items()
         ]
         spec["slot_order"] = list(slots.keys())
+        spec["side"] = self.side_spec(side_groups, groups, col_x) if side_elements else None
         spec["marker"] = self.marker_spec(markers, lines)
         spec["icons"] = self.icons_for(lines) if kind == "contact" else {}
-        spec["decorations"] = self.anchored_decorations(s, groups, col_x)
-        self.fill_sample(kind, groups, sample)
+        left_bound = col_x - 8
+        if spec["side"] is not None:
+            left_bound = min(left_bound, col_x + spec["side"]["dx_mm"] - 3)
+        spec["decorations"] = self.anchored_decorations(s, all_groups, col_x, left_bound=left_bound)
+        self.fill_sample(kind, all_groups, sample)
         return spec
+
+    def side_spec(
+        self, side_groups: dict[int, list[Json]], groups: dict[int, list[Json]], col_x: float
+    ) -> Json:
+        """La colonne latérale d'une frise : où elle est, son alignement, ses emplacements.
+
+        `dx_mm` est négatif (à gauche du contenu) ; `top_offset_mm` est l'écart
+        entre le haut de la première ligne latérale et celui de la première
+        ligne du contenu d'un même élément ; les marges entre emplacements se
+        mesurent comme celles du contenu.
+        """
+        all_side = [e for es in side_groups.values() for e in es]
+        x0 = min(e["x"] for e in all_side)
+        x1 = max(e["right"] for e in all_side)
+        rights = [e["right"] for e in all_side]
+        lefts = [e["x"] for e in all_side]
+        align = "left"
+        if max(rights) - min(rights) < 1.0 and max(lefts) - min(lefts) >= 1.0:
+            align = "right"
+        slots: dict[str, Json] = {}
+        offsets: list[float] = []
+        for no, es in side_groups.items():
+            rows = self.rows(es)
+            main = groups.get(no) or []
+            main_top = min(e["top"] for e in main) if main else rows[0]["top"]
+            offsets.append(rows[0]["top"] - main_top)
+            prev: float | None = None
+            for row in rows:
+                key = "+".join(e["role"] for e in row["elems"])
+                slot = slots.setdefault(
+                    key, {"key": key, "roles": [e["role"] for e in row["elems"]], "margins": []}
+                )
+                if prev is not None:
+                    slot["margins"].append(row["top"] - prev)
+                prev = row["bottom"]
+        return {
+            "dx_mm": round(x0 - col_x, 2),
+            "w_mm": round(x1 - x0 + 0.5, 2),
+            "align": align,
+            "top_offset_mm": round(med(offsets), 2),
+            "slots": [
+                {
+                    "key": v["key"],
+                    "roles": v["roles"],
+                    "margin_top_mm": round(med(v["margins"], 0.0), 2),
+                }
+                for v in slots.values()
+            ],
+            "slot_order": list(slots),
+        }
 
     def row_separator(self, a: Json, b: Json) -> Json | None:
         """Un filet vertical entre deux champs d'une même ligne (« Entreprise | 2016 »)."""
@@ -522,12 +608,22 @@ class SpecBuilder:
         return rows
 
     def anchored_decorations(  # noqa: PLR0912 - chaque forme est rangée selon ce qu'elle borde
-        self, s: Json, groups: dict[int, list[Json]], col_x: float
+        self,
+        s: Json,
+        groups: dict[int, list[Json]],
+        col_x: float,
+        *,
+        left_bound: float | None = None,
     ) -> list[Json]:
-        """Filets et formes de la rubrique : ancrés à l'élément qu'ils bordent, sinon à la rubrique."""
+        """Filets et formes de la rubrique : ancrés à l'élément qu'ils bordent, sinon à la rubrique.
+
+        `left_bound` : jusqu'où à gauche de la colonne une forme appartient
+        encore à la rubrique (la colonne latérale d'une frise l'élargit).
+        """
         out: list[Json] = []
-        top = s["title"][0].y
+        top = s["title"][0].y if s["title"] else min(e["top"] for es in groups.values() for e in es)
         bottom = s["bottom"]
+        left = col_x - 8 if left_bound is None else left_bound
         items = [
             (
                 no,
@@ -546,8 +642,8 @@ class SpecBuilder:
             if i in self.used:
                 continue
             cx = d["x"] + d["w"] / 2
-            near_column = col_x - 8 <= cx <= col_x + 30 or col_x - 8 <= d["x"] <= col_x + 5
-            if not near_column and not any(col_x - 8 <= cx <= e[3] + 3 for e in items):
+            near_column = left <= cx <= col_x + 30 or left <= d["x"] <= col_x + 5
+            if not near_column and not any(left <= cx <= e[3] + 3 for e in items):
                 continue
             if not (top - 3 <= d["y"] and d["y"] + d["h"] <= bottom + 14):
                 continue
@@ -763,11 +859,15 @@ class SpecBuilder:
         out["y_mm"] = round(y, 2)
         return out
 
-    def photo_spec(self) -> Json | None:
-        """Le cadre de la photo (détourage réel), sa forme et la position de l'image d'exemple."""
-        if not self.page.images:
-            return None
-        img = max(self.page.images, key=lambda i: i["w"] * i["h"])
+    def photo_spec(self, img: Json | None = None) -> Json | None:
+        """Le cadre de la photo (détourage réel), sa forme et la position de l'image d'exemple.
+
+        `img` : l'image qui est la photo ; à défaut la plus grande de la page.
+        """
+        if img is None:
+            if not self.page.images:
+                return None
+            img = max(self.page.images, key=lambda i: i["w"] * i["h"])
         frame = img.get("clip") or {k: img[k] for k in ("x", "y", "w", "h")}
         if frame["w"] > self.pw * 0.9:
             frame = {k: img[k] for k in ("x", "y", "w", "h")}
@@ -818,7 +918,9 @@ class SpecBuilder:
         return out
 
     # ------------------------------------------------------------------ contenu d'exemple
-    def fill_sample(self, kind: str, groups: dict[int, list[Json]], sample: Json) -> None:
+    def fill_sample(  # noqa: PLR0912 - une branche par genre de rubrique
+        self, kind: str, groups: dict[int, list[Json]], sample: Json
+    ) -> None:
         """Le contenu d'exemple de la rubrique, au format du CV."""
 
         def joined(e: Json) -> str:
@@ -842,7 +944,7 @@ class SpecBuilder:
             sample["summary"] = " ".join(
                 t for es in groups.values() for t in text(es, "summary") + text(es, "item_text")
             )
-        elif kind in ("experiences", "educations", "projects", "references"):
+        elif is_item_kind(kind):
             for no in sorted(groups):
                 es = groups[no]
                 item = {
@@ -851,9 +953,14 @@ class SpecBuilder:
                     "dates_raw": " ".join(text(es, "item_dates")),
                     "location": " ".join(text(es, "item_location")) or None,
                     "bullets": text(es, "bullet"),
-                    "description": " ".join(text(es, "item_text")) or None,
+                    "description": " ".join(text(es, "item_text") + text(es, "other")) or None,
                 }
-                sample.setdefault(kind, []).append(item)
+                if kind.startswith(OTHER_PREFIX):
+                    # Une rubrique libre garde son titre et ses éléments tels quels.
+                    others = sample.setdefault("others", {})
+                    others.setdefault(kind, {"title": "", "items": []})["items"].append(item)
+                else:
+                    sample.setdefault(kind, []).append(item)
         elif kind in ("skills", "languages", "interests"):
             role = {"skills": "skill", "languages": "language", "interests": "interest"}[kind]
             for es in groups.values():

@@ -866,7 +866,7 @@ class IngestTemplateVersion:
         decision = evaluate(fidelity_pdf)
         failures = list(decision.failures)
         if analysis.unlabeled:
-            failures.append(f"lignes sans rôle : {', '.join(analysis.unlabeled)}")
+            failures.append(f"lignes non placées : {', '.join(analysis.unlabeled)}")
         t = time.monotonic()
         docx = await self._engine.render_docx(
             spec, view, assets=icons, photo=photo, fit=rendered.fit
@@ -910,6 +910,7 @@ class IngestTemplateVersion:
             "unlabeled": analysis.unlabeled,
             "fit": rendered.fit.to_json(),
             "timings": timings,
+            "passes": analysis.passes,
         }
         now = self._clock.now()
         status = VersionStatus.PUBLISHED if passed else VersionStatus.REVIEW

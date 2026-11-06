@@ -700,6 +700,7 @@ def make_analysis(
             {"family": "Avenir", "origin": "substitute"},
         ],
         unlabeled=unlabeled or [],
+        passes=[{"pass": 1, "score": 0.95}],
     )
 
 

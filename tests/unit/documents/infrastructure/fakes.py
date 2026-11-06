@@ -595,3 +595,372 @@ def cv_font_set() -> Any:
             FontFile("Testa", 700, False, fonts[BOLD]),
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# Le plan de mise en page (ADR-0037), dérivé des rôles : la structure que le
+# modèle de vision rendrait sur ces pages
+# ---------------------------------------------------------------------------
+
+
+def plan_for(  # noqa: PLR0912 - l'ancienne heuristique de bandes et de colonnes, pour les fixtures
+    lines: list[dict[str, Any]],
+    roles: dict[str, tuple[str, str, int]] | None = None,
+    *,
+    photo: str | None = "I1",
+    side_roles: dict[str, list[str]] | None = None,
+    decorations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Un plan complet d'après les rôles par texte : en-tête, bandes et colonnes
+    (par l'abscisse et la hauteur des titres, comme l'ancien constructeur),
+    rubriques avec leurs éléments."""
+    from karria.modules.documents.infrastructure.layout_planner import LayoutPlan  # noqa: PLC0415
+
+    roles = roles or CV_ROLES
+    labelled = [(ln, roles[ln["text"]]) for ln in lines if ln["text"] in roles]
+    header = [
+        {"line": ln["id"], "field": role}
+        for ln, (role, section, _) in labelled
+        if section == "header"
+    ]
+    titles = [(ln, section) for ln, (role, section, _) in labelled if role == "section_title"]
+    merged: list[dict[str, Any]] = []
+    for ln, section in sorted(titles, key=lambda t: (t[0]["y"], t[0]["x"])):
+        prev = next(
+            (
+                m
+                for m in merged
+                if m["kind"] == section
+                and abs(m["x"] - ln["x"]) < 3
+                and 0 < ln["y"] - m["title"][-1]["y"] < ln["h"] * 2.2
+            ),
+            None,
+        )
+        if prev:
+            prev["title"].append(ln)
+            continue
+        merged.append({"kind": section, "x": ln["x"], "y": ln["y"], "title": [ln]})
+    xs = sorted({round(m["x"]) for m in merged})
+    cols: list[float] = []
+    for x in xs:
+        if not cols or x - cols[-1] > 15:
+            cols.append(x)
+    for m in merged:
+        m["col"] = min(range(len(cols)), key=lambda i: abs(cols[i] - m["x"]))
+    bands: list[dict[str, Any]] = []
+    for y in sorted({round(m["y"], 1) for m in merged}):
+        row = [m for m in merged if abs(m["y"] - y) < 2]
+        if (not bands or (len({m["col"] for m in row}) > 1 and len(cols) > 1)) and (
+            not bands or y > bands[-1]["y"] + 2
+        ):
+            bands.append({"y": y, "sections": []})
+    for m in sorted(merged, key=lambda m: m["y"]):
+        band = max((b for b in bands if b["y"] <= m["y"] + 2), key=lambda b: b["y"])
+        band["sections"].append(m)
+    counter = 0
+    plan_bands = []
+    for band in bands:
+        columns = []
+        for c in range(len(cols)):
+            sections = []
+            for m in [m for m in band["sections"] if m["col"] == c]:
+                counter += 1
+                kind = m["kind"]
+                items: dict[int, list[dict[str, str]]] = {}
+                for ln, (role, section, item) in labelled:
+                    if section == kind and role != "section_title":
+                        items.setdefault(item, []).append({"line": ln["id"], "role": role})
+                sections.append(
+                    {
+                        "id": f"S{counter}",
+                        "kind": kind,
+                        "title_lines": [t["id"] for t in m["title"]],
+                        "items": [{"lines": items[k]} for k in sorted(items)] or [{"lines": []}],
+                        "side_roles": (side_roles or {}).get(kind, []),
+                    }
+                )
+            if sections:
+                columns.append({"sections": sections})
+        if columns:
+            plan_bands.append({"columns": columns})
+    plan = {
+        "gallery": {
+            "title": "Azur",
+            "category": "modern",
+            "description_fr": "Deux colonnes.",
+            "tags": ["moderne"],
+            "photo_shape": "circle",
+        },
+        "header": {"lines": header, "photo": photo},
+        "bands": plan_bands,
+        "decorations": decorations or [],
+    }
+    return LayoutPlan.model_validate(plan).model_dump(mode="json")
+
+
+class FakePlanner:
+    """Le modèle de vision : dessine le plan d'après les rôles par texte, et note ses appels."""
+
+    def __init__(
+        self,
+        roles: dict[str, tuple[str, str, int]] | None = None,
+        *,
+        photo: str | None = "I1",
+        side_roles: dict[str, list[str]] | None = None,
+        decorations: list[dict[str, Any]] | None = None,
+        revised: dict[str, Any] | None = None,
+    ) -> None:
+        self._roles = roles
+        self._photo = photo
+        self._side = side_roles
+        self._decorations = decorations
+        self._revised = revised
+        self.calls: list[tuple[str, bytes, dict[str, Any]]] = []
+        self.feedback: list[Any] = []
+
+    def _result(self, plan: dict[str, Any]) -> Any:
+        from karria.modules.documents.infrastructure.layout_planner import (  # noqa: PLC0415
+            LayoutPlan,
+            PlanResult,
+        )
+
+        return PlanResult(
+            plan=LayoutPlan.model_validate(plan),
+            input_tokens=7000,
+            output_tokens=1500,
+            latency_ms=1200,
+            model="fake",
+            provider="gemini",
+        )
+
+    async def plan(self, page_png: bytes, measured: dict[str, Any]) -> Any:
+        self.calls.append(("plan", page_png, measured))
+        return self._result(
+            plan_for(
+                measured["lines"],
+                self._roles,
+                photo=self._photo,
+                side_roles=self._side,
+                decorations=self._decorations,
+            )
+        )
+
+    async def revise(
+        self,
+        page_png: bytes,
+        measured: dict[str, Any],
+        previous: Any,
+        feedback: Any,
+        comparison_png: bytes,
+    ) -> Any:
+        self.calls.append(("revise", comparison_png, measured))
+        self.feedback.append(feedback)
+        return self._result(self._revised or previous.model_dump(mode="json"))
+
+
+# ---------------------------------------------------------------------------
+# Un modèle à frise chronologique (ADR-0037) : en-tête à coordonnées alignées à
+# droite et poste visé sur deux lignes, profil sans titre, bande à deux colonnes
+# dont une rubrique libre, frise à colonne latérale, filets de bande
+# ---------------------------------------------------------------------------
+
+
+def timeline_template_pdf() -> bytes:
+    """Le modèle « frise » : voir `timeline_plan` pour sa structure."""
+    from karria.modules.documents.infrastructure.fonts import FontMeasurer  # noqa: PLC0415
+
+    fonts = cv_fonts()
+    measurer = FontMeasurer(fonts[REGULAR])
+
+    def right_aligned(text: str, size: float, right_mm: float) -> float:
+        return right_mm - measurer.width_pt(text, size) / MM
+
+    b = PdfBuilder(embedded=fonts)
+    b.image(png(40, 50), 15, 15, 30, 40)
+    b.text("ROMAIN DUPONT", 55, 22, size=17, font=BOLD)
+    b.text("CHARGE DE", 55, 29, size=10, font=REGULAR)
+    b.text("PROJET", 55, 34, size=10, font=REGULAR)
+    # Les coordonnées, alignées à droite sur 191 mm
+    b.text("+123-456-7890", right_aligned("+123-456-7890", 9, 191), 20, size=9, font=REGULAR)
+    b.text("hello@site.com", right_aligned("hello@site.com", 9, 191), 25, size=9, font=REGULAR)
+    b.text("Any City", right_aligned("Any City", 9, 191), 30, size=9, font=REGULAR)
+    # Le profil, sans titre, pleine largeur
+    b.text("Commercial dynamique et motive, six annees de vente.", 55, 45, size=10, font=REGULAR)
+    b.text("Specialise dans la pharmacie.", 55, 50, size=10, font=REGULAR)
+    b.line(16, 60, 194, 60, stroke="#000000", stroke_pt=1.5)
+    # Bande 1 : rubrique libre | compétences
+    b.text("REALISATIONS CLES", 16, 75, size=11, font=BOLD)
+    b.circle(18.7, 81.5, 0.5, fill="#000000")
+    b.text("Chiffre en hausse", 22, 82.5, size=9, font=REGULAR)
+    b.circle(18.7, 86.5, 0.5, fill="#000000")
+    b.text("Prix de la performance", 22, 87.5, size=9, font=REGULAR)
+    b.text("COMPETENCES", 105, 75, size=11, font=BOLD)
+    b.circle(107.3, 81.5, 0.5, fill="#000000")
+    b.text("Negociation", 111, 82.5, size=9, font=REGULAR)
+    b.circle(107.3, 86.5, 0.5, fill="#000000")
+    b.text("CRM", 111, 87.5, size=9, font=REGULAR)
+    b.line(16, 100, 194, 100, stroke="#000000", stroke_pt=0.75)
+    # Bande 2 : la frise
+    b.line(47.3, 100, 47.3, 190, stroke="#000000", stroke_pt=0.75)
+    b.text("EXPERIENCES", 54, 112, size=11, font=BOLD)
+    b.text("Bio Sentech", right_aligned("Bio Sentech", 10, 41), 121, size=10, font=REGULAR)
+    b.text("Depuis 2021", right_aligned("Depuis 2021", 8, 41), 126, size=8, font=REGULAR)
+    b.rect(46.35, 118.2, 1.9, 1.9, fill="#000000")
+    b.text("Responsable", 54, 121, size=10, font=BOLD)
+    b.circle(57, 126.5, 0.5, fill="#000000")
+    b.text("Developpement du portefeuille", 60, 127.5, size=10, font=REGULAR)
+    b.circle(57, 131.5, 0.5, fill="#000000")
+    b.text("Negociation avec les professionnels", 60, 132.5, size=10, font=REGULAR)
+    b.text("Biotek Inc", right_aligned("Biotek Inc", 10, 41), 146, size=10, font=REGULAR)
+    b.text("2018 - 2021", right_aligned("2018 - 2021", 8, 41), 151, size=8, font=REGULAR)
+    b.rect(46.35, 143.2, 1.9, 1.9, fill="#000000")
+    b.text("Terrain", 54, 146, size=10, font=BOLD)
+    b.circle(57, 151.5, 0.5, fill="#000000")
+    b.text("Gestion de secteur", 60, 152.5, size=10, font=REGULAR)
+    b.text("FORMATION", 54, 168, size=11, font=BOLD)
+    b.text("Lyon", right_aligned("Lyon", 10, 41), 177, size=10, font=REGULAR)
+    b.text("2016 - 2018", right_aligned("2016 - 2018", 8, 41), 182, size=8, font=REGULAR)
+    b.rect(46.35, 174.2, 1.9, 1.9, fill="#000000")
+    b.text("Master en commerce", 54, 177, size=10, font=BOLD)
+    b.line(16, 190, 194, 190, stroke="#000000", stroke_pt=1.5)
+    # Un fond de page et un cadre fixe
+    b.rect(0, 280, 210, 17, fill="#EEEEEE")
+    return b.to_bytes(producer="Canva")
+
+
+def _section(
+    sid: str,
+    kind: str,
+    title: list[str],
+    items: list[list[tuple[str, str]]],
+    side: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": sid,
+        "kind": kind,
+        "title_lines": title,
+        "items": [{"lines": [{"line": ln, "role": role} for ln, role in it]} for it in items],
+        "side_roles": side or [],
+    }
+
+
+def timeline_plan(lines: list[dict[str, Any]]) -> dict[str, Any]:
+    """Le plan du modèle « frise », les identifiants retrouvés par le texte des lignes."""
+    by_text = {ln["text"]: ln["id"] for ln in lines}
+    t = by_text.__getitem__
+    return {
+        "gallery": {
+            "title": "Frise",
+            "category": "professional",
+            "description_fr": "Une frise.",
+            "tags": ["frise", "commercial"],
+            "photo_shape": "rect",
+        },
+        "header": {
+            "lines": [
+                {"line": t("ROMAIN DUPONT"), "field": "full_name"},
+                {"line": t("CHARGE DE"), "field": "headline"},
+                {"line": t("PROJET"), "field": "headline"},
+                {"line": t("+123-456-7890"), "field": "phone"},
+                {"line": t("hello@site.com"), "field": "email"},
+                {"line": t("Any City"), "field": "address"},
+            ],
+            "photo": "I1",
+        },
+        "bands": [
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            _section(
+                                "S1",
+                                "summary",
+                                [],
+                                [
+                                    [
+                                        (
+                                            t(
+                                                "Commercial dynamique et motive, six annees de vente."
+                                            ),
+                                            "summary",
+                                        ),
+                                        (t("Specialise dans la pharmacie."), "summary"),
+                                    ]
+                                ],
+                            )
+                        ]
+                    }
+                ]
+            },
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            _section(
+                                "S2",
+                                "other",
+                                [t("REALISATIONS CLES")],
+                                [
+                                    [(t("Chiffre en hausse"), "bullet")],
+                                    [(t("Prix de la performance"), "bullet")],
+                                ],
+                            )
+                        ]
+                    },
+                    {
+                        "sections": [
+                            _section(
+                                "S3",
+                                "skills",
+                                [t("COMPETENCES")],
+                                [[(t("Negociation"), "skill"), (t("CRM"), "skill")]],
+                            )
+                        ]
+                    },
+                ]
+            },
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            _section(
+                                "S4",
+                                "experiences",
+                                [t("EXPERIENCES")],
+                                [
+                                    [
+                                        (t("Bio Sentech"), "item_subtitle"),
+                                        (t("Depuis 2021"), "item_dates"),
+                                        (t("Responsable"), "item_title"),
+                                        (t("Developpement du portefeuille"), "bullet"),
+                                        (t("Negociation avec les professionnels"), "bullet"),
+                                    ],
+                                    [
+                                        (t("Biotek Inc"), "item_subtitle"),
+                                        (t("2018 - 2021"), "item_dates"),
+                                        (t("Terrain"), "item_title"),
+                                        (t("Gestion de secteur"), "bullet"),
+                                    ],
+                                ],
+                                side=["item_subtitle", "item_dates"],
+                            ),
+                            _section(
+                                "S5",
+                                "educations",
+                                [t("FORMATION")],
+                                [
+                                    [
+                                        (t("Lyon"), "item_location"),
+                                        (t("2016 - 2018"), "item_dates"),
+                                        (t("Master en commerce"), "item_title"),
+                                    ]
+                                ],
+                                side=["item_location", "item_dates"],
+                            ),
+                        ]
+                    }
+                ]
+            },
+        ],
+        "decorations": [],
+    }

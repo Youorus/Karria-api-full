@@ -59,6 +59,8 @@ class Analysis:
     fonts: list[dict[str, Any]]
     fonts_report: list[dict[str, Any]]
     unlabeled: list[str] = field(default_factory=list)
+    #: Les passes de la boucle d'ingestion (ADR-0037) : score, verdict, jetons, par passe.
+    passes: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

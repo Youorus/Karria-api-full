@@ -688,6 +688,54 @@ class FontLibrary:
         )
         return resolution
 
+    async def resolve_group(self, sources: list[SourceFont]) -> list[FontResolution]:
+        """Les polices d'une même famille du PDF → une **même** famille servie.
+
+        Résolues une à une, les graisses d'une famille substituée pouvaient
+        partir chacune vers la remplaçante la plus proche de ses propres
+        métriques (Inter pour le romain, Montserrat pour l'italique) : le
+        modèle se rendait en deux familles. La famille se décide sur sa
+        graisse de référence (le romain le plus proche de 400) ; les autres
+        suivent, à la graisse et au style les plus proches de la remplaçante.
+        Une police incorporée réutilisable, elle, reste servie telle quelle.
+        """
+        if not sources:
+            return []
+        anchor = min(sources, key=lambda s: (s.italic, abs(s.weight - 400)))
+        first = await self.resolve(anchor)
+        out: list[FontResolution | None] = [first if s is anchor else None for s in sources]
+        record = await self.family(first.family) if first.origin is FontOrigin.SUBSTITUTE else None
+        for i, source in enumerate(sources):
+            if out[i] is not None:
+                continue
+            if (
+                record is None
+                or not record.styles
+                or (source.reuse_allowed and not source.missing_chars)
+            ):
+                out[i] = await self.resolve(source)
+                continue
+            out[i] = FontResolution(
+                source=source.name,
+                family=record.family,
+                weight=nearest_weight(
+                    source.weight, record.available(source.italic) or record.available(False)
+                ),
+                italic=source.italic and bool(record.available(True)),
+                origin=FontOrigin.SUBSTITUTE,
+                licence=record.licence,
+                distance=first.distance,
+                note=f"{source.family} suit {record.family}, comme {anchor.name} (une famille source, une famille servie)",
+            )
+            logger.warning(
+                "documents.font_substituted",
+                source=source.name,
+                family=record.family,
+                distance=first.distance,
+                follows=anchor.name,
+            )
+        return [r for r in out if r is not None]
+
 
 def source_font(
     name: str, embedded: bytes | None, *, weight: int, italic: bool, family: str
