@@ -35,6 +35,7 @@ def _to_dossier(row: ApplicationDossierModel) -> Dossier:
         adaptation_error=row.adaptation_error,
         applied_at=row.applied_at,
         primary_color=row.primary_color,
+        letter_style=row.letter_style,
     )
 
 
@@ -54,6 +55,7 @@ def _columns(dossier: Dossier) -> dict[str, Any]:
         "adaptation_error": dossier.adaptation_error,
         "applied_at": dossier.applied_at,
         "primary_color": dossier.primary_color,
+        "letter_style": dossier.letter_style,
         "updated_at": dossier.updated_at,
     }
 

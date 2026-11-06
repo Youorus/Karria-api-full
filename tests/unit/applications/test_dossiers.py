@@ -305,3 +305,18 @@ class TestCouleurPrincipale:
         # `None` rend la main à la couleur du modèle.
         assert colored.with_primary_color(None, now=LATER).primary_color is None
         assert dossier.with_primary_color(None, now=LATER) is dossier
+
+
+class TestStyleDeLettre:
+    """ADR-0036 : le style de lettre du dossier, retenu sans rien toucher d'autre."""
+
+    def test_le_style_se_pose_se_retire_et_survit_au_modele(self) -> None:
+        dossier = open_dossier()
+        styled = dossier.with_letter_style("plain", now=LATER)
+        assert styled.letter_style == "plain"
+        assert styled.updated_at == LATER
+        assert styled.cv == dossier.cv
+        assert styled.with_letter_style("plain", now=LATER + timedelta(hours=1)) is styled
+        assert styled.with_template(uuid4(), now=LATER).letter_style == "plain"
+        assert styled.with_letter_style(None, now=LATER).letter_style is None
+        assert dossier.letter_style is None
