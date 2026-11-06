@@ -320,9 +320,10 @@ def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: F
     slots = {sl["key"]: sl for sl in s["slots"]}
     side = s.get("side")
     side_slots = [(sl, side["w_mm"]) for sl in side["slots"]] if side else []
+    box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
     for i, item in enumerate(sec["items"]):
         h += s["first_gap_mm"] if i == 0 else max(s["item_gap_mm"], 1.0)
-        rows = [(slots[key], col_w - slots[key]["dx_mm"]) for key in s["slot_order"]]
+        rows = [(slots[key], box_w - slots[key]["dx_mm"]) for key in s["slot_order"]]
         # La colonne latérale d'une frise est comptée en plus : une estimation
         # haute, qui garde la page estimée du bon côté.
         for sl, width in rows + side_slots:
@@ -460,6 +461,8 @@ class HtmlRenderer:
             )
         prev_half = 0.0 if untitled else half(tst)
         side = s.get("side")
+        # La boîte de texte de la rubrique, si ses paragraphes repliés l'ont dite.
+        box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
         slots, order = extra_contact_slots(s, sec)
         for i, item in enumerate(sec["items"]):
             gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
@@ -507,6 +510,9 @@ class HtmlRenderer:
             # colonne latérale, une gouttière, le contenu ; sa hauteur est celle
             # du plus haut des deux, comme dans la source.
             origin = side["dx_mm"] if side else 0.0
+            # Le contenu commence à `main_dx_mm` de la colonne (le titre de la
+            # rubrique peut être plus à gauche que la colonne latérale).
+            main_dx = float(side.get("main_dx_mm", 0.0)) if side else 0.0
             flex = (
                 f"display:flex;align-items:flex-start;margin-left:{origin:.2f}mm;" if side else ""
             )
@@ -542,7 +548,7 @@ class HtmlRenderer:
                     )
                 )
                 out.append(
-                    f'<div style="flex:none;width:{-origin - side["w_mm"]:.2f}mm"></div>'
+                    f'<div style="flex:none;width:{main_dx - origin - side["w_mm"]:.2f}mm"></div>'
                     '<div class="main" style="flex:1 1 0;min-width:0;position:relative">'
                 )
             last_half = half(first_st)
@@ -551,7 +557,11 @@ class HtmlRenderer:
                 key0 = style_key(self.styles, kind, vals[0][0])
                 st0 = self.styles[key0]
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
-                width = col_w - sl["dx_mm"]
+                width = box_w - sl["dx_mm"]
+                if side:
+                    # Les emplacements se mesurent depuis la colonne ; le bloc de
+                    # contenu commence à `main_dx_mm` : on lui retire ce décalage.
+                    sl = {**sl, "dx_mm": sl["dx_mm"] - main_dx}  # noqa: PLW2901
                 if grid_open is not None and grid_open is not sl:
                     out.append("</div>")
                     grid_open = None
@@ -560,9 +570,12 @@ class HtmlRenderer:
                     # pas mesuré, et passent à la ligne quand la colonne est pleine.
                     role, v, path = vals[0]
                     if grid_open is None:
+                        # Le conteneur tient `columns` entrées au pas mesuré ; la
+                        # dernière peut dépasser la colonne de quelques millimètres.
+                        grid_w = max(width, sl["column_pitch_mm"] * sl["columns"])
                         out.append(
                             f'<div style="display:flex;flex-wrap:wrap;margin-left:{sl["dx_mm"]:.2f}mm;'
-                            f'width:{width:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
+                            f'width:{grid_w:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
                         )
                         grid_open = sl
                         margin_row = 0.0
@@ -572,7 +585,7 @@ class HtmlRenderer:
                             v,
                             margin=margin_row,
                             dx=0.0,
-                            width=min(sl["column_pitch_mm"], width),
+                            width=sl["column_pitch_mm"],
                             align=sl["align"],
                             extra=";flex:none",
                             path=path,

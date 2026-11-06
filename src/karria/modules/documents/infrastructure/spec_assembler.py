@@ -96,7 +96,7 @@ class SpecAssembler(SpecBuilder):
                     self.owner.setdefault(pl.line, ps.ref)
 
     # ------------------------------------------------------------------ construction
-    def build(self) -> tuple[Json, Json, dict[str, bytes]]:  # noqa: PLR0912
+    def build(self) -> tuple[Json, Json, dict[str, bytes]]:  # noqa: PLR0912, PLR0915
         """La spécification, le contenu d'exemple et les fichiers associés."""
         styles: dict[str, Json] = {}
         sample: Json = {
@@ -146,6 +146,9 @@ class SpecAssembler(SpecBuilder):
                         others.setdefault(s["kind"], {"title": "", "items": []})["title"] = (
                             spec_sec["title_sample"]
                         )
+                    width = self.wrapped_box_width(s, spec_sec, styles, col_x)
+                    if width is not None:
+                        spec_sec["width_mm"] = width
                     spec_secs.append(spec_sec)
                     prev_bottom = s["bottom"]
                 right = self.column_right(secs, spec_secs, styles)
@@ -191,6 +194,38 @@ class SpecAssembler(SpecBuilder):
             "content_bottom_mm": round(content_bottom, 2),
         }
         return spec, sample, self.assets
+
+    def wrapped_box_width(
+        self, s: Json, spec_sec: Json, styles: dict[str, Json], col_x: float
+    ) -> float | None:
+        """La largeur de la boîte de texte d'une rubrique, retrouvée dans ses paragraphes repliés.
+
+        Un paragraphe sur plusieurs lignes dit où sa boîte s'arrête : elle est
+        au moins aussi large que sa ligne la plus large (largeur naturelle avec
+        la police servie), et plus étroite que la plus courte des lignes
+        augmentée du premier mot de la ligne suivante — sinon ce mot y serait
+        monté. Le milieu de cet intervalle replie le texte d'une personne là où
+        le dessinateur l'aurait replié ; sans paragraphe replié, la colonne.
+        """
+        lower, upper = 0.0, float("inf")
+        found = False
+        for e in s.get("elements") or []:
+            lines = e["lines"]
+            if len(lines) < 2:  # noqa: PLR2004
+                continue
+            st = styles.get(f"{s['kind']}.{e['role']}")
+            if st is None:
+                continue
+            found = True
+            for a, b in itertools.pairwise(lines):
+                lower = max(lower, a.x - col_x + self.fonts.width_mm(a.text, st))
+                first_word = b.text.split()[0] if b.text.split() else ""
+                upper = min(upper, a.x - col_x + self.fonts.width_mm(f"{a.text} {first_word}", st))
+            lower = max(lower, lines[-1].x - col_x + self.fonts.width_mm(lines[-1].text, st))
+        if not found:
+            return None
+        width = (lower + upper) / 2 if upper > lower else lower + COLUMN_SLACK_MM
+        return round(min(width, spec_sec.get("width_mm") or float("inf")), 2)
 
     def column_right(
         self, secs: list[Json], spec_secs: list[Json], styles: dict[str, Json]

@@ -921,6 +921,9 @@ class DocxRenderer:
                         p = self.joined_para(cell, kind, sl, key0, vals=vals, before=before)
                     if kind == "contact" and role0 in s.get("icons", {}):
                         self.inline_icon(p, s["icons"][role0], before=True)
+                    if s.get("width_mm") and float(s["width_mm"]) < col_w:
+                        # La boîte de texte de la rubrique, plus étroite que la colonne.
+                        p.paragraph_format.right_indent = Mm(col_w - float(s["width_mm"]))
                     if item_first is None:
                         item_first = p
                     item_paras.append((p, role0))

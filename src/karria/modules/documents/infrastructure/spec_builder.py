@@ -372,6 +372,7 @@ class SpecBuilder:
         side_elements = self.elements(side_lines, {}) if side_lines else []
         bottom = max([title_bottom] + [e["bottom"] for e in elements + side_elements])
         s["bottom"] = bottom
+        s["elements"] = elements
         spec: Json = {
             "kind": kind,
             "title_sample": " ".join(t.text for t in title),
@@ -500,7 +501,8 @@ class SpecBuilder:
                 "roles": v["roles"],
                 "margin_top_mm": round(med(v["margins"], 0.0), 2),
                 "repeat_margin_mm": round(med(v["repeat"], 0.0), 2) if v["repeat"] else None,
-                "dx_mm": round(reference(v["dx"]), 2),
+                # Une grille : la première colonne ; sinon la référence des mesures.
+                "dx_mm": round(min(v["dx"]) if self.grid_spec(v) else reference(v["dx"]), 2),
                 "gap_mm": round(med(v["gaps"]), 2) if v["gaps"] else None,
                 "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
                 "separator": v.get("separator"),
@@ -616,11 +618,15 @@ class SpecBuilder:
                 if prev is not None:
                     slot["margins"].append(row["top"] - prev)
                 prev = row["bottom"]
+        main_xs = [e["x"] for es in groups.values() for e in es]
         return {
             "dx_mm": round(x0 - col_x, 2),
             "w_mm": round(x1 - x0 + 0.5, 2),
             "align": align,
             "top_offset_mm": round(med(offsets), 2),
+            # Où commence le contenu, depuis la colonne (le titre de la rubrique
+            # peut être plus à gauche que la colonne latérale).
+            "main_dx_mm": round((min(main_xs) if main_xs else x1 + 2.0) - col_x, 2),
             "slots": [
                 {
                     "key": v["key"],
