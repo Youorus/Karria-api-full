@@ -138,4 +138,5 @@ class TestCouleurDeLaLettre:
 
         assert generated.primary_color == "#7B1E2B"
         [call] = env.engine.called("render_pdf")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B", "le décor suit"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", "le texte reste"

@@ -458,7 +458,8 @@ class TestCouleurPrincipale:
 
         assert ok.status_code == 200, ok.text
         [call] = fakes.engine.called("render_html")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B", "le décor suit"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", "le texte reste"
         assert bad.status_code == 422
 
     async def test_l_export_retient_la_couleur_et_la_liste_la_rend(
@@ -475,6 +476,6 @@ class TestCouleurPrincipale:
         assert response.json()["primary_color"] == "#2E7D32"
         listed = await client.get(f"{API}/cv/me/generated-cvs?kind=cv")
         assert listed.json()["items"][0]["primary_color"] == "#2E7D32"
-        assert fakes.engine.called("render_pdf")[0]["spec"]["styles"]["section_title"]["color"] == (
+        assert fakes.engine.called("render_pdf")[0]["spec"]["page_decorations"][0]["stroke"] == (
             "#2E7D32"
         )

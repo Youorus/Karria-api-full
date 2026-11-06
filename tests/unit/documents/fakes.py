@@ -122,6 +122,7 @@ def make_spec(
     ]
     cols = [{"sections": sections}] + [{"sections": []} for _ in range(columns - 1)]
     return {
+        "page": {"width_mm": 210, "height_mm": 297, "background": "#FFFFFF"},
         "styles": {
             "name": style("Playfair", 24.0),
             "section_title": style(tracking=2.0 if spaced else 0.0, color="#1A5276"),
@@ -131,7 +132,22 @@ def make_spec(
         "header": {
             "photo": {"sample_file": "sample_photo.png"} if photo else None,
             "elements": [{"role": "headline", "synthesized": synthesized_headline}],
+            "decorations": [],
         },
+        # Le décor du modèle : un filet bleu sous l'en-tête (sa couleur de galerie, ADR-0034).
+        "page_decorations": [
+            {
+                "kind": "hline",
+                "x_mm": 20.0,
+                "y_mm": 50.0,
+                "w_mm": 170.0,
+                "h_mm": 0.0,
+                "fill": None,
+                "stroke": "#1A5276",
+                "stroke_pt": 0.75,
+                "anchor": "page",
+            }
+        ],
         "meta": meta
         if meta is not None
         else {"category": "classique", "description_fr": "Sobre.", "tags": ["sobre"]},

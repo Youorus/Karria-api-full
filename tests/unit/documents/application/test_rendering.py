@@ -402,7 +402,8 @@ class TestCouleurPrincipaleDeLExport:
         assert generated.primary_color == "#7B1E2B"
         assert env.generated.items[generated.id].primary_color == "#7B1E2B"
         [call] = env.engine.called("render_pdf")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B", "le décor suit"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", "le texte reste"
 
     async def test_sans_modele_l_export_prend_aussi_la_couleur_du_choix(self, env: Env) -> None:
         template, _ = env.templates.publish()
@@ -422,6 +423,6 @@ class TestCouleurPrincipaleDeLExport:
         )
 
         assert generated.primary_color == "#2E7D32"
-        assert env.engine.called("render_pdf")[0]["spec"]["styles"]["section_title"]["color"] == (
+        assert env.engine.called("render_pdf")[0]["spec"]["page_decorations"][0]["stroke"] == (
             "#2E7D32"
         )

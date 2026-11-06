@@ -25,6 +25,7 @@ from karria.modules.documents.domain.palette import (
     parse_hex_color,
     primary_color_of,
     recolor_spec,
+    tinted_ink,
 )
 from karria.modules.documents.domain.sends import (
     DAILY_SEND_LIMIT,
@@ -98,4 +99,5 @@ __all__ = [
     "parse_hex_color",
     "primary_color_of",
     "recolor_spec",
+    "tinted_ink",
 ]

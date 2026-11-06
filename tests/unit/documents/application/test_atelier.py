@@ -193,16 +193,21 @@ class TestLettre:
 
 
 class TestCouleurPrincipale:
-    """ADR-0034 : la couleur choisie remplace celle du modèle avant le rendu."""
+    """ADR-0034 : la couleur choisie habille le décor du modèle avant le rendu ; le texte reste."""
 
-    async def test_la_couleur_choisie_recolore_la_specification_rendue(self, env: Env) -> None:
+    async def test_la_couleur_choisie_recolore_le_decor_de_la_specification_rendue(
+        self, env: Env
+    ) -> None:
         template, _ = env.templates.publish()
 
         await _atelier(env).execute(env.user, template.id, cv=CV_DATA, primary_color="#7B1E2B")
 
         [call] = env.engine.called("render_html")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
-        assert call["spec"]["styles"]["name"]["color"] != "#7B1E2B", "le nom n'est pas en bleu"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", (
+            "un titre est un texte"
+        )
+        assert call["spec"]["styles"]["name"]["color"] != "#7B1E2B", "le nom n'est pas en bordeaux"
 
     async def test_sans_couleur_ou_avec_celle_d_origine_la_specification_est_celle_du_modele(
         self, env: Env
@@ -227,6 +232,6 @@ class TestCouleurPrincipale:
 
         cv_call, letter_call = env.engine.called("render_html")
         title = cv_call["spec"]["styles"]["section_title"]
-        assert title["color"] == "#2E7D32"
+        assert cv_call["spec"]["page_decorations"][0]["stroke"] == "#2E7D32"
         assert title["letter_spacing_pt"] < 2.0, "l'interlettrage plafonné reste plafonné"
-        assert letter_call["spec"]["styles"]["section_title"]["color"] == "#2E7D32"
+        assert letter_call["spec"]["page_decorations"][0]["stroke"] == "#2E7D32"
