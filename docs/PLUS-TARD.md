@@ -434,6 +434,25 @@ faudrait :** un tableau imbriqué par élément de frise (deux cellules), et une
 cellule avec sa hauteur relue après mise en page. **Déclencheur :** un retour de Marc sur le
 DOCX d'un modèle à frise.
 
+### Ingestion v2 : une famille du même nom, mais une autre fonte
+
+Canva sert « League Spartan » dans sa fonte de 2014 (The League of Moveable Type, graisse unique),
+18 à 20 % plus large que la League Spartan de Google (2021, redessinée). La résolution
+« même famille, bibliothèque libre » la prend, et l'écart de chasse part en interlettrage
+(0,6 à 1,3 mm par lettre sur cv9) : les mots restent à leur place, les titres se lisent espacés
+et dépassent 0,1 em (variante « optimisée ATS » proposée). **Ce qu'il faudrait :** quand la
+chasse de la famille homonyme s'écarte de plus de 10 % de la police incorporée sur toutes ses
+lignes, la tenir pour une autre fonte et chercher la remplaçante par métriques parmi toutes les
+familles (ou ajouter l'ancienne League Spartan, OFL, au catalogue). **Déclencheur :** un
+second modèle dans ce cas, ou un retour de Marc sur cv9.
+
+### Ingestion v2 : les barres de niveau (langues) sont du décor
+
+Des barres de niveau (une piste claire, un remplissage) sont ancrées à la rubrique à leur
+place mesurée : deux langues dans l'exemple, deux barres ; une personne qui en a trois n'a pas
+de troisième barre, et le niveau n'y est pas lu. **Ce qu'il faudrait :** un rôle de
+« jauge » par élément, rempli d'après le niveau du CV. **Déclencheur :** un retour de Marc.
+
 ### Ingestion v2 : les rubriques libres d'un vrai CV
 
 Une rubrique libre d'un modèle (« Réalisations clés », « Certifications ») est gardée avec son

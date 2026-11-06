@@ -84,7 +84,9 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   rubrique sans titre (`untitled`), une rubrique libre (`other:<slug>`, titre gardé), une frise
   à colonne latérale (`side`), un champ d'en-tête sur plusieurs lignes (`box_w_mm`, `pitch_mm`,
   `sample_lines`) ou aligné à droite (`rx_mm`), un filet de bande (`bands[i]["decorations"]`)
-  ou de flux (`anchor: flow`), l'image d'exemple à son échelle (`photo.sample_image`).
+  ou de flux (`anchor: flow`), l'image d'exemple à son échelle (`photo.sample_image`), une
+  étiquette fixe devant ou au-dessus d'un champ (`slot["label"]`), un style de titre propre à
+  une rubrique (`title_style`), un paragraphe aligné à droite ou centré (`slot["align"]`).
 - **Polices** (`domain/fonts.py`, `infrastructure/fonts.py`) : incorporée si sa
   licence le permet et qu'elle couvre le français, sinon même famille libre,
   sinon remplaçante la plus proche (classe, hauteur d'x, capitales, chasse).

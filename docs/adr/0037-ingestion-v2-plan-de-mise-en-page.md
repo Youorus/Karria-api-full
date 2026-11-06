@@ -96,7 +96,23 @@ pictogrammes, décor d'élément) reste celle de `spec_builder.py`, étendue à 
 - la **référence** d'une mesure répétée sur deux éléments est le premier (la moyenne mettait les
   deux à côté : un modèle Canva dont le second élément est décalé de 4 mm), la médiane au-delà ;
 - aucune ligature ni alternance contextuelle au rendu (`font-variant-ligatures: none`,
-  `calt 0`) : un glyphe substitué par Chromium sort sous un code privé, illisible par un ATS.
+  `calt 0`) : un glyphe substitué par Chromium sort sous un code privé, illisible par un ATS ;
+- les **étiquettes fixes** du modèle (rôle `label` : « Phone », « Email : ») s'attachent au champ
+  qu'elles annoncent, au-dessus (pas mesuré) ou devant (écart mesuré) ; elles ne sont pas des
+  données, les deux moteurs les écrivent depuis la spécification ;
+- un **style de titre par rubrique** (`title_style`) quand un titre diffère du titre partagé
+  (blanc sur une colonne sombre, foncé à côté) ;
+- un paragraphe **aligné à droite ou centré** est reconnu (gauches dispersées, droites ou
+  centres égaux) et rendu ainsi ; justifié reste justifié ;
+- le **bord droit d'une colonne** est celui de sa ligne la plus longue rendue avec la police
+  servie et l'interlettrage mesuré (résidu ligne par ligne + 0,3 mm) : ni repli prématuré ni
+  mot gagné sur la ligne suivante ;
+- les ancrages du **plan priment** sur la règle déterministe (un filet de frise pris pour le
+  connecteur d'un élément se prolongeait de 112 mm) ; un rôle posé par un emplacement composé
+  (« Poste | 2016 ») ne se répète pas par son emplacement seul ; deux éléments côte à côte
+  (deux références en colonnes) s'empilent à l'écart nul plutôt qu'à un écart négatif ;
+- les petites formes (< 8 mm : puces, pastilles, pictogrammes) ne sont pas proposées au
+  modèle : le code les reconnaît (`markers_for`, `icons_for`, décor d'élément).
 
 Les noms de classes CSS sont générés (`css_class` : lettres, chiffres, tirets) : rien de ce qui
 vient d'un plan n'arrive tel quel dans le HTML, et `other:` n'est pas un sélecteur valide.
