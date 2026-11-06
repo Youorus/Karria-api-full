@@ -61,16 +61,25 @@ def clean_schema(
     return node
 
 
+#: Bornes numériques que le mode strict d'Anthropic refuse (« For 'integer' type,
+#: properties maximum, minimum are not supported ») ; Pydantic les revalide
+#: de toute façon à la lecture (ADR-0013).
+STRICT_NOISE: Final[frozenset[str]] = frozenset(
+    {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"}
+)
+
+
 def strict_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     """La variante « stricte » qu'OpenAI et Anthropic attendent : `additionalProperties: false` partout.
 
     Les champs facultatifs y deviennent obligatoires mais nullables, parce que
-    le mode strict exige que `required` liste toutes les propriétés.
+    le mode strict exige que `required` liste toutes les propriétés. Les bornes
+    numériques (`STRICT_NOISE`) sont retirées : le mode strict les refuse.
     """
 
     def walk(node: Any) -> Any:
         if isinstance(node, dict):
-            out = {k: walk(v) for k, v in node.items()}
+            out = {k: walk(v) for k, v in node.items() if k not in STRICT_NOISE}
             if out.get("type") == "object" and isinstance(out.get("properties"), dict):
                 out["additionalProperties"] = False
                 out["required"] = list(out["properties"])

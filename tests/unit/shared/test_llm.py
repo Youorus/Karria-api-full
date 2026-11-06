@@ -167,6 +167,17 @@ class TestSchema:
         assert strict["additionalProperties"] is False
         assert sorted(strict["required"]) == ["name", "tags"]
 
+    def test_la_variante_stricte_retire_les_bornes_numeriques(self) -> None:
+        # Anthropic refuse `minimum`/`maximum` en sortie structurée (mesuré le
+        # 2026-11-06 sur `template_extract`) ; Pydantic revalide à la lecture.
+        strict = strict_schema(
+            {
+                "type": "object",
+                "properties": {"columns": {"type": "integer", "minimum": 1, "maximum": 2}},
+            }
+        )
+        assert strict["properties"]["columns"] == {"type": "integer"}
+
 
 class TestGemini:
     async def test_le_corps_porte_consigne_historique_donnees_et_schema(self) -> None:
