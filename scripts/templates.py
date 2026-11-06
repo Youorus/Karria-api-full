@@ -1,17 +1,20 @@
 """Commandes d'exploitation des modèles de CV (module `documents`, ADR-0020).
 
-    uv run python -m scripts.templates submit FICHIER.pdf --name meridian --label Meridian [--premium] [--inline]
+    uv run python -m scripts.templates submit FICHIER.pdf --name meridian --label Meridian [--premium] [--inline] [--letter LETTRE.pdf]
     uv run python -m scripts.templates ingest VERSION_ID     # (re)lance l'analyse d'une version en attente
     uv run python -m scripts.templates list                  # modèles, versions, fidélité, verdict
     uv run python -m scripts.templates refresh-colors [--dry-run]
     uv run python -m scripts.templates render-sample NOM --out DOSSIER [--color '#1F4FA3' ...] [--any-status]
+    uv run python -m scripts.templates plain-letter          # les aperçus de la lettre sobre (galerie)
 
 `submit` dépose le PDF (bucket `templates`) et crée la version ; l'analyse part
 dans la file (worker) ou, avec `--inline`, tourne dans ce processus — utile pour
-amorcer un environnement et lire le verdict tout de suite. Rien ne tourne au
-démarrage de l'API (AGENTS.md §6.4). Une version sous le seuil de fidélité
-n'est pas publiée : elle reste `review`, avec ses mesures et ses substitutions
-de polices (voir `list`).
+amorcer un environnement et lire le verdict tout de suite. `--letter` dépose
+avec lui le PDF de la **lettre assortie** (ADR-0036) : mesurée par la même
+chaîne et la même porte, elle fait rester la version entière en revue si elle
+passe sous le seuil. Rien ne tourne au démarrage de l'API (AGENTS.md §6.4).
+Une version sous le seuil de fidélité n'est pas publiée : elle reste `review`,
+avec ses mesures et ses substitutions de polices (voir `list`).
 
 `refresh-colors` remesure la couleur de galerie (`primary_color`) des modèles
 publiés depuis leur version publiée — la couleur du **décor** depuis
@@ -23,6 +26,12 @@ Gotenberg), dans sa couleur d'origine puis dans chaque `--color` : de quoi
 regarder ce que la couleur change. `--any-status` prend la dernière version
 même non publiée (une version en revue, pour juger la couleur avant la
 publication). Ne modifie rien.
+
+`plain-letter` télécharge les polices de la lettre sobre (Carlito 400 et 700),
+la rend avec son contenu d'exemple et dépose ses aperçus (`plain-letter/v<n>/`
+du bucket `templates`) : c'est la page « Lettre sobre » que la galerie montre
+pour tout modèle sans lettre assortie. À lancer une fois par environnement, et
+à chaque changement de `PLAIN_LETTER_VERSION`. Gotenberg doit être joignable.
 """
 
 from __future__ import annotations
@@ -39,14 +48,16 @@ from karria.bootstrap.orm import TORTOISE_ORM
 from karria.modules.documents import (
     ProcrastinateTemplateJobs,
     build_ingest_template,
+    build_publish_plain_letter,
     build_refresh_template_colors,
     build_submit_template,
 )
 from karria.modules.documents.api.dependencies import build_engine
 from karria.modules.documents.application import TemplateRepository, tint_icons
 from karria.modules.documents.domain import parse_hex_color, primary_color_of, recolor_spec
+from karria.modules.documents.domain.plain_letter import PLAIN_FAMILY
 from karria.modules.documents.domain.view import from_sample
-from karria.modules.documents.infrastructure import TortoiseTemplateRepository
+from karria.modules.documents.infrastructure import FontLibrary, TortoiseTemplateRepository
 from karria.shared.config import Settings, get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.logging import configure_logging
@@ -58,6 +69,8 @@ def _summary(report: dict[str, object]) -> str:
     fidelity = report.get("fidelity") or {}
     pdf = (fidelity or {}).get("pdf", {}) if isinstance(fidelity, dict) else {}
     docx = (fidelity or {}).get("docx", {}) if isinstance(fidelity, dict) else {}
+    letter = (fidelity or {}).get("letter", {}) if isinstance(fidelity, dict) else {}
+    letter_docx = (fidelity or {}).get("letter_docx", {}) if isinstance(fidelity, dict) else {}
     gate = report.get("gate") or {}
     return json.dumps(
         {
@@ -65,6 +78,9 @@ def _summary(report: dict[str, object]) -> str:
             "pdf_components": pdf.get("components") if isinstance(pdf, dict) else None,
             "docx": docx.get("score") if isinstance(docx, dict) else None,
             "docx_components": docx.get("components") if isinstance(docx, dict) else None,
+            "letter": letter.get("score") if isinstance(letter, dict) else None,
+            "letter_components": letter.get("components") if isinstance(letter, dict) else None,
+            "letter_docx": letter_docx.get("score") if isinstance(letter_docx, dict) else None,
             "gate": gate,
             "fonts": [
                 f"{f.get('source')} → {f.get('served')} ({f.get('origin')})"
@@ -175,7 +191,18 @@ async def _main(args: argparse.Namespace) -> int:
                 if done and done.report:
                     print(_summary(done.report))
                 return 0
+            if args.command == "plain-letter":
+                library = FontLibrary(storage)
+                for weight in (400, 700):
+                    served = await library.file(PLAIN_FAMILY, weight, False, download=True)
+                    print(
+                        f"police {PLAIN_FAMILY} {weight} : {'servie' if served else 'INTROUVABLE'}"
+                    )
+                meta = await build_publish_plain_letter(settings, storage).execute()
+                print(json.dumps(meta, ensure_ascii=False))
+                return 0
             pdf = await asyncio.to_thread(Path(args.file).read_bytes)
+            letter = await asyncio.to_thread(Path(args.letter).read_bytes) if args.letter else None
             queue = build_queue_app(settings.db)
             async with queue.open_async():
                 submit = build_submit_template(storage, ProcrastinateTemplateJobs(queue))
@@ -185,6 +212,7 @@ async def _main(args: argparse.Namespace) -> int:
                     label=args.label,
                     is_premium=args.premium,
                     defer=not args.inline,
+                    letter=letter,
                 )
             print(f"version {version.version} déposée : {version.id}")
             if args.inline:
@@ -212,6 +240,7 @@ def main() -> None:
     submit.add_argument(
         "--inline", action="store_true", help="analyser dans ce processus, sans le worker"
     )
+    submit.add_argument("--letter", help="le PDF de la lettre assortie (ADR-0036)")
     ingest = sub.add_parser("ingest", help="analyser une version en attente")
     ingest.add_argument("version_id")
     sub.add_parser("list", help="modèles et versions")
@@ -231,6 +260,7 @@ def main() -> None:
     render.add_argument(
         "--any-status", action="store_true", help="la dernière version même non publiée"
     )
+    sub.add_parser("plain-letter", help="rendre et déposer les aperçus de la lettre sobre")
     sys.exit(asyncio.run(_main(parser.parse_args())))
 
 

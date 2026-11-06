@@ -208,3 +208,69 @@ def test_lecture_ats_selon_le_format() -> None:
     with zipfile.ZipFile(out, "w") as z:
         z.writestr("word/document.xml", "<w:p><w:r><w:t>Jean</w:t></w:r></w:p>")
     assert engine.read(out.getvalue(), "docx").text == "Jean"
+
+
+class TestLettreAppariee:
+    """ADR-0036 : `analyze_letter` passe par l'analyseur de lettre, s'il est branché."""
+
+    async def test_sans_etiqueteur_de_lettre_l_analyse_refuse(self) -> None:
+        from karria.modules.documents.domain.errors import TemplateIngestionError  # noqa: PLC0415
+
+        engine, _, _ = _engine()
+        with pytest.raises(TemplateIngestionError):
+            await engine.analyze_letter(b"%PDF")
+
+    async def test_l_analyse_de_la_lettre_rend_le_contrat_du_port(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from karria.modules.documents.infrastructure.letter_analyzer import (  # noqa: PLC0415
+            AnalyzedLetter,
+        )
+
+        library, gotenberg = FakeLibrary(), FakeGotenberg(b"")
+        engine = KarriaDocumentEngine(
+            library,  # type: ignore[arg-type]
+            FakeLabeler(),  # type: ignore[arg-type]
+            gotenberg,  # type: ignore[arg-type]
+            letter_labeler=FakeLabeler(),  # type: ignore[arg-type]
+        )
+        analyzed = AnalyzedLetter(
+            spec={"kind": "letter"},
+            sample={"subject": "x"},
+            labels={"lines": []},
+            fonts=[FontFile("Testa", 400, False, b"F")],
+            fonts_report=[{"source": "TTCommonsPro-Rg", "family": "Testa"}],
+            page_png=b"P",
+            unlabeled=["L2"],
+        )
+
+        async def fake_analyze(pdf: bytes, *, accent: Any = None) -> AnalyzedLetter:
+            assert pdf == b"%PDF"
+            assert accent == {"color": "#000000"}
+            return analyzed
+
+        assert engine._letters is not None
+        monkeypatch.setattr(engine._letters, "analyze", fake_analyze)
+        out = await engine.analyze_letter(b"%PDF", accent={"color": "#000000"})
+        assert out.spec == {"kind": "letter"}
+        assert out.assets == {}
+        assert out.fonts == [{"family": "Testa", "weight": 400, "italic": False}]
+        assert out.unlabeled == ["L2"]
+
+    async def test_la_mesure_transmet_les_substitutions_declarees(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine, _, _ = _engine()
+        seen: dict[str, Any] = {}
+
+        def fake_measure(source: bytes, render: bytes, *, font_map: Any = None) -> str:
+            seen["font_map"] = font_map
+            return "fidelity"
+
+        monkeypatch.setattr(engine_module, "measure", fake_measure)
+        await engine.measure(b"s", b"r")
+        assert seen["font_map"] is None
+        await engine.measure(
+            b"s", b"r", fonts_report=[{"source": "TTCommonsPro-Rg", "family": "Barlow"}]
+        )
+        assert seen["font_map"] == {"ttcommonspro": "barlow"}

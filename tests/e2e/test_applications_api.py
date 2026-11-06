@@ -532,3 +532,55 @@ class TestCouleurDuDossier:
         missing = await client.put(f"{API}/{uuid4()}/color", json={"primary_color": "#7B1E2B"})
         assert missing.status_code == 404
         assert (await client.get(f"{API}/{dossier['id']}")).json()["primary_color"] is None
+
+
+class TestStyleDeLettreDuDossier:
+    async def test_le_style_se_pose_se_relit_survit_au_modele_et_se_retire(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+        assert dossier["letter_style"] is None
+
+        styled = await client.put(
+            f"{API}/{dossier['id']}/letter-style", json={"letter_style": "plain"}
+        )
+        assert styled.status_code == 200, styled.text
+        assert styled.json()["letter_style"] == "plain"
+        assert styled.json()["cv"] == dossier["cv"]
+
+        template = uuid4()
+        changed = await client.put(
+            f"{API}/{dossier['id']}/template", json={"template_id": str(template)}
+        )
+        assert changed.json()["letter_style"] == "plain"
+        assert (await client.get(f"{API}/{dossier['id']}")).json()["letter_style"] == "plain"
+        cards = (await client.get(API)).json()["items"]
+        assert cards[0]["letter_style"] == "plain"
+
+        reset = await client.put(f"{API}/{dossier['id']}/letter-style", json={"letter_style": None})
+        assert reset.status_code == 200
+        assert reset.json()["letter_style"] is None
+
+    async def test_un_style_inconnu_un_corps_vide_et_un_dossier_inconnu(
+        self,
+        client: AsyncClient,
+        authenticate: Any,
+        ai_consented: None,
+        applications_env: ApplicationsEnv,
+    ) -> None:
+        authenticate()
+        dossier = await open_dossier(client, applications_env)
+
+        bad = await client.put(
+            f"{API}/{dossier['id']}/letter-style", json={"letter_style": "fancy"}
+        )
+        assert bad.status_code == 422
+        assert (await client.put(f"{API}/{dossier['id']}/letter-style", json={})).status_code == 422
+        missing = await client.put(f"{API}/{uuid4()}/letter-style", json={"letter_style": "plain"})
+        assert missing.status_code == 404
+        assert (await client.get(f"{API}/{dossier['id']}")).json()["letter_style"] is None

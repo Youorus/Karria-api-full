@@ -16,6 +16,7 @@ from karria.modules.documents.application import (
     ExplainAts,
     ForgetUser,
     IngestTemplateVersion,
+    PublishPlainLetterPreview,
     RefreshTemplateColors,
     SubmitTemplate,
 )
@@ -128,6 +129,9 @@ class TestFabriques:
         assert isinstance(deps.build_refresh_template_colors(), RefreshTemplateColors)
         assert isinstance(deps.build_explain_ats(SETTINGS), ExplainAts)
         assert isinstance(deps.build_forget_user(storage()), ForgetUser)
+        assert isinstance(
+            deps.build_publish_plain_letter(SETTINGS, storage()), PublishPlainLetterPreview
+        )
 
 
 def test_la_porte_d_entree_du_module_expose_son_routeur_et_ses_tables() -> None:

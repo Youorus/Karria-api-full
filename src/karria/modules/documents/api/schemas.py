@@ -13,6 +13,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from karria.modules.documents.domain.palette import parse_hex_color
+from karria.modules.documents.domain.plain_letter import LETTER_STYLE_PLAIN, LETTER_STYLE_TEMPLATE
 from karria.modules.documents.domain.sends import MAX_DOCUMENTS_PER_SEND, DocumentSend
 from karria.modules.documents.domain.templates import (
     FORMATS,
@@ -39,6 +40,9 @@ class AtsReadiness(BaseModel):
     warnings: list[str]
 
 
+LetterStyle = Literal["template", "plain"]
+
+
 class PageRead(BaseModel):
     """Une page du carrousel du détail."""
 
@@ -46,6 +50,22 @@ class PageRead(BaseModel):
     label: str
     signed_thumbnail_url: str | None
     signed_full_url: str | None
+    style: LetterStyle | None = Field(
+        default=None,
+        description="Page `letter` : `template` (lettre assortie) ou `plain` (lettre sobre).",
+    )
+
+
+class CoverLetterRead(BaseModel):
+    """La lettre qu'un modèle sert (`cover_letters`, forme V1) : assortie, sinon la lettre sobre (ADR-0036)."""
+
+    id: str = Field(description="`template` ou `plain`.")
+    label: str
+    style: LetterStyle
+    signed_thumbnail_url: str | None
+    signed_preview_url: str | None
+    signed_full_url: str | None
+    thumbnail_blurhash: str | None = None
 
 
 class TemplateRead(BaseModel):
@@ -70,7 +90,16 @@ class TemplateRead(BaseModel):
     primary_color: str | None
     font_family: str | None
     has_photo: bool
-    cover_letters: list[dict[str, Any]] = Field(default_factory=list)
+    has_letter: bool = Field(
+        default=False, description="Le modèle a une lettre assortie, mesurée et publiée avec lui."
+    )
+    cover_letters: list[CoverLetterRead] = Field(
+        default_factory=list,
+        description=(
+            "La lettre que ce modèle sert : la lettre assortie (`template`) s'il en a une, "
+            "sinon la lettre sobre (`plain`) — exactement ce que l'atelier rend."
+        ),
+    )
     version: int | None
     columns: int
     formats: list[str]
@@ -87,8 +116,14 @@ class TemplateRead(BaseModel):
         storage: ObjectStorage,
         *,
         detail: bool = False,
+        plain_letter: dict[str, Any] | None = None,
     ) -> TemplateRead:
-        """Le modèle et sa version publiée ; les aperçus deviennent des URL signées."""
+        """Le modèle et sa version publiée ; les aperçus deviennent des URL signées.
+
+        `plain_letter` : les clés des aperçus de la lettre sobre (`plain_letter_pages`),
+        servie quand le modèle n'a pas de lettre assortie ; `None` tant que la
+        commande `plain-letter` n'a pas tourné (aucune page de lettre alors).
+        """
 
         async def sign(key: str | None) -> str | None:
             return await storage.presigned_get_url(Bucket.TEMPLATES, key) if key else None
@@ -96,6 +131,38 @@ class TemplateRead(BaseModel):
         traits = gallery_traits(version.spec) if version and version.spec else None
         thumb = await sign(version.thumbnail_key if version else None)
         full = await sign(version.full_key if version else None)
+        letter: CoverLetterRead | None = None
+        if version is not None and version.has_letter:
+            letter = CoverLetterRead(
+                id=LETTER_STYLE_TEMPLATE,
+                label="Lettre assortie",
+                style=LETTER_STYLE_TEMPLATE,
+                signed_thumbnail_url=await sign(version.letter_thumbnail_key),
+                signed_preview_url=await sign(version.letter_preview_key),
+                signed_full_url=await sign(version.letter_full_key),
+                thumbnail_blurhash=version.letter_thumbnail_blurhash,
+            )
+        elif version is not None and plain_letter is not None:
+            letter = CoverLetterRead(
+                id=LETTER_STYLE_PLAIN,
+                label="Lettre sobre",
+                style=LETTER_STYLE_PLAIN,
+                signed_thumbnail_url=await sign(plain_letter["thumbnail_key"]),
+                signed_preview_url=await sign(plain_letter["preview_key"]),
+                signed_full_url=await sign(plain_letter["full_key"]),
+                thumbnail_blurhash=plain_letter.get("blurhash"),
+            )
+        pages = [PageRead(kind="cv", label="CV", signed_thumbnail_url=thumb, signed_full_url=full)]
+        if letter is not None:
+            pages.append(
+                PageRead(
+                    kind="letter",
+                    label=letter.label,
+                    signed_thumbnail_url=letter.signed_thumbnail_url,
+                    signed_full_url=letter.signed_full_url,
+                    style=letter.style,
+                )
+            )
         return cls(
             id=template.id,
             name=template.name,
@@ -116,6 +183,8 @@ class TemplateRead(BaseModel):
             primary_color=template.primary_color,
             font_family=template.font_family,
             has_photo=template.has_photo,
+            has_letter=bool(version and version.has_letter),
+            cover_letters=[letter] if letter is not None else [],
             version=template.published_version,
             columns=template.columns,
             formats=list(FORMATS),
@@ -124,11 +193,7 @@ class TemplateRead(BaseModel):
             ats=AtsReadiness(**traits["ats"])
             if traits
             else AtsReadiness(readiness="good", warnings=[]),
-            pages=[
-                PageRead(kind="cv", label="CV", signed_thumbnail_url=thumb, signed_full_url=full)
-            ]
-            if detail
-            else None,
+            pages=pages if detail else None,
         )
 
 
@@ -404,6 +469,13 @@ class RenderRequest(BaseModel):
         default=None,
         description="La couleur principale choisie (`#rrggbb`) ; `null` : celle du modèle (ADR-0034).",
     )
+    letter_style: LetterStyle | None = Field(
+        default=None,
+        description=(
+            "Lettre : `template` (la lettre assortie du modèle) ou `plain` (la lettre sobre) ; "
+            "`null` : la lettre assortie s'il y en a une, sinon la sobre (ADR-0036)."
+        ),
+    )
 
     _color = field_validator("primary_color")(_normalized_color)
 
@@ -424,6 +496,10 @@ class RenderRead(BaseModel):
             "`subject_not_explicit`, `closing_missing`, `company_missing`."
         )
     )
+    letter_style_served: LetterStyle | None = Field(
+        default=None,
+        description="Lettre : le style réellement servi (`template` ou `plain`) ; `null` pour un CV.",
+    )
 
 
 class LetterExportRequest(BaseModel):
@@ -436,6 +512,10 @@ class LetterExportRequest(BaseModel):
     primary_color: str | None = Field(
         default=None,
         description="La couleur principale du dossier, pour que la lettre suive le CV.",
+    )
+    letter_style: LetterStyle | None = Field(
+        default=None,
+        description="`template` ou `plain` ; `null` : la lettre assortie s'il y en a une, sinon la sobre.",
     )
 
     _color = field_validator("primary_color")(_normalized_color)
@@ -495,6 +575,10 @@ class GeneratedCvRead(BaseModel):
     primary_color: str | None = Field(
         default=None, description="La couleur principale du rendu, si la personne en a posé une."
     )
+    letter_style: LetterStyle | None = Field(
+        default=None,
+        description="Lettre : le style servi (`template` ou `plain`) ; `null` pour un CV.",
+    )
     offer_id: UUID | None
     created_at: datetime
     pdf_url: str | None
@@ -530,6 +614,7 @@ class GeneratedCvRead(BaseModel):
             ),
             ats_safe=generated.ats_safe,
             primary_color=generated.primary_color,
+            letter_style=generated.letter_style,  # type: ignore[arg-type]
             offer_id=generated.offer_id,
             created_at=generated.created_at,
             pdf_url=await sign(generated.pdf_key, "pdf"),
@@ -562,6 +647,10 @@ class VersionAdminRead(BaseModel):
     signed_sample_render_url: str | None
     signed_sample_docx_url: str | None
     signed_source_url: str | None
+    has_letter: bool = False
+    signed_letter_preview_url: str | None = None
+    signed_letter_sample_render_url: str | None = None
+    signed_letter_source_url: str | None = None
 
     @classmethod
     async def present(
@@ -573,6 +662,7 @@ class VersionAdminRead(BaseModel):
             return await storage.presigned_get_url(Bucket.TEMPLATES, key) if key else None
 
         done = version.status.value in ("published", "review")
+        with_letter = done and version.letter_source_key is not None
         return cls(
             id=version.id,
             template_id=template.id,
@@ -587,6 +677,12 @@ class VersionAdminRead(BaseModel):
             signed_sample_render_url=await sign(f"{prefix}/sample_render.pdf" if done else None),
             signed_sample_docx_url=await sign(f"{prefix}/sample_docx.pdf" if done else None),
             signed_source_url=await sign(version.source_key),
+            has_letter=version.has_letter,
+            signed_letter_preview_url=await sign(version.letter_full_key),
+            signed_letter_sample_render_url=await sign(
+                f"{prefix}/letter/sample_render.pdf" if with_letter else None
+            ),
+            signed_letter_source_url=await sign(version.letter_source_key),
         )
 
 

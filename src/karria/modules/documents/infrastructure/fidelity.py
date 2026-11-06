@@ -123,13 +123,40 @@ def words(doc: PdfDocument, index: int = 0) -> list[dict[str, Any]]:
     return out
 
 
-def structural(src: list[dict[str, Any]], ren: list[dict[str, Any]]) -> dict[str, Any]:
-    """Appariement des mots source ↔ rendu."""
+def served_families(fonts_report: list[dict[str, Any]]) -> dict[str, str]:
+    """`{famille source: famille servie}` d'après le rapport de polices d'une analyse.
+
+    Une substitution **déclarée** (ADR-0020 § Mise en œuvre : journalisée, dans le
+    rapport de version) n'est pas une infidélité du rendu : la police du modèle
+    n'est pas libre, et la remplaçante a été choisie pour ses métriques. La
+    concordance de police se juge alors sur la famille servie. Les familles sont
+    comparées comme `words()` les lit (minuscules, premier mot du nom de base).
+    """
+    out: dict[str, str] = {}
+    for line in fonts_report:
+        source, family = line.get("source"), line.get("family")
+        if isinstance(source, str) and isinstance(family, str) and source and family:
+            out[_family(source)] = _family(family)
+    return out
+
+
+def structural(
+    src: list[dict[str, Any]],
+    ren: list[dict[str, Any]],
+    font_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Appariement des mots source ↔ rendu.
+
+    `font_map` : la famille servie pour chaque famille de la source (substitutions
+    déclarées) ; sans lui, un mot n'est « de la bonne police » que s'il porte la
+    même famille que dans la source.
+    """
     by_text: dict[str, list[dict[str, Any]]] = {}
     for w in ren:
         by_text.setdefault(w["t"], []).append(w)
     matched = close = font_ok = size_ok = color_ok = 0
     dists: list[float] = []
+    expected = font_map or {}
     for w in src:
         cands = by_text.get(w["t"])
         if not cands:
@@ -139,7 +166,7 @@ def structural(src: list[dict[str, Any]], ren: list[dict[str, Any]]) -> dict[str
         matched += 1
         dists.append(d)
         close += d <= 2.0  # noqa: PLR2004
-        font_ok += best["font"] == w["font"]
+        font_ok += best["font"] == expected.get(w["font"], w["font"])
         size_ok += abs(best["size"] - w["size"]) <= 0.6  # noqa: PLR2004
         color_ok += best["color"] == w["color"]
     n = max(len(src), 1)
@@ -184,12 +211,22 @@ def decoration_recall(
     return found / len(src)
 
 
-def measure(source: bytes, render: bytes, *, dpi: int = 72) -> Fidelity:
-    """Compare la première page d'un rendu à celle de la source."""
+def measure(
+    source: bytes,
+    render: bytes,
+    *,
+    dpi: int = 72,
+    font_map: dict[str, str] | None = None,
+) -> Fidelity:
+    """Compare la première page d'un rendu à celle de la source.
+
+    `font_map` (`served_families`) : les substitutions déclarées, pour que la
+    concordance de police juge la famille servie ; sans lui, la famille source.
+    """
     with PdfDocument(source) as s, PdfDocument(render) as r:
         a = s.render_gray(0, dpi=dpi).astype(np.float64)
         b = r.render_gray(0, dpi=dpi).astype(np.float64)
-        st = structural(words(s), words(r))
+        st = structural(words(s), words(r), font_map)
         return Fidelity(
             ssim=ssim(a, b),
             ssim_tolerant=tolerant_ssim(a, b),
@@ -205,4 +242,4 @@ def measure(source: bytes, render: bytes, *, dpi: int = 72) -> Fidelity:
         )
 
 
-__all__ = ["hex_color", "measure"]
+__all__ = ["hex_color", "measure", "served_families"]

@@ -9,8 +9,12 @@ Contrat
 - Le calcul lourd et bloquant (mesure numpy, rastérisation pdfium, DOCX)
   part dans un fil (`asyncio.to_thread`) : la boucle d'événements de l'API
   reste libre pendant un export.
-- Une vue `kind: "letter"` (ADR-0030) prend les moteurs de lettre ; le reste
-  de la chaîne (polices, Gotenberg, fichiers joints) est le même.
+- Une vue `kind: "letter"` (ADR-0030) prend les moteurs de lettre, qui lisent
+  une **spécification de lettre** (ADR-0036 : la lettre appariée du modèle ou
+  la lettre sobre) ; le reste de la chaîne (polices, Gotenberg, fichiers
+  joints) est le même. `analyze_letter` mesure la lettre appariée d'un modèle.
+- `measure` reçoit le rapport de polices de l'analyse : une substitution
+  déclarée n'est pas comptée comme une infidélité de police.
 - `render_html` (ADR-0029) rend la page de l'atelier : polices par URL
   publique stable, pictogrammes et logo en `data:`, photo par l'URL reçue,
   ancres `data-chemin`, nombre de pages estimé sans navigateur.
@@ -29,18 +33,23 @@ from karria.modules.documents.application.ports import (
     RenderedPdf,
 )
 from karria.modules.documents.domain.ats import ExtractedDocument
+from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.templates import Fit
 from karria.modules.documents.infrastructure.analyzer import LineLabeler, TemplateAnalyzer
 from karria.modules.documents.infrastructure.ats_reader import read_docx, read_pdf
 from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer
-from karria.modules.documents.infrastructure.fidelity import measure
+from karria.modules.documents.infrastructure.fidelity import measure, served_families
 from karria.modules.documents.infrastructure.fonts import FontLibrary, FontSet
 from karria.modules.documents.infrastructure.gotenberg import GotenbergClient
 from karria.modules.documents.infrastructure.html_renderer import (
     HtmlRenderer,
     estimate_pages,
     parse_fit,
+)
+from karria.modules.documents.infrastructure.letter_analyzer import (
+    LetterAnalyzer,
+    LetterLineLabeler,
 )
 from karria.modules.documents.infrastructure.letter_renderer import (
     LOGO_FILE,
@@ -55,10 +64,17 @@ class KarriaDocumentEngine:
     """Le moteur de documents : PDF par Chromium (Gotenberg), DOCX par python-docx."""
 
     def __init__(
-        self, library: FontLibrary, labeler: LineLabeler, gotenberg: GotenbergClient
+        self,
+        library: FontLibrary,
+        labeler: LineLabeler,
+        gotenberg: GotenbergClient,
+        letter_labeler: LetterLineLabeler | None = None,
     ) -> None:
+        """`letter_labeler` : l'étiqueteur des lignes d'une lettre appariée (ADR-0036) ;
+        sans lui, `analyze_letter` refuse."""
         self._library = library
         self._analyzer = TemplateAnalyzer(library, labeler)
+        self._letters = LetterAnalyzer(library, letter_labeler) if letter_labeler else None
         self._gotenberg = gotenberg
 
     async def fonts(self, spec: dict[str, Any]) -> FontSet:
@@ -77,6 +93,23 @@ class KarriaDocumentEngine:
             sample=analyzed.sample,
             labels=analyzed.labels,
             assets=analyzed.assets,
+            fonts=[
+                {"family": f.family, "weight": f.weight, "italic": f.italic} for f in analyzed.fonts
+            ],
+            fonts_report=analyzed.fonts_report,
+            unlabeled=analyzed.unlabeled,
+        )
+
+    async def analyze_letter(self, pdf: bytes, *, accent: str | None = None) -> Analysis:
+        """La lettre appariée d'un modèle → sa spécification de lettre (ADR-0036)."""
+        if self._letters is None:
+            raise TemplateIngestionError("aucun étiqueteur de lettre n'est branché")
+        analyzed = await self._letters.analyze(pdf, accent=accent)
+        return Analysis(
+            spec=analyzed.spec,
+            sample=analyzed.sample,
+            labels=analyzed.labels,
+            assets={},
             fonts=[
                 {"family": f.family, "weight": f.weight, "italic": f.italic} for f in analyzed.fonts
             ],
@@ -170,8 +203,15 @@ class KarriaDocumentEngine:
     async def docx_to_pdf(self, docx: bytes) -> bytes:
         return await self._gotenberg.docx_to_pdf(docx)
 
-    async def measure(self, source_pdf: bytes, rendered_pdf: bytes) -> Fidelity:
-        return await asyncio.to_thread(measure, source_pdf, rendered_pdf)
+    async def measure(
+        self,
+        source_pdf: bytes,
+        rendered_pdf: bytes,
+        *,
+        fonts_report: list[dict[str, Any]] | None = None,
+    ) -> Fidelity:
+        font_map = served_families(fonts_report) if fonts_report else None
+        return await asyncio.to_thread(measure, source_pdf, rendered_pdf, font_map=font_map)
 
     async def previews(self, pdf: bytes) -> Previews:
         return await asyncio.to_thread(_previews, pdf)

@@ -25,6 +25,7 @@ from karria.modules.documents.application import (
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.headline import ats_safe_spec
+from karria.modules.documents.domain.plain_letter import plain_letter_spec
 from karria.modules.documents.domain.sends import DocumentSend, SendStatus, canonical_address
 from karria.modules.documents.domain.templates import (
     DocumentKind,
@@ -41,6 +42,7 @@ from karria.modules.documents.domain.templates import (
 NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
 PDF_BYTES = b"%PDF-1.7 rendu"
 PDF_SAFE_BYTES = b"%PDF-safe"
+PDF_LETTER_BYTES = b"%PDF-1.7 lettre"
 DOCX_BYTES = b"PK docx"
 PNG_BYTES = b"\x89PNG page"
 
@@ -205,6 +207,33 @@ def make_template(
     )
 
 
+def make_letter_spec(*, accent: str | None = "#1A5276") -> dict[str, Any]:
+    """Une spécification de lettre appariée : la lettre sobre, dont l'objet a la couleur du décor du CV."""
+    spec = plain_letter_spec()
+    spec["source"] = {"producer": "Canva"}
+    if accent is not None:
+        spec["accent"] = accent
+        spec["styles"]["subject"] = {
+            **spec["styles"]["subject"],
+            "color": accent,
+            "follows_decor": True,
+        }
+    return spec
+
+
+def make_letter_sample() -> dict[str, Any]:
+    """Le contenu d'exemple d'une lettre appariée, date imprimée comprise."""
+    return {
+        "recipient": {"company": "Concordia", "city": "Any City"},
+        "subject": "Candidature pour le poste de graphiste",
+        "greeting": "Madame, Monsieur,",
+        "paragraphs": [{"kind": "libre", "text": "Un."}, {"kind": "libre", "text": "Deux."}],
+        "closing": "Dans l'attente de votre réponse.",
+        "sender": {"first_name": "Sacha", "last_name": "Dubois", "headline": "Chargée de projet"},
+        "date_line": "Le 8 juin 2026,",
+    }
+
+
 def make_version(
     template_id: UUID,
     *,
@@ -212,8 +241,11 @@ def make_version(
     status: VersionStatus = VersionStatus.PUBLISHED,
     spec: dict[str, Any] | None = None,
     assets: dict[str, str] | None = None,
+    letter_spec: dict[str, Any] | None = None,
+    letter_source: bool = False,
 ) -> TemplateVersion:
-    """Une version de modèle."""
+    """Une version de modèle ; `letter_spec` : avec sa lettre appariée publiée ;
+    `letter_source` : avec le PDF d'une lettre déposé, à analyser."""
     prefix = f"templates/{template_id}/v{number}"
     return TemplateVersion(
         id=uuid4(),
@@ -228,6 +260,15 @@ def make_version(
         thumbnail_key=f"{prefix}/preview/vignette.webp" if spec is not None else None,
         preview_key=f"{prefix}/preview/apercu.png" if spec is not None else None,
         full_key=f"{prefix}/preview/apercu_pleine_page.png" if spec is not None else None,
+        letter_source_key=f"{prefix}/letter_source.pdf" if (letter_source or letter_spec) else None,
+        letter_spec=letter_spec,
+        letter_sample=make_letter_sample() if letter_spec is not None else None,
+        letter_thumbnail_key=f"{prefix}/letter/vignette.webp" if letter_spec is not None else None,
+        letter_thumbnail_blurhash="LLETTRE" if letter_spec is not None else None,
+        letter_preview_key=f"{prefix}/letter/apercu.png" if letter_spec is not None else None,
+        letter_full_key=f"{prefix}/letter/apercu_pleine_page.png"
+        if letter_spec is not None
+        else None,
     )
 
 
@@ -319,10 +360,13 @@ class InMemoryTemplateRepository:
         premium: bool = False,
         spec: dict[str, Any] | None = None,
         assets: dict[str, str] | None = None,
+        letter_spec: dict[str, Any] | None = None,
     ) -> tuple[Template, TemplateVersion]:
-        """Range un modèle publié et sa version publiée."""
+        """Range un modèle publié et sa version publiée (avec sa lettre appariée si `letter_spec`)."""
         template = make_template(name=name, premium=premium)
-        version = make_version(template.id, spec=spec or make_spec(), assets=assets)
+        version = make_version(
+            template.id, spec=spec or make_spec(), assets=assets, letter_spec=letter_spec
+        )
         template = replace(template, published_version_id=version.id, published_version=1)
         self.templates[template.id] = template
         self.versions[version.id] = version
@@ -588,6 +632,10 @@ class FakeEngine:
     pages: int = 1
     #: Le HTML que rend `render_html` ; vide : un document minimal.
     html: str = ""
+    #: Le résultat d'analyse d'une lettre appariée, et sa mesure de fidélité.
+    letter_analysis: Analysis | None = None
+    letter_error: Exception | None = None
+    fidelity_letter: Fidelity = field(default_factory=good_fidelity)
     calls: list[tuple[str, Any]] = field(default_factory=list)
 
     async def analyze(self, pdf: bytes) -> Analysis:
@@ -596,6 +644,13 @@ class FakeEngine:
             raise self.analyze_error
         assert self.analysis is not None
         return self.analysis
+
+    async def analyze_letter(self, pdf: bytes, *, accent: str | None = None) -> Analysis:
+        self.calls.append(("analyze_letter", {"pdf": pdf, "accent": accent}))
+        if self.letter_error is not None:
+            raise self.letter_error
+        assert self.letter_analysis is not None
+        return self.letter_analysis
 
     async def render_pdf(
         self,
@@ -609,13 +664,17 @@ class FakeEngine:
         # déjà rendue dans cet export, et différente d'elle.
         previous = [call for name, call in self.calls if name == "render_pdf"]
         variant = any(
-            call["spec"] != spec and ats_safe_spec(call["spec"]) == spec for call in previous
+            call["spec"] != spec and ats_safe_spec(call["spec"]) == spec
+            for call in previous
+            if "styles" in call["spec"] and "section_title" in call["spec"]["styles"]
         )
         self.calls.append(
             ("render_pdf", {"spec": spec, "view": view, "assets": assets, "photo": photo})
         )
         if self.render_error is not None:
             raise self.render_error
+        if view.get("kind") == "letter":
+            return RenderedPdf(data=PDF_LETTER_BYTES, fit=self.fit)
         return RenderedPdf(data=PDF_SAFE_BYTES if variant else PDF_BYTES, fit=self.fit)
 
     async def render_docx(
@@ -659,8 +718,16 @@ class FakeEngine:
         self.calls.append(("docx_to_pdf", docx))
         return b"%PDF-1.7 docx"
 
-    async def measure(self, source_pdf: bytes, rendered_pdf: bytes) -> Fidelity:
-        self.calls.append(("measure", rendered_pdf))
+    async def measure(
+        self,
+        source_pdf: bytes,
+        rendered_pdf: bytes,
+        *,
+        fonts_report: list[dict[str, Any]] | None = None,
+    ) -> Fidelity:
+        self.calls.append(("measure", {"rendered": rendered_pdf, "fonts_report": fonts_report}))
+        if rendered_pdf == PDF_LETTER_BYTES:
+            return self.fidelity_letter
         return self.fidelity_docx if rendered_pdf == b"%PDF-1.7 docx" else self.fidelity_pdf
 
     async def previews(self, pdf: bytes) -> Previews:
@@ -693,6 +760,21 @@ class FakeEngine:
     def called(self, name: str) -> list[Any]:
         """Les arguments des appels d'une méthode."""
         return [args for n, args in self.calls if n == name]
+
+
+def make_letter_analysis(
+    *, spec: dict[str, Any] | None = None, unlabeled: list[str] | None = None
+) -> Analysis:
+    """Le résultat d'analyse du PDF d'une lettre appariée."""
+    return Analysis(
+        spec=spec or make_letter_spec(),
+        sample=make_letter_sample(),
+        labels={"lines": [{"line": "L1", "role": "sender_name", "paragraph": 0}]},
+        assets={},
+        fonts=[{"family": "Carlito", "weight": 400, "italic": False}],
+        fonts_report=[{"source": "TTCommonsPro-Rg", "family": "Carlito", "origin": "substitute"}],
+        unlabeled=unlabeled or [],
+    )
 
 
 def make_analysis(

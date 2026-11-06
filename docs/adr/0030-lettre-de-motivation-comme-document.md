@@ -1,6 +1,10 @@
 # ADR-0030 — La lettre de motivation est un document du module `documents`, rendue dans la grammaire du modèle de CV
 
-**Statut :** Proposée — 2026-11-05 (écrite par Fable, à valider par Marc)
+**Statut :** Proposée — 2026-11-05 (écrite par Fable, à valider par Marc) ;
+**§ 1 et § 4 remplacés par ADR-0036** (2026-11-06) : la lettre se rend depuis une
+spécification de lettre (appariée au modèle, ou la lettre sobre), plus dans la
+grammaire du CV. Les § 2, 3 et 5 (la lettre comme donnée structurée, le logo, l'export
+`kind: letter`) restent en vigueur.
 **Complète :** ADR-0020, ADR-0029
 
 ## Le problème

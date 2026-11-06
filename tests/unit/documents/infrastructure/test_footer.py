@@ -18,6 +18,7 @@ from documents.infrastructure.fakes import (
     cv_font_set,
     cv_template_pdf,
     labels_for,
+    letter_spec_testa,
 )
 from karria.modules.documents.domain.letter import from_letter
 from karria.modules.documents.domain.view import from_cv
@@ -138,9 +139,8 @@ class TestSurLeCv:
 
 
 class TestSurLaLettre:
-    def test_le_html_et_le_docx_de_la_lettre_disent_lettre(
-        self, spec: Json, fonts: FontSet
-    ) -> None:
+    def test_le_html_et_le_docx_de_la_lettre_disent_lettre(self, fonts: FontSet) -> None:
+        spec = letter_spec_testa()
         view = from_letter(spec, LETTER, today=date(2026, 11, 5))
         html = LetterHtmlRenderer(spec, view, fonts, logo=None).render()
         assert "Lettre réalisée avec Karria" in html

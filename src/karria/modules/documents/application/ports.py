@@ -230,6 +230,10 @@ class DocumentEngine(Protocol):
 
     async def analyze(self, pdf: bytes) -> Analysis: ...
 
+    async def analyze_letter(self, pdf: bytes, *, accent: str | None = None) -> Analysis:
+        """La lettre appariée d'un modèle → sa spécification de lettre (ADR-0036)."""
+        ...
+
     async def render_pdf(
         self,
         spec: dict[str, Any],
@@ -261,7 +265,15 @@ class DocumentEngine(Protocol):
 
     async def docx_to_pdf(self, docx: bytes) -> bytes: ...
 
-    async def measure(self, source_pdf: bytes, rendered_pdf: bytes) -> Fidelity: ...
+    async def measure(
+        self,
+        source_pdf: bytes,
+        rendered_pdf: bytes,
+        *,
+        fonts_report: list[dict[str, Any]] | None = None,
+    ) -> Fidelity:
+        """`fonts_report` : les substitutions déclarées, pour juger la police servie (ADR-0036)."""
+        ...
 
     async def previews(self, pdf: bytes) -> Previews: ...
 

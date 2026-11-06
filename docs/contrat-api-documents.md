@@ -8,6 +8,9 @@ Préfixe `/api/v1`, erreurs au format `{ error: { code, message, details: { reas
 Session (`Authorization: Bearer`) exigée partout **sauf** `GET /app/release`.
 
 État : **servi en production** depuis le 2026-11-05 (commits de la session, migration 17).
+**2026-11-06, ADR-0036** (branche `feat/lettres`, migration 21) : la lettre se rend depuis la
+lettre **assortie** du modèle ou la lettre **sobre** ; `letter_style` au rendu et à l'export,
+`letter_style_served` dans la réponse.
 
 ---
 
@@ -48,6 +51,12 @@ redemande le rendu. Aucun fichier n'est écrit.
   à l'exemple comme au CV ou à la lettre. `null` ou absent : la couleur du modèle. `422`
   (erreur de validation) sur un autre code. Un modèle sans décor (`primary_color` `null` en
   galerie) ignore la couleur.
+- `letter_style` (ADR-0036, **2026-11-06**, lettre seulement) : `"template"` (la lettre
+  assortie du modèle) ou `"plain"` (la lettre sobre de Karria : page blanche, Carlito 11 pt,
+  structure d'une lettre d'affaires française). `null` ou absent : l'assortie si le modèle en
+  a une (`has_letter` de la galerie), sinon la sobre. `"template"` sur un modèle sans lettre
+  assortie sert la sobre **sans erreur** : la réponse dit le style servi. `422` sur une autre
+  valeur.
 
 ### Réponse
 
@@ -55,9 +64,13 @@ redemande le rendu. Aucun fichier n'est écrit.
 {
   "html": "<!doctype html>…",
   "pages": 1,
-  "warnings": ["headline_missing"]
+  "warnings": ["headline_missing"],
+  "letter_style_served": null
 }
 ```
+
+- `letter_style_served` : pour une lettre, `"template"` ou `"plain"` — ce qui a réellement été
+  rendu ; `null` pour un CV ou l'exemple.
 
 - `html` : autonome. Polices par URL **publique et stable**
   (`https://storage.karria.fr/karria-production-assets/fonts/…`, cache long),
@@ -145,8 +158,13 @@ pas une donnée du CV. Une ligne qui réunit plusieurs champs (« Entreprise | 2
   avertissement `logo_unavailable`.
 - La date et le lieu sont posés par l'API (« Montreuil, le 5 novembre 2026 », ville de
   `sender.city` ; sans ville : « Le 5 novembre 2026 »).
-- La lettre est rendue **dans le modèle de CV** : mêmes polices, couleur d'accent des
-  titres pour l'objet, marges extérieures du modèle. CV et lettre forment un dossier.
+- La lettre est rendue depuis une **spécification de lettre** (ADR-0036) : la lettre
+  **assortie** du modèle de CV quand il en a une (mesurée dans son PDF, mêmes polices ; avec
+  `primary_color`, son décor suit, et seuls les textes qui avaient la couleur du décor du CV —
+  l'objet, souvent — suivent avec lui), sinon la lettre **sobre** de
+  Karria (A4, marges 25 mm, Carlito 11 pt, expéditeur à gauche, destinataire et date à
+  droite, « Objet : » en gras, paragraphes justifiés, formule, signature par le nom — noir
+  sur blanc). C'est exactement la page « lettre » que la galerie montre pour ce modèle.
 
 ### Rendu ancré
 
@@ -158,18 +176,21 @@ pas une donnée du CV. Une ligne qui réunit plusieurs champs (« Entreprise | 2
 ### `POST /documents/letters/export` → `201 GeneratedCv`
 
 ```json
-{ "template_id": "…" | null, "letter": { … }, "formats": ["pdf", "docx"] | null, "dossier_id": "…" | null, "primary_color": "#7B1E2B" | null }
+{ "template_id": "…" | null, "letter": { … }, "formats": ["pdf", "docx"] | null, "dossier_id": "…" | null, "primary_color": "#7B1E2B" | null, "letter_style": "template" | "plain" | null }
 ```
 
 `primary_color` : la couleur du dossier, pour que la lettre suive le CV (§ 1) ; sans
 `template_id` ni couleur, celle du choix de la personne (`/user-templates/me/selected`).
+`letter_style` : comme au rendu (§ 1) ; l'app envoie le style retenu par le dossier
+(`Dossier.letter_style`, `PUT /applications/{id}/letter-style`).
 
 Sans `template_id`, le modèle choisi (`PUT /user-templates/me/selected`) ; sans choix,
 `404 template_not_found`. Modèle Premium non possédé : `403 template_locked`. Format
 inconnu : `422 invalid_format`. Gotenberg absent : `503 rendering_unavailable`.
 
 Réponse : un `GeneratedCv` (même forme que l'export de CV) avec `kind: "letter"`,
-`company_name`, `dossier_id`, `pdf_url` / `docx_url` signées 1 h (noms de téléchargement
+`company_name`, `dossier_id`, **`letter_style`** (`"template"` | `"plain"`, le style servi ;
+`null` sur un CV), `pdf_url` / `docx_url` signées 1 h (noms de téléchargement
 « Lettre de motivation - Acme.pdf »), `fit`, et `ats: { "explanation": null,
 "explanation_status": "unavailable" }` — **pas de score ATS sur une lettre**.
 

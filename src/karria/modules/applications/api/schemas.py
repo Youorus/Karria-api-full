@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -145,6 +145,13 @@ class DossierRead(BaseModel):
         default=None,
         description="La couleur principale posée par la personne (`#RRGGBB`) ; `null` : celle du modèle.",
     )
+    letter_style: Literal["template", "plain"] | None = Field(
+        default=None,
+        description=(
+            "Le style de lettre retenu : `template` (assortie) ou `plain` (sobre) ; `null` : "
+            "par défaut, l'assortie s'il y en a une, sinon la sobre (ADR-0036)."
+        ),
+    )
     cv: dict[str, Any] = Field(
         description="La copie adaptée du CV, au format `GET /cv/me` (sans `image_url` ni `id`)."
     )
@@ -174,6 +181,7 @@ class DossierRead(BaseModel):
             offer=OfferSnapshotRead.present(dossier.offer, logo_url),
             template_id=dossier.template_id,
             primary_color=dossier.primary_color,
+            letter_style=dossier.letter_style,  # type: ignore[arg-type]
             cv=dossier.cv,
             cv_base_hash=dossier.cv_base_hash,
             base_changed=base_changed,
@@ -212,6 +220,7 @@ class DossierCardRead(BaseModel):
     offer: OfferCardRead
     template_id: UUID | None
     primary_color: str | None = None
+    letter_style: Literal["template", "plain"] | None = None
     status: DossierStatus
     adaptation: AdaptationState
     coverage_ratio: float
@@ -237,6 +246,7 @@ class DossierCardRead(BaseModel):
             ),
             template_id=dossier.template_id,
             primary_color=dossier.primary_color,
+            letter_style=dossier.letter_style,  # type: ignore[arg-type]
             status=dossier.status,
             adaptation=dossier.adaptation,
             coverage_ratio=dossier.coverage.ratio,
@@ -322,6 +332,16 @@ class ColorChangeRequest(BaseModel):
         if len(digits) == 3:  # noqa: PLR2004 - forme courte
             digits = "".join(c * 2 for c in digits)
         return f"#{digits.upper()}"
+
+
+class LetterStyleChangeRequest(BaseModel):
+    """Le style de lettre du dossier, changé depuis l'écran Lettre (ADR-0036)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    letter_style: Literal["template", "plain"] | None = Field(
+        description="`template` (la lettre assortie du modèle) ou `plain` (la sobre) ; `null` : par défaut."
+    )
 
 
 class LetterWriteRequest(LetterShape):

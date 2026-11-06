@@ -8,6 +8,7 @@ Gotenberg.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from uuid import UUID, uuid4
@@ -25,6 +26,7 @@ from tests.unit.documents.fakes import (
     InMemoryTemplateRepository,
     InMemoryUserTemplateRepository,
     make_generated,
+    make_letter_spec,
     make_spec,
     make_template,
     make_version,
@@ -40,6 +42,7 @@ from karria.modules.documents.api.dependencies import (
     get_template_repository,
     get_user_template_repository,
 )
+from karria.modules.documents.application.use_cases import _plain_letter_cache, plain_letter_keys
 from karria.modules.documents.domain.templates import ExplanationStatus, VersionStatus
 from karria.shared.auth import Principal
 from karria.shared.config import DocumentsSettings, Settings, get_settings
@@ -187,8 +190,54 @@ class TestGalerie:
                 "label": "CV",
                 "signed_thumbnail_url": body["signed_thumbnail_url"],
                 "signed_full_url": body["signed_full_url"],
+                "style": None,
             }
         ]
+        assert body["has_letter"] is False
+        assert body["cover_letters"] == []
+
+    async def test_le_detail_montre_la_lettre_assortie_sinon_la_lettre_sobre(
+        self, client: AsyncClient, fakes: Fakes, storage: InMemoryObjectStorage
+    ) -> None:
+        plain, _ = fakes.templates.publish(name="plain")
+        paired, _ = fakes.templates.publish(name="paired", letter_spec=make_letter_spec())
+        # Tant que la commande `plain-letter` n'a pas tourné : aucune page de lettre.
+        _plain_letter_cache["until"] = 0.0
+        before = await client.get(f"{API}/templates/{plain.id}")
+        assert before.json()["cover_letters"] == []
+        assert len(before.json()["pages"]) == 1
+        await storage.put(
+            Bucket.TEMPLATES,
+            plain_letter_keys()["meta_key"],
+            json.dumps({"blurhash": "SOBRE"}).encode(),
+            content_type="application/json",
+        )
+        _plain_letter_cache["until"] = 0.0
+
+        plain_read = await client.get(f"{API}/templates/{plain.id}")
+        paired_read = await client.get(f"{API}/templates/{paired.id}")
+        listing = await client.get(f"{API}/templates/")
+
+        assert plain_read.status_code == 200, plain_read.text
+        [letter] = plain_read.json()["cover_letters"]
+        assert (letter["id"], letter["style"], letter["label"]) == (
+            "plain",
+            "plain",
+            "Lettre sobre",
+        )
+        assert letter["thumbnail_blurhash"] == "SOBRE"
+        assert "plain-letter/v" in letter["signed_full_url"]
+        assert plain_read.json()["pages"][1]["label"] == "Lettre sobre"
+        assert plain_read.json()["pages"][1]["style"] == "plain"
+        assert paired_read.json()["has_letter"] is True
+        [letter] = paired_read.json()["cover_letters"]
+        assert (letter["id"], letter["label"]) == ("template", "Lettre assortie")
+        assert "/letter/apercu_pleine_page.png" in letter["signed_full_url"]
+        by_name = {item["name"]: item for item in listing.json()}
+        assert by_name["plain"]["cover_letters"][0]["style"] == "plain"
+        assert by_name["paired"]["cover_letters"][0]["style"] == "template"
+        _plain_letter_cache["until"] = 0.0
+        _plain_letter_cache["pages"] = None
 
     async def test_un_modele_inconnu_repond_template_not_found(
         self, client: AsyncClient, fakes: Fakes, me: Principal
@@ -570,6 +619,74 @@ class TestAdministration:
         template = fakes.templates.templates[UUID(body["template_id"])]
         assert template.is_premium is True
         assert template.label == "Méridien"
+        assert body["has_letter"] is False
+        assert body["signed_letter_source_url"] is None
+
+    async def test_le_depot_accepte_la_lettre_assortie_du_modele(
+        self,
+        client: AsyncClient,
+        fakes: Fakes,
+        admin: dict[str, str],
+        storage: InMemoryObjectStorage,
+    ) -> None:
+        response = await client.post(
+            f"{API}/internal/templates",
+            headers=admin,
+            files={
+                "file": ("cv.pdf", b"%PDF-1.7 source", "application/pdf"),
+                "letter": ("lettre.pdf", b"%PDF-1.7 lettre", "application/pdf"),
+            },
+            data={"name": "Sacha"},
+        )
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert "v1/letter_source.pdf" in body["signed_letter_source_url"]
+        assert body["signed_letter_sample_render_url"] is None
+        version = fakes.templates.versions[UUID(body["id"])]
+        assert version.letter_source_key is not None
+        assert await storage.get(Bucket.TEMPLATES, version.letter_source_key) == b"%PDF-1.7 lettre"
+
+    async def test_une_lettre_trop_lourde_est_refusee_sans_etre_tronquee(
+        self,
+        client: AsyncClient,
+        fakes: Fakes,
+        admin: dict[str, str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from karria.modules.documents.api import routers  # noqa: PLC0415
+
+        monkeypatch.setattr(routers, "MAX_TEMPLATE_PDF", 8)
+        response = await client.post(
+            f"{API}/internal/templates",
+            headers=admin,
+            files={
+                "file": ("cv.pdf", b"%PDF-1.7", "application/pdf"),
+                "letter": ("lettre.pdf", b"%PDF-1.7 trop longue", "application/pdf"),
+            },
+            data={"name": "Sacha"},
+        )
+
+        assert response.status_code == 422
+        assert reason(response) == "template_too_large"
+        assert response.json()["error"]["details"]["field"] == "letter"
+        assert fakes.templates.templates == {}
+
+    async def test_une_lettre_qui_n_est_pas_un_pdf_est_refusee(
+        self, client: AsyncClient, fakes: Fakes, admin: dict[str, str]
+    ) -> None:
+        response = await client.post(
+            f"{API}/internal/templates",
+            headers=admin,
+            files={
+                "file": ("cv.pdf", b"%PDF-1.7 source", "application/pdf"),
+                "letter": ("lettre.png", b"\x89PNG", "image/png"),
+            },
+            data={"name": "Sacha"},
+        )
+
+        assert response.status_code == 422
+        assert reason(response) == "template_unreadable"
 
     async def test_un_fichier_qui_n_est_pas_un_pdf_est_refuse(
         self, client: AsyncClient, fakes: Fakes, admin: dict[str, str]
