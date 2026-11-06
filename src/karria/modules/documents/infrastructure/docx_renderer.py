@@ -33,7 +33,7 @@ from xml.sax.saxutils import quoteattr
 
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
@@ -113,6 +113,12 @@ def emu(mm: float) -> int:
 def twips(mm: float) -> int:
     """Millimètres → vingtièmes de point."""
     return round(mm / 25.4 * 1440)
+
+
+def col_w_of(cell: _Cell) -> float:
+    """La largeur d'une cellule de colonne (mm), telle que `set_widths` l'a posée."""
+    width = cell.width
+    return float(width) / EMU_PER_MM if isinstance(width, int) else 60.0
 
 
 def no_borders(table: Any) -> None:
@@ -1068,8 +1074,15 @@ class DocxRenderer:
         sep = sl.get("separator")
         st0 = self.styles[key0]
         space_mm = self.fonts.width_mm(" ", {**st0, "letter_spacing_pt": 0.0}) * self.f
+        flush = bool(sl.get("flush_right")) and len(vals) == 2  # noqa: PLR2004
         for role, v in vals[1:]:
-            if sep:
+            if flush:
+                # Le second champ au fer à droite : un taquet aligné à droite au bord de la colonne.
+                p.paragraph_format.tab_stops.add_tab_stop(
+                    Mm(max(col_w_of(cell) - sl["dx_mm"], 10.0)), WD_TAB_ALIGNMENT.RIGHT
+                )
+                p.add_run("\t")
+            elif sep:
                 # « | » à la couleur du filet, entouré des blancs mesurés : chaque
                 # espace est élargi (interlettrage) jusqu'à l'écart du modèle.
                 bar_mm = (

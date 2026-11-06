@@ -546,11 +546,42 @@ class HtmlRenderer:
                     '<div class="main" style="flex:1 1 0;min-width:0;position:relative">'
                 )
             last_half = half(first_st)
+            grid_open: Json | None = None
             for r_i, (sl, vals, m) in enumerate(rows):
                 key0 = style_key(self.styles, kind, vals[0][0])
                 st0 = self.styles[key0]
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
                 width = col_w - sl["dx_mm"]
+                if grid_open is not None and grid_open is not sl:
+                    out.append("</div>")
+                    grid_open = None
+                if sl.get("columns") and len(vals) == 1:
+                    # Une liste en colonnes : les entrées se rangent côte à côte, au
+                    # pas mesuré, et passent à la ligne quand la colonne est pleine.
+                    role, v, path = vals[0]
+                    if grid_open is None:
+                        out.append(
+                            f'<div style="display:flex;flex-wrap:wrap;margin-left:{sl["dx_mm"]:.2f}mm;'
+                            f'width:{width:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
+                        )
+                        grid_open = sl
+                        margin_row = 0.0
+                    out.append(
+                        self.text(
+                            key0,
+                            v,
+                            margin=margin_row,
+                            dx=0.0,
+                            width=min(sl["column_pitch_mm"], width),
+                            align=sl["align"],
+                            extra=";flex:none",
+                            path=path,
+                        )
+                        + self.marker(s, role, st0)
+                        + "</div>"
+                    )
+                    last_half = half(st0)
+                    continue
                 if len(vals) == 1 and sl.get("label"):
                     role, v, path = vals[0]
                     out.append(
@@ -590,6 +621,8 @@ class HtmlRenderer:
                     row = self.joined_row(kind, sl, vals, margin=margin_row, width=width, st0=st0)
                     out.append(row[: -len("</div>")] + ornament + "</div>")
                 last_half = half(st0)
+            if grid_open is not None:
+                out.append("</div>")
             if side:
                 out.append("</div>")
             out.append("</div>")
@@ -763,9 +796,12 @@ class HtmlRenderer:
         """Plusieurs champs sur une ligne (« Entreprise | 2016 »), séparés comme dans le modèle."""
         gapx = sl["gap_mm"] or 3.0
         sep = sl.get("separator")
+        flush = bool(sl.get("flush_right")) and len(vals) == 2  # noqa: PLR2004
         parts = []
         for n, (role, v, path) in enumerate(vals):
-            if n:
+            if n and flush:
+                parts.append('<span style="flex:1 1 auto;min-width:3mm"></span>')
+            elif n:
                 if sep:
                     parts.append(
                         f'<span style="display:inline-block;align-self:flex-start;margin:{sep["dy_mm"] + half(st0):.2f}mm '

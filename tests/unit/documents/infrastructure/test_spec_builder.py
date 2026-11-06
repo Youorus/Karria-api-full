@@ -887,3 +887,107 @@ class TestEtiquettesEtTitres:
         contact = sections(spec)["contact"]
         sec = next(x for x in view["sections"] if x["kind"] == "contact")
         assert estimate(spec["styles"], contact, sec, 60.0, cv_font_set()) > 10
+
+
+class TestGrillesEtFerADroite:
+    def _grid(self) -> tuple[Json, Json]:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "INTERETS", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Photo", 20, 57, w=14),
+            raw_line("L4", "Lecture", 50, 57, w=14),
+            raw_line("L5", "Cuisine", 20, 64, w=14),
+            raw_line("L6", "Art", 50, 64, w=8),
+            raw_line("L7", "Mode", 20, 71, w=10),
+        ]
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "interests", 0),
+                ("interest", "interests", 0),
+                ("interest", "interests", 0),
+                ("interest", "interests", 0),
+                ("interest", "interests", 0),
+                ("interest", "interests", 0),
+            ],
+        )
+        spec, sample, _ = b.build()
+        return spec, sample
+
+    def test_une_liste_en_grille_a_ses_colonnes_et_son_pas(self) -> None:
+        spec, sample = self._grid()
+        interests = sections(spec)["interests"]
+        assert interests["slot_order"] == ["interest"]
+        sl = slot(interests, "interest")
+        assert sl["columns"] == 2
+        assert sl["column_pitch_mm"] == pytest.approx(30.0)
+        assert sl["dx_mm"] == 0.0
+        assert sl["repeat_margin_mm"] == pytest.approx(7.0 - 3.6, abs=0.05)
+        assert [i["name"] for i in sample["interests"]] == [
+            "Photo",
+            "Lecture",
+            "Cuisine",
+            "Art",
+            "Mode",
+        ]
+
+    def test_le_rendu_dune_grille_range_les_entrees_cote_a_cote(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        spec, sample = self._grid()
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert html.count("display:flex;flex-wrap:wrap") == 1
+        assert html.count("width:30.00mm") == 5
+        assert "Mode" in html
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+
+    def test_des_dates_au_fer_a_droite_dune_ligne_composee(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "EXPERIENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Chargée de communication", 20, 57, w=40, font=BOLD),
+            raw_line("L4", "2024 - 2025", 80, 57, w=20),
+            raw_line("L5", "Stage", 20, 70, w=12, font=BOLD),
+            raw_line("L6", "2021", 90, 70, w=10),
+        ]
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "experiences", 0),
+                ("item_title", "experiences", 1),
+                ("item_dates", "experiences", 1),
+                ("item_title", "experiences", 2),
+                ("item_dates", "experiences", 2),
+            ],
+        )
+        spec, sample, _ = b.build()
+        sl = slot(sections(spec)["experiences"], "item_title+item_dates")
+        assert sl["flush_right"] is True
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert html.count('<span style="flex:1 1 auto;min-width:3mm"></span>') == 2
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+        # Des droites qui diffèrent : l'écart mesuré, pas le fer à droite.
+        lines[5] = raw_line("L6", "2021", 64, 70, w=10)
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "experiences", 0),
+                ("item_title", "experiences", 1),
+                ("item_dates", "experiences", 1),
+                ("item_title", "experiences", 2),
+                ("item_dates", "experiences", 2),
+            ],
+        )
+        spec, _, _ = b.build()
+        assert slot(sections(spec)["experiences"], "item_title+item_dates")["flush_right"] is False

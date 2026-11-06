@@ -416,6 +416,20 @@ class SpecBuilder:
         previous_item_bottom: float | None = None
         for item_no in sorted(all_groups):
             rows = self.rows(groups[item_no]) if groups.get(item_no) else []
+            # Une liste en grille (deux entrées par ligne) : une entrée par rangée,
+            # le nombre de colonnes se mesure ensuite (`grid_spec`).
+            rows = (
+                [
+                    {"top": e["top"], "bottom": e["bottom"], "elems": [e]}
+                    for r in rows
+                    for e in r["elems"]
+                ]
+                if any(
+                    all(e["role"] in LIST_ROLES for e in r["elems"]) and len(r["elems"]) > 1
+                    for r in rows
+                )
+                else rows
+            )
             all_rows = self.rows(all_groups[item_no])
             item_top = rows[0]["top"] if rows else all_rows[0]["top"]
             if previous_item_bottom is None:
@@ -434,6 +448,7 @@ class SpecBuilder:
                 else:
                     gaps_item[-1] = item_top - previous_item_bottom
             prev = item_top
+            prev_top = -1e9
             prev_role: str | None = None
             for row in rows:
                 key = "+".join(e["role"] for e in row["elems"])
@@ -449,9 +464,11 @@ class SpecBuilder:
                     },
                 )
                 if prev_role == key:
-                    slot["repeat"].append(row["top"] - prev)
+                    if row["top"] > prev_top + 0.5:  # pas la même rangée d'une grille
+                        slot["repeat"].append(row["top"] - prev)
                 elif prev_role is not None:
                     slot["margins"].append(row["top"] - prev)
+                slot.setdefault("xs", []).append(row["elems"][0]["x"])
                 label = labels.get(id(row["elems"][0]))
                 if label is not None:
                     slot["label"] = self.label_spec(label[0], row["elems"][0], label[1], col_x)
@@ -462,6 +479,7 @@ class SpecBuilder:
                 if len(row["elems"]) > 1:
                     a, b = row["elems"][0], row["elems"][1]
                     slot["gaps"].append(b["x"] - a["right"])
+                    slot.setdefault("rights", []).append(b["right"])
                     sep = self.row_separator(a, b)
                     if sep:
                         slot["separator"] = sep
@@ -469,6 +487,7 @@ class SpecBuilder:
                     if len(e["lines"]) > 1:
                         slot["align"].append(self.alignment(e["lines"]))
                 prev = row["bottom"]
+                prev_top = row["top"]
                 prev_role = key
             previous_item_bottom = max(r["bottom"] for r in all_rows)
         spec["first_gap_mm"] = round(med(first_gap), 2)
@@ -486,6 +505,14 @@ class SpecBuilder:
                 "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
                 "separator": v.get("separator"),
                 "label": v.get("label"),
+                # Le second champ d'une ligne composée au fer à droite (dates à la
+                # marge) : mêmes droites, écarts qui varient.
+                "flush_right": bool(
+                    len(v.get("rights", [])) >= 2  # noqa: PLR2004
+                    and max(v["rights"]) - min(v["rights"]) < 1.0
+                    and max(v["gaps"]) - min(v["gaps"]) > 2.0  # noqa: PLR2004
+                ),
+                **self.grid_spec(v),
             }
             for k, v in slots.items()
         ]
@@ -499,6 +526,22 @@ class SpecBuilder:
         spec["decorations"] = self.anchored_decorations(s, all_groups, col_x, left_bound=left_bound)
         self.fill_sample(kind, all_groups, sample)
         return spec
+
+    @staticmethod
+    def grid_spec(slot: Json) -> Json:
+        """Une liste en colonnes : le nombre de colonnes et leur pas, d'après les abscisses des entrées."""
+        if not slot["roles"] or slot["roles"][0] not in LIST_ROLES:
+            return {}
+        columns: list[float] = []
+        for x in sorted(slot.get("xs", [])):
+            if not columns or x - columns[-1] > 2.0:  # noqa: PLR2004
+                columns.append(x)
+        if len(columns) < 2:  # noqa: PLR2004
+            return {}
+        return {
+            "columns": len(columns),
+            "column_pitch_mm": round(med([b - a for a, b in itertools.pairwise(columns)]), 2),
+        }
 
     @staticmethod
     def attach_labels(
