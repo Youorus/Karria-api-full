@@ -21,6 +21,7 @@ from karria.modules.cv.application import (
     CvDocumentExtractor,
     CvRepository,
     DraftRepository,
+    EnhanceCurrentPhoto,
     FinalizeDraft,
     ForgetUser,
     GetDraft,
@@ -176,6 +177,12 @@ def get_upload_photo(
     return UploadPhoto(enhancer, storage, photos, clock)
 
 
+def get_enhance_current_photo(
+    cvs: CvRepositoryDep, storage: ObjectStorageDep, upload: UploadPhotoDep
+) -> EnhanceCurrentPhoto:
+    return EnhanceCurrentPhoto(cvs, storage, upload)
+
+
 def get_import_cv(
     *,
     extractor: CvExtractorDep,
@@ -236,6 +243,7 @@ ValidateChapterDep = Annotated[ValidateChapter, Depends(get_validate_chapter)]
 FinalizeDraftDep = Annotated[FinalizeDraft, Depends(get_finalize_draft)]
 TranscribeVoiceDep = Annotated[TranscribeVoice, Depends(get_transcribe_voice)]
 UploadPhotoDep = Annotated[UploadPhoto, Depends(get_upload_photo)]
+EnhanceCurrentPhotoDep = Annotated[EnhanceCurrentPhoto, Depends(get_enhance_current_photo)]
 ImportCvDep = Annotated[ImportCv, Depends(get_import_cv)]
 UpdateCvChapterDep = Annotated[UpdateCvChapter, Depends(get_update_cv_chapter)]
 DraftPresenterDep = Annotated[DraftPresenter, Depends(get_draft_presenter)]

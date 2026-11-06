@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from karria.modules.cv.api.dependencies import (
     DraftPresenterDep,
+    EnhanceCurrentPhotoDep,
     FinalizeDraftDep,
     GetDraftDep,
     GetMyCvDep,
@@ -266,6 +267,35 @@ async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
         await gate.ensure(principal)
     payload = await image.read(_PHOTO_READ_LIMIT)
     photo = await upload.execute(principal.subject_id, payload, image.content_type, enhance=enhance)
+    return await PhotoRead.present(photo, storage)
+
+
+@cv_router.post(
+    "/me/photo/enhance",
+    summary="Rendre professionnelle la photo déjà sur mon CV",
+    response_model=PhotoRead,
+    status_code=status.HTTP_201_CREATED,
+    responses=error_responses(
+        ErrorCode.UNAUTHENTICATED,
+        ErrorCode.FORBIDDEN,
+        ErrorCode.NOT_FOUND,
+        ErrorCode.RULE_VIOLATION,
+        ErrorCode.INVALID_INPUT,
+        ErrorCode.DEPENDENCY_FAILURE,
+    ),
+)
+async def enhance_current_photo(
+    principal: AiConsentedPrincipalDep, enhance: EnhanceCurrentPhotoDep, storage: ObjectStorageDep
+) -> PhotoRead:
+    """La photo en place passe au générateur ; la version améliorée revient **en attente**.
+
+    Le CV ne change pas : la personne compare, puis retient l'améliorée par
+    `PUT /cv/me/chapters/photo` (`{ data: { image_id } }`) ou garde
+    l'originale, qui est restée. `404 cv_not_found` sans CV, `409 photo_missing`
+    sans photo ; `422 photo_enhance_refused` / `503 photo_enhance_unavailable`
+    comme `POST /cv/photo` ; `403 ai_consent_required` sans accord (ADR-0025).
+    """
+    photo = await enhance.execute(principal.subject_id)
     return await PhotoRead.present(photo, storage)
 
 
