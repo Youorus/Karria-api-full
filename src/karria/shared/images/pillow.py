@@ -277,6 +277,26 @@ def image_size(payload: bytes) -> tuple[int, int]:
         return int(width), int(height)
 
 
+def side_by_side(left: bytes, right: bytes, *, gutter: int = 16) -> bytes:
+    """Deux images côte à côte (PNG), séparées d'une gouttière grise, à la même hauteur.
+
+    La seconde est ramenée à la hauteur de la première ; une comparaison
+    « source | rendu » se lit d'un coup d'œil, par une personne ou un modèle.
+    """
+    with Image.open(BytesIO(left)) as a, Image.open(BytesIO(right)) as b:
+        a_rgb = a.convert("RGB")
+        scale = a_rgb.height / max(b.height, 1)
+        b_rgb = b.convert("RGB").resize(
+            (max(1, round(b.width * scale)), a_rgb.height), Image.Resampling.LANCZOS
+        )
+        canvas = Image.new(
+            "RGB", (a_rgb.width + gutter + b_rgb.width, a_rgb.height), (160, 160, 160)
+        )
+        canvas.paste(a_rgb, (0, 0))
+        canvas.paste(b_rgb, (a_rgb.width + gutter, 0))
+        return _encode_png(canvas)
+
+
 def crop_to_frame(
     payload: bytes,
     *,

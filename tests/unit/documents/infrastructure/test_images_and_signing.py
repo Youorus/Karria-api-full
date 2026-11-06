@@ -14,7 +14,14 @@ from pydantic import SecretStr
 
 from doubles import sample_image
 from karria.shared.config import Provider, StorageSettings
-from karria.shared.images import blurhash, crop_to_frame, image_size, resize_to_png, to_webp
+from karria.shared.images import (
+    blurhash,
+    crop_to_frame,
+    image_size,
+    resize_to_png,
+    side_by_side,
+    to_webp,
+)
 from karria.shared.images.pillow import _base83, _to_linear, _to_srgb
 from karria.shared.storage import Bucket
 from karria.shared.storage.s3 import S3ObjectStorage
@@ -40,6 +47,12 @@ class TestImagesProduites:
 
     def test_dimensions(self) -> None:
         assert image_size(sample_image(64, 48)) == (64, 48)
+
+    def test_cote_a_cote_a_la_hauteur_de_la_premiere(self) -> None:
+        out = _open(side_by_side(sample_image(40, 30), sample_image(100, 60, fmt="PNG"), gutter=4))
+        assert out.format == "PNG"
+        assert out.size == (40 + 4 + 50, 30)
+        assert out.getpixel((42, 15)) == (160, 160, 160)
 
     def test_recadrage_d_une_image_large_au_rapport_du_cadre(self) -> None:
         out = _open(crop_to_frame(sample_image(200, 100), ratio=1.0, width=80))
