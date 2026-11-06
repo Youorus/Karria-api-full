@@ -722,3 +722,104 @@ def test_un_champ_repete_dans_un_autre_style_fait_deux_elements(built: tuple) ->
     assert (first["style"], second["style"]) == ("header.headline", "header.headline.2")
     assert "sample_lines" in second
     assert "sample_lines" not in first
+
+
+def test_un_nom_en_deux_polices_sur_une_ligne_fait_prenom_et_nom() -> None:
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_assembler import split_mixed_name  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+    chars = [(c, 10.0 + i * 2, 12.0 + i * 2) for i, c in enumerate("CéliaNAUDIN")]
+    spans = [
+        {"text": c, "font": "Muli-Regular" if i < 5 else "Muli-ExtraBold", "size": 48.0}
+        for i, c in enumerate("CéliaNAUDIN")
+    ]
+    raw = raw_line(
+        "L1",
+        "Célia NAUDIN",
+        10.0,
+        10.0,
+        w=24.0,
+        font="Muli-ExtraBold",
+        size=48.0,
+        spans=spans,
+        chars=chars,
+    )
+    line = Line(raw, {"role": "full_name", "section": "header", "item": 0})
+    halves = split_mixed_name(line)
+    assert halves is not None
+    first, last = halves
+    assert (first.text, first.raw["font"], first.x, first.w) == (
+        "Célia",
+        "Muli-Regular",
+        10.0,
+        10.0,
+    )
+    assert (last.text, last.raw["font"], last.x) == ("NAUDIN", "Muli-ExtraBold", 20.0)
+    assert last.raw["caps"] is True
+    # Une seule police, ou une coupe qui n'est pas entre deux mots : rien ne change.
+    assert (
+        split_mixed_name(
+            Line(
+                {**raw, "spans": None},
+                line.__dict__ and {"role": "full_name", "section": "header", "item": 0},
+            )
+        )
+        is None
+    )
+    odd = [
+        {**sp, "font": "Muli-Regular" if i < 3 else "Muli-ExtraBold"} for i, sp in enumerate(spans)
+    ]
+    assert (
+        split_mixed_name(
+            Line({**raw, "spans": odd}, {"role": "full_name", "section": "header", "item": 0})
+        )
+        is None
+    )
+    assert (
+        split_mixed_name(
+            Line(
+                {**raw, "text": "NAUDIN", "spans": spans[5:], "chars": chars[5:]},
+                {"role": "full_name", "section": "header", "item": 0},
+            )
+        )
+        is None
+    )
+
+
+def test_un_paragraphe_justifie_dit_le_bord_de_sa_boite(built: tuple) -> None:
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+    assembler = built[3]
+    styles = {
+        "summary.summary": {**assembler.style_of([assembler.lines[0]]), "letter_spacing_pt": 0.0}
+    }
+
+    def line(lid: str, text: str, y: float, w: float) -> Line:
+        return Line(
+            raw_line(lid, text, 20.0, y, w=w), {"role": "summary", "section": "summary", "item": 0}
+        )
+
+    long = "aaaa bbbb cccc dddd eeee ffff gggg"
+    lines = [line("L1", long, 10, 60.0), line("L2", long, 15, 60.0), line("L3", "hhhh", 20, 8.0)]
+    section = {"kind": "summary", "elements": [{"role": "summary", "lines": lines}]}
+    width = assembler.wrapped_box_width(section, {}, styles, 20.0)
+    natural = assembler.fonts.width_mm(long, styles["summary.summary"])
+    with_next = assembler.fonts.width_mm(long + " hhhh", styles["summary.summary"])
+    assert width is not None
+    # Justifié : le bord mesuré (60 mm), borné par la ligne la plus large et le mot suivant.
+    assert width >= natural
+    assert width <= max(60.0, natural) + 0.01
+    assert width <= max(with_next, natural)
+    # Une ligne seule compte pour la largeur minimale ; sans repli, pas de boîte.
+    single = {"kind": "summary", "elements": [{"role": "summary", "lines": [lines[0]]}]}
+    assert assembler.wrapped_box_width(single, {}, styles, 20.0) is None
+    wide = line("L9", long + " " + long, 30, 120.0)
+    both = {
+        "kind": "summary",
+        "elements": [{"role": "summary", "lines": [wide]}, {"role": "summary", "lines": lines}],
+    }
+    width_both = assembler.wrapped_box_width(both, {}, styles, 20.0)
+    assert width_both is not None
+    assert width_both >= assembler.fonts.width_mm(wide.text, styles["summary.summary"])

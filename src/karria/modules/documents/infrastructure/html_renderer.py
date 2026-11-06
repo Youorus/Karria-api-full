@@ -553,6 +553,7 @@ class HtmlRenderer:
                 )
             last_half = half(first_st)
             grid_open: Json | None = None
+            grid_count = 0
             for r_i, (sl, vals, m) in enumerate(rows):
                 key0 = style_key(self.styles, kind, vals[0][0])
                 st0 = self.styles[key0]
@@ -578,7 +579,12 @@ class HtmlRenderer:
                             f'width:{grid_w:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
                         )
                         grid_open = sl
+                        grid_count = 0
                         margin_row = 0.0
+                    elif grid_count % int(sl["columns"]):
+                        # Une entrée de la même rangée : pas de marge (la rangée en a une).
+                        margin_row = 0.0
+                    grid_count += 1
                     out.append(
                         self.text(
                             key0,
@@ -716,8 +722,14 @@ class HtmlRenderer:
             for role in sl["roles"]:
                 val = item.get(role)
                 vals = val if isinstance(val, list) else ([val] if val else [])
+                repeat = sl.get("repeat_margin_mm")
                 rows.extend(
-                    (role, v, item_path(sec, index, role, j), sl["margin_top_mm"])
+                    (
+                        role,
+                        v,
+                        item_path(sec, index, role, j),
+                        sl["margin_top_mm"] if j == 0 or repeat is None else repeat,
+                    )
                     for j, v in enumerate(vals)
                 )
         if not rows:

@@ -65,6 +65,48 @@ CENTER_TOLERANCE_MM: Final = 1.5
 #: Deux champs centrés l'un sur l'autre doivent différer en largeur pour que
 #: le centrage se distingue d'un simple alignement à gauche.
 WIDTH_DIFFERENCE_MM: Final = 2.0
+#: Un nom complet en deux polices se coupe entre deux mots : il en faut deux.
+MIN_NAME_WORDS: Final = 2
+
+
+def split_mixed_name(line: Line) -> tuple[Line, Line] | None:
+    """Un nom complet écrit en deux polices (« Célia NAUDIN », prénom maigre, nom gras) → deux lignes.
+
+    Le PDF donne la police de chaque glyphe ; quand elle change exactement
+    entre deux mots, chaque moitié devient une ligne à sa place, sa police et
+    sa largeur mesurées. Sinon, rien ne change.
+    """
+    spans, chars = line.raw.get("spans"), line.raw.get("chars")
+    if not spans or not chars or len(spans) != len(chars):
+        return None
+    groups: list[list[int]] = []
+    for i, span in enumerate(spans):
+        if groups and spans[groups[-1][-1]]["font"] == span["font"]:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    if len(groups) != 2:  # noqa: PLR2004
+        return None
+    words = line.text.split()
+    first_text = "".join(str(chars[i][0]) for i in groups[0]).replace(" ", "")
+    if len(words) < MIN_NAME_WORDS or "".join(words[:-1]) != first_text:
+        return None
+    halves: list[Line] = []
+    for group, text in ((groups[0], " ".join(words[:-1])), (groups[1], words[-1])):
+        x0, x1 = min(chars[i][1] for i in group), max(chars[i][2] for i in group)
+        raw = {
+            **line.raw,
+            "text": text,
+            "font": spans[group[0]]["font"],
+            "size": spans[group[0]]["size"],
+            "x": round(x0, 2),
+            "w": round(x1 - x0, 2),
+            "caps": text.isupper() and any(ch.isalpha() for ch in text),
+            "spans": None,
+            "chars": [chars[i] for i in group],
+        }
+        halves.append(Line(raw, {"role": line.role, "section": line.section, "item": line.item}))
+    return halves[0], halves[1]
 
 
 def style_runs(lines: list[Line]) -> list[list[Line]]:
@@ -225,23 +267,35 @@ class SpecAssembler(SpecBuilder):
         le dessinateur l'aurait replié ; sans paragraphe replié, la colonne.
         """
         lower, upper = 0.0, float("inf")
+        measured: float | None = None
         found = False
         for e in s.get("elements") or []:
             lines = e["lines"]
-            if len(lines) < 2:  # noqa: PLR2004
-                continue
             st = styles.get(f"{s['kind']}.{e['role']}")
             if st is None:
                 continue
+            # Toute ligne tient dans la boîte, y compris celles qui ne se replient pas.
+            for ln in lines:
+                lower = max(lower, ln.x - col_x + self.fonts.width_mm(ln.text, st))
+            if len(lines) < 2:  # noqa: PLR2004
+                continue
             found = True
+            if self.alignment(lines) == "justify":
+                # Un paragraphe justifié touche le bord de sa boîte : le bord est mesuré.
+                edge = max(ln.right for ln in lines[:-1]) - col_x
+                measured = edge if measured is None else max(measured, edge)
             for a, b in itertools.pairwise(lines):
-                lower = max(lower, a.x - col_x + self.fonts.width_mm(a.text, st))
                 first_word = b.text.split()[0] if b.text.split() else ""
                 upper = min(upper, a.x - col_x + self.fonts.width_mm(f"{a.text} {first_word}", st))
-            lower = max(lower, lines[-1].x - col_x + self.fonts.width_mm(lines[-1].text, st))
         if not found:
             return None
-        width = (lower + upper) / 2 if upper > lower else lower + COLUMN_SLACK_MM
+        if measured is not None:
+            # Le bord mesuré, sauf si le mot suivant y tiendrait avec la police
+            # servie (plus étroite) : la preuve du repli l'emporte, sans jamais
+            # descendre sous la ligne la plus large.
+            width = max(lower, min(measured, upper) if upper > lower else measured)
+        else:
+            width = (lower + upper) / 2 if upper > lower else lower + COLUMN_SLACK_MM
         return round(min(width, spec_sec.get("width_mm") or float("inf")), 2)
 
     def column_right(
@@ -431,7 +485,14 @@ class SpecAssembler(SpecBuilder):
         by_field: dict[str, list[Line]] = {}
         for h in self.plan.header.lines:
             if self.owner.get(h.line) == "header" and h.line in self.by_id:
-                by_field.setdefault(h.field, []).append(self.by_id[h.line])
+                line = self.by_id[h.line]
+                if h.field == "full_name" and (halves := split_mixed_name(line)) is not None:
+                    # « Célia NAUDIN » en deux polices sur une ligne : prénom et nom,
+                    # chacun dans son style.
+                    by_field.setdefault("first_name", []).append(halves[0])
+                    by_field.setdefault("last_name", []).append(halves[1])
+                    continue
+                by_field.setdefault(h.field, []).append(line)
         # Un champ écrit deux fois dans deux styles (un rappel du poste en haut de
         # page, le poste en grand sous le nom) fait deux éléments, pas un champ
         # sur deux lignes : un champ sur plusieurs lignes garde une seule police.

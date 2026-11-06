@@ -619,14 +619,24 @@ class SpecBuilder:
             main_top = min(e["top"] for e in main) if main else rows[0]["top"]
             offsets.append(rows[0]["top"] - main_top)
             prev: float | None = None
+            prev_key: str | None = None
             for row in rows:
                 key = "+".join(e["role"] for e in row["elems"])
                 slot = slots.setdefault(
-                    key, {"key": key, "roles": [e["role"] for e in row["elems"]], "margins": []}
+                    key,
+                    {
+                        "key": key,
+                        "roles": [e["role"] for e in row["elems"]],
+                        "margins": [],
+                        "repeat": [],
+                    },
                 )
-                if prev is not None:
+                if prev is not None and prev_key == key:
+                    slot["repeat"].append(row["top"] - prev)
+                elif prev is not None:
                     slot["margins"].append(row["top"] - prev)
                 prev = row["bottom"]
+                prev_key = key
         main_xs = [e["x"] for es in groups.values() for e in es]
         return {
             "dx_mm": round(x0 - col_x, 2),
@@ -641,6 +651,7 @@ class SpecBuilder:
                     "key": v["key"],
                     "roles": v["roles"],
                     "margin_top_mm": round(med(v["margins"], 0.0), 2),
+                    "repeat_margin_mm": round(med(v["repeat"], 0.0), 2) if v["repeat"] else None,
                 }
                 for v in slots.values()
             ],
@@ -732,7 +743,8 @@ class SpecBuilder:
                 last is not None
                 and 0 < ln.y - last["lines"][-1].y < ln.h * 2.0
                 and ln.id not in markers
-                and ln.role != "item_dates"
+                # Une date, une étiquette : jamais la suite de la précédente.
+                and ln.role not in ("item_dates", "label")
                 # Une liste sans puces (compétences, langues, intérêts) : une
                 # ligne = une entrée ; avec des puces, la ligne sans puce continue.
                 and not (ln.role in LIST_ROLES and not markers)

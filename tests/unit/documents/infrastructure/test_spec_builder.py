@@ -829,6 +829,31 @@ class TestEtiquettesEtTitres:
         spec, sample, _ = b.build()
         return spec, sample
 
+    def test_deux_etiquettes_consecutives_ne_se_recollent_pas(self) -> None:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "REFERENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Phone:", 20, 57, w=10, font=BOLD),
+            raw_line("L4", "0612", 32, 57, w=10),
+            raw_line("L5", "Email :", 20, 61, w=10, font=BOLD),
+            raw_line("L6", "a@b.fr", 32, 61, w=14),
+        ]
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "references", 0),
+                ("label", "references", 1),
+                ("phone", "references", 1),
+                ("label", "references", 1),
+                ("email", "references", 1),
+            ],
+        )
+        spec, _, _ = b.build()
+        refs = sections(spec)["references"]
+        assert slot(refs, "phone")["label"]["text"] == "Phone:"
+        assert slot(refs, "email")["label"]["text"] == "Email :"
+
     def test_une_etiquette_au_dessus_et_une_etiquette_en_ligne(self) -> None:
         spec, sample = self._spec()
         contact = sections(spec)["contact"]
