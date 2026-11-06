@@ -151,9 +151,23 @@ sur une page dense.
 
 | Modèle | v1 | v2 (passe gardée) | SSIM tol. / mots ≤ 2 mm / style / décor | pages | jetons (entrée / sortie) | verdict |
 |---|---|---|---|---|---|---|
-| _(à compléter par le lot)_ | | | | | | |
+| romain-dupont (Canva) | 0,52 | **0,940** (p1) | 0,893 / 0,952 / 1,00 / 1,00 | 1 | 11 181 / 1 522 | publié |
+| sacha-dubois (Canva) | 0,51 | **0,916** (p1) | 0,866 / 0,905 / 1,00 / 1,00 | 1 | 10 957 / 1 338 | publié (Canva Sans → Inter déclaré, plancher 0,84) |
+| meridian (original) | 0,92 | **0,933** (p1) | 0,904 / 0,942 / 1,00 / 0,94 | 1 | 12 016 / 1 770 | publié |
+| minimalist (original) | 0,92 | **0,924** (p1) | 0,891 / 1,00 / 1,00 / 0,82 | 1 | 11 134 / 1 565 | publié |
+| marketing (original) | 0,92 | 0,842 (p2) | 0,823 / 0,816 / 1,00 / 0,78 | 1 | 12 344 + 17 637 / 1 790 + 1 790 | revue — **régression** à réexaminer (lot lancé avant les deux derniers correctifs) |
+| cv2 | — | **0,921** (p1) | 0,881 / 0,992 / 1,00 / 0,84 | 1 | 11 605 / 1 646 | publié |
+| cv6 | — | **0,922** (p1) | 0,888 / 0,980 / 1,00 / 0,85 | 1 | 11 515 / 1 550 | publié |
+| cv8 | — | **0,952** (p1) | 0,911 / 0,984 / 1,00 / 0,97 | 1 | 12 120 / 1 661 | publié |
+| cv9 | — | **0,934** (p1) | 0,911 / 0,957 / 1,00 / 0,90 | 1 | 11 111 / 1 548 | publié |
+| cv10 | — | 0,764 (p1) | 0,787 / 0,440 / 1,00 / 1,00 | 1 | 13 196 + 19 839 / 1 831 + 1 824 | revue — trois familles substituées (CatchyMager, Hatton : fontes Canva non libres ; Glacial Indifference absente de la bibliothèque) |
+| cv1 | — | 0,649 (p1) | 0,774 / 0,338 / 0,99 / 0,45 | 1 | 13 198 + 20 205 / 1 926 + 1 926 | revue — étiquettes empilées trop espacées, références en deux colonnes empilées, pastilles de frise absentes (diagnostics dans `REPRISE.md`) |
+| cv5 | — | 0,639 (p2) | 0,794 / 0,183 / 0,95 / 0,63 | 1 | 10 628 + 16 846 / 1 323 + 1 317 | revue — profil au fer à droite rendu à gauche, colonne d'expériences plus large que la page |
+| cv3 | — | — | — | — | 2 passes (plantage) | échec « Crop exceeds page dimensions » — corrigé (recadrage compté en pixels comme pdfium), pas réingéré |
 
-_(Le tableau est rempli par la session du 2026-11-06 : voir `docs/REPRISE.md`.)_
+Lecture : cv4 et cv7 sont les mêmes modèles Canva que sacha-dubois et romain-dupont (lettre jointe
+en plus) ; p1/p2 = passe gardée ; un modèle coûte 11–13 k jetons en entrée et 1,3–1,9 k en sortie
+par passe (10–15 s), la passe de correction ~17–20 k en entrée.
 
 ## Conséquences
 

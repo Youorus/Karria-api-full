@@ -21,6 +21,7 @@ from __future__ import annotations
 import ctypes
 import io
 import itertools
+import math
 import re
 import statistics
 from collections import Counter
@@ -37,6 +38,34 @@ MM: Final = 72 / 25.4
 _SUBSET_PREFIX: Final = re.compile(r"^[A-Z]{6}\+")
 
 Json = dict[str, Any]
+
+
+def _crop_for(
+    size_pt: tuple[float, float], box_mm: tuple[float, ...], scale: float
+) -> tuple[float, float, float, float] | None:
+    """Le recadrage pdfium (gauche, bas, droite, haut, en points) d'une zone `x, y, w, h` en mm.
+
+    Une zone plus fine qu'un point (un filet) s'élargit à un point, une zone
+    qui déborde est rognée à la page. pdfium arrondit chaque bord au pixel
+    **supérieur** à l'échelle du rendu et refuse ce qui ne laisse pas un pixel :
+    on compte comme lui, et on rend `None` quand rien ne resterait.
+    """
+    width, height = size_pt
+    x, y, w, h = box_mm
+    w, h = max(w, 1 / MM), max(h, 1 / MM)
+    crop = (
+        max(0.0, x * MM),
+        max(0.0, height - (y + h) * MM),
+        max(0.0, width - (x + w) * MM),
+        max(0.0, y * MM),
+    )
+    px = [math.ceil(c * scale) for c in crop]
+    if (
+        math.ceil(width * scale) - px[0] - px[2] < 1
+        or math.ceil(height * scale) - px[1] - px[3] < 1
+    ):
+        return None
+    return crop
 
 
 def base_font_name(font: str) -> str:
@@ -418,21 +447,9 @@ class PdfDocument:
     ) -> bytes:
         """La page (ou une zone `x, y, w, h` en mm) en PNG."""
         page = self._pdf[index]
-        width, height = page.get_size()
         crop = (0.0, 0.0, 0.0, 0.0)
         if box_mm is not None:
-            x, y, w, h = box_mm
-            # Une zone plus fine qu'un point (un filet) s'élargit à un point :
-            # pdfium refuse un recadrage qui ne laisse rien.
-            w, h = max(w, 1 / MM), max(h, 1 / MM)
-            crop = (
-                max(0.0, x * MM),
-                max(0.0, height - (y + h) * MM),
-                max(0.0, width - (x + w) * MM),
-                max(0.0, y * MM),
-            )
-            if crop[0] + crop[2] >= width or crop[1] + crop[3] >= height:
-                crop = (0.0, 0.0, 0.0, 0.0)
+            crop = _crop_for(page.get_size(), box_mm, dpi / 72) or crop
         bitmap = page.render(scale=dpi / 72, crop=crop)
         buffer = io.BytesIO()
         bitmap.to_pil().save(buffer, "PNG")
@@ -444,17 +461,10 @@ class PdfDocument:
         Canva détoure des carrés en ronds : le tracé ment, le rendu non.
         """
         page = self._pdf[0]
-        width, height = page.get_size()
-        x, y, w, h = box_mm
         # Une figure qui déborde de la page est rognée à la page : pdfium refuse
         # un recadrage hors des bords.
-        crop = (
-            max(0.0, x * MM),
-            max(0.0, height - (y + h) * MM),
-            max(0.0, width - (x + w) * MM),
-            max(0.0, y * MM),
-        )
-        if crop[0] + crop[2] >= width or crop[1] + crop[3] >= height:
+        crop = _crop_for(page.get_size(), box_mm, 600 / 72)
+        if crop is None:
             return False
         image = page.render(scale=600 / 72, crop=crop, grayscale=True).to_pil().convert("L")
         iw, ih = image.size
