@@ -63,6 +63,18 @@ def med(values: list[float] | list[float | None], default: float = 0.0) -> float
     return float(statistics.median(known)) if known else default
 
 
+def same_style(a: Json, b: Json) -> bool:
+    """Deux styles mesurés qui se rendent pareil : même police, graisse, corps, couleur, capitales."""
+    return bool(
+        a["family"] == b["family"]
+        and a["weight"] == b["weight"]
+        and a["italic"] == b["italic"]
+        and abs(float(a["size_pt"]) - float(b["size_pt"])) < 0.3  # noqa: PLR2004
+        and a["color"] == b["color"]
+        and a["uppercase"] == b["uppercase"]
+    )
+
+
 def reference(values: list[float]) -> float:
     """La valeur de référence d'une mesure répétée : la médiane, ou la **première** quand il n'y en a que deux.
 
@@ -337,19 +349,33 @@ class SpecBuilder:
         side_lines = [ln for ln in all_lines if ln.role in side_roles]
         self._col_right = max([ln.right for ln in all_lines] + [t.right for t in title])
         top = min([t.y for t in title] + [ln.y for ln in all_lines])
+        title_key: str | None = None
         if title:
-            styles.setdefault("section_title", self.style_of(title))
-            title_bottom = title[-1].y + (styles["section_title"]["pitch_mm"] or title[-1].h)
+            # Un style de titre partagé ; une rubrique dont le titre diffère
+            # (blanc sur une colonne sombre, foncé à côté) garde le sien.
+            own = self.style_of(title)
+            shared = styles.setdefault("section_title", own)
+            title_key = "section_title"
+            if not same_style(own, shared):
+                title_key = f"{kind}.section_title"
+                styles.setdefault(title_key, own)
+            title_bottom = title[-1].y + (styles[title_key]["pitch_mm"] or title[-1].h)
         else:
             title_bottom = top
+        # Les étiquettes fixes du modèle (« Phone », « Email : ») ne sont pas des
+        # données : elles se mesurent à part et s'attachent au champ qu'elles annoncent.
+        label_lines = [ln for ln in lines if ln.role == "label"]
+        lines = [ln for ln in lines if ln.role != "label"]
         markers = self.markers_for(lines)
         elements = self.elements(lines, markers)
+        labels = self.attach_labels(self.elements(label_lines, {}), elements) if label_lines else {}
         side_elements = self.elements(side_lines, {}) if side_lines else []
         bottom = max([title_bottom] + [e["bottom"] for e in elements + side_elements])
         s["bottom"] = bottom
         spec: Json = {
             "kind": kind,
             "title_sample": " ".join(t.text for t in title),
+            "title_style": title_key,
             "untitled": not title,
             "margin_top_mm": round(top - prev_bottom, 2),
             "title_dx_mm": round(title[0].x - col_x, 2) if title else 0.0,
@@ -372,7 +398,7 @@ class SpecBuilder:
         for no in sorted(set(groups) | set(side_groups)):
             all_groups[no] = groups.get(no, []) + side_groups.get(no, [])
         by_role: dict[str, list[Json]] = defaultdict(list)
-        for e in elements + side_elements:
+        for e in elements + side_elements + [lb for lb, _ in labels.values()]:
             by_role[e["role"]].append(e)
         for role, es in by_role.items():
             skey = f"{kind}.{role}"
@@ -396,6 +422,17 @@ class SpecBuilder:
                 first_gap.append(item_top - title_bottom)
             else:
                 gaps_item.append(item_top - previous_item_bottom)
+            for row in rows:
+                # Une étiquette au-dessus de la valeur : la rangée commence à l'étiquette.
+                label = labels.get(id(row["elems"][0]))
+                if label is not None and not label[1]:
+                    row["top"] = min(row["top"], label[0]["top"])
+            if rows:
+                item_top = rows[0]["top"]
+                if previous_item_bottom is None:
+                    first_gap[-1] = item_top - title_bottom
+                else:
+                    gaps_item[-1] = item_top - previous_item_bottom
             prev = item_top
             prev_role: str | None = None
             for row in rows:
@@ -415,7 +452,13 @@ class SpecBuilder:
                     slot["repeat"].append(row["top"] - prev)
                 elif prev_role is not None:
                     slot["margins"].append(row["top"] - prev)
-                slot["dx"].append(row["elems"][0]["x"] - col_x)
+                label = labels.get(id(row["elems"][0]))
+                if label is not None:
+                    slot["label"] = self.label_spec(label[0], row["elems"][0], label[1], col_x)
+                slot["dx"].append(
+                    (label[0]["x"] if label is not None and label[1] else row["elems"][0]["x"])
+                    - col_x
+                )
                 if len(row["elems"]) > 1:
                     a, b = row["elems"][0], row["elems"][1]
                     slot["gaps"].append(b["x"] - a["right"])
@@ -429,7 +472,9 @@ class SpecBuilder:
                 prev_role = key
             previous_item_bottom = max(r["bottom"] for r in all_rows)
         spec["first_gap_mm"] = round(med(first_gap), 2)
-        spec["item_gap_mm"] = round(med(gaps_item, 0.0), 2)
+        # Deux éléments côte à côte (deux références en colonnes) donneraient un
+        # écart négatif : le gabarit les empile, à l'écart nul.
+        spec["item_gap_mm"] = round(max(med(gaps_item, 0.0), 0.0), 2)
         spec["slots"] = [
             {
                 "key": k,
@@ -440,6 +485,7 @@ class SpecBuilder:
                 "gap_mm": round(med(v["gaps"]), 2) if v["gaps"] else None,
                 "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
                 "separator": v.get("separator"),
+                "label": v.get("label"),
             }
             for k, v in slots.items()
         ]
@@ -453,6 +499,45 @@ class SpecBuilder:
         spec["decorations"] = self.anchored_decorations(s, all_groups, col_x, left_bound=left_bound)
         self.fill_sample(kind, all_groups, sample)
         return spec
+
+    @staticmethod
+    def attach_labels(
+        label_elements: list[Json], elements: list[Json]
+    ) -> dict[int, tuple[Json, bool]]:
+        """Chaque étiquette → le champ qu'elle annonce : sur sa ligne (en ligne) ou juste au-dessous.
+
+        Rend `{id(élément): (étiquette, en_ligne)}`.
+        """
+        out: dict[int, tuple[Json, bool]] = {}
+        for lb in label_elements:
+            below = [
+                e
+                for e in elements
+                if e["item"] == lb["item"] and e["top"] >= lb["top"] - 1.2 and id(e) not in out
+            ]
+            if not below:
+                continue
+            target = min(below, key=lambda e: (round(e["top"] - lb["top"], 1), e["x"]))
+            out[id(target)] = (lb, abs(target["top"] - lb["top"]) < 1.2)  # noqa: PLR2004
+        return out
+
+    @staticmethod
+    def label_spec(label: Json, target: Json, inline: bool, col_x: float) -> Json:
+        """L'étiquette d'un emplacement : son texte, en ligne (écart) ou au-dessus (pas)."""
+        text = " ".join(ln.text for ln in label["lines"])
+        if inline:
+            return {
+                "text": text,
+                "inline": True,
+                "gap_mm": round(target["x"] - label["right"], 2),
+                "dx_mm": round(label["x"] - col_x, 2),
+            }
+        return {
+            "text": text,
+            "inline": False,
+            "pitch_mm": round(target["top"] - label["top"], 2),
+            "dx_mm": round(label["x"] - col_x, 2),
+        }
 
     def side_spec(
         self, side_groups: dict[int, list[Json]], groups: dict[int, list[Json]], col_x: float
@@ -523,8 +608,18 @@ class SpecBuilder:
         return None
 
     def alignment(self, lines: list[Line]) -> str:
-        """Justifié si les lignes non finales touchent toutes la même marge droite."""
+        """À droite ou centré si les lignes le partagent (gauches dispersées) ; justifié si
+        les lignes non finales touchent toutes la même marge droite ; à gauche sinon."""
         right = max(ln.right for ln in lines)
+        lefts = [ln.x for ln in lines]
+        if max(lefts) - min(lefts) >= 2.0:  # noqa: PLR2004
+            rights = [ln.right for ln in lines]
+            if max(rights) - min(rights) < 0.8:  # noqa: PLR2004
+                return "right"
+            centers = [ln.x + ln.w / 2 for ln in lines]
+            if max(centers) - min(centers) < 1.0:
+                return "center"
+            return "left"
         if len(lines) == 2:  # noqa: PLR2004
             return (
                 "justify"

@@ -473,6 +473,9 @@ class TestRasterEtLecture:
         with PdfDocument(b.to_bytes()) as doc:
             assert doc.is_round((9, 9, 2, 2)) is True
             assert doc.is_round((19, 9, 2, 2)) is False
+            # Une figure hors de la page n'est pas rastérisée (pdfium refuserait le recadrage).
+            assert doc.is_round((-5, -5, 2, 2)) is False
+            assert doc.is_round((29, 29, 5, 5)) is False
 
     def test_la_lecture_complete_reunit_tout(self, text_pdf: bytes) -> None:
         b = PdfBuilder(60, 40)

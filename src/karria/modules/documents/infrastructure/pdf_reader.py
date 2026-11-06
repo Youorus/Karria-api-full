@@ -441,7 +441,16 @@ class PdfDocument:
         page = self._pdf[0]
         width, height = page.get_size()
         x, y, w, h = box_mm
-        crop = (x * MM, height - (y + h) * MM, width - (x + w) * MM, y * MM)
+        # Une figure qui déborde de la page est rognée à la page : pdfium refuse
+        # un recadrage hors des bords.
+        crop = (
+            max(0.0, x * MM),
+            max(0.0, height - (y + h) * MM),
+            max(0.0, width - (x + w) * MM),
+            max(0.0, y * MM),
+        )
+        if crop[0] + crop[2] >= width or crop[1] + crop[3] >= height:
+            return False
         image = page.render(scale=600 / 72, crop=crop, grayscale=True).to_pil().convert("L")
         iw, ih = image.size
         corner = int(image.getpixel((max(0, iw // 12), max(0, ih // 12))))

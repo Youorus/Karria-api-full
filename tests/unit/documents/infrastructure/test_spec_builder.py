@@ -526,6 +526,21 @@ class TestCasLimites:
         b._col_right = 60
         assert b.alignment(lines([50, 20])) == "left"
 
+    def test_lalignement_a_droite_ou_centre(self) -> None:
+        b = builder([], [])
+
+        def lines(boxes: list[tuple[float, float]]) -> list[Line]:
+            return [
+                Line(
+                    raw_line(f"L{i}", "t", x, i * 5, w=w), {"role": "x", "section": "s", "item": 0}
+                )
+                for i, (x, w) in enumerate(boxes)
+            ]
+
+        assert b.alignment(lines([(10, 40), (20, 30), (5, 45)])) == "right"
+        assert b.alignment(lines([(10, 40), (15, 30), (5, 50)])) == "center"
+        assert b.alignment(lines([(10, 40), (20, 10), (5, 30)])) == "left"
+
     def test_une_ligne_de_dates_ne_se_prolonge_jamais(self) -> None:
         b = builder([], [])
         lines = [
@@ -763,3 +778,98 @@ class TestSurUnVraiPdf:
             spec, _, _ = SpecBuilder(doc, page, labels, FontSet([]), {}).build()
         assert spec["styles"]["section_title"]["family"] == "sans-serif"
         assert spec["styles"]["section_title"]["letter_spacing_pt"] == 0.0
+
+
+class TestEtiquettesEtTitres:
+    def _spec(self) -> tuple[Json, Json]:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "CONTACT", 20, 50, size=11, font=BOLD, caps=True, color="#FFFFFF"),
+            raw_line("L3", "Phone", 20, 57, w=10, font=BOLD),
+            raw_line("L4", "0612", 20, 61, w=12),
+            raw_line("L5", "Email :", 20, 67, w=10, font=BOLD),
+            raw_line("L6", "a@b.fr", 32, 67, w=14),
+            raw_line("L7", "COMPETENCES", 20, 80, size=11, font=BOLD, caps=True, color="#336699"),
+            raw_line("L8", "Python", 20, 87),
+        ]
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "contact", 0),
+                ("label", "contact", 0),
+                ("phone", "contact", 0),
+                ("label", "contact", 0),
+                ("email", "contact", 0),
+                ("section_title", "skills", 0),
+                ("skill", "skills", 0),
+            ],
+        )
+        spec, sample, _ = b.build()
+        return spec, sample
+
+    def test_une_etiquette_au_dessus_et_une_etiquette_en_ligne(self) -> None:
+        spec, sample = self._spec()
+        contact = sections(spec)["contact"]
+        assert contact["slot_order"] == ["phone", "email"]
+        phone = slot(contact, "phone")["label"]
+        assert phone == {"text": "Phone", "inline": False, "pitch_mm": 4.0, "dx_mm": 0.0}
+        email = slot(contact, "email")["label"]
+        assert email["inline"] is True
+        assert email["text"] == "Email :"
+        assert email["gap_mm"] == pytest.approx(2.0)
+        # La rangée en ligne commence à l'étiquette ; la rangée empilée aussi (marges).
+        assert slot(contact, "email")["dx_mm"] == 0.0
+        assert slot(contact, "email")["margin_top_mm"] == pytest.approx(67 - (61 + 3.6), abs=0.01)
+        assert contact["first_gap_mm"] == pytest.approx(57 - (50 + 3.6), abs=0.5)
+        assert "contact.label" in spec["styles"]
+        assert sample["contact"] == {"phone": "0612", "email": "a@b.fr"}
+
+    def test_un_titre_dune_autre_couleur_garde_son_style(self) -> None:
+        spec, _ = self._spec()
+        assert spec["styles"]["section_title"]["color"] == "#FFFFFF"
+        assert sections(spec)["contact"]["title_style"] == "section_title"
+        assert sections(spec)["skills"]["title_style"] == "skills.section_title"
+        assert spec["styles"]["skills.section_title"]["color"] == "#336699"
+
+    def test_deux_elements_cote_a_cote_ne_donnent_pas_un_ecart_negatif(self) -> None:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "REFERENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "M. Martin", 20, 57),
+            raw_line("L4", "Mme Durand", 80, 57),
+        ]
+        b = builder(
+            lines,
+            [
+                ("full_name", "header", 0),
+                ("section_title", "references", 0),
+                ("item_title", "references", 1),
+                ("item_title", "references", 2),
+            ],
+        )
+        spec, _, _ = b.build()
+        assert sections(spec)["references"]["item_gap_mm"] == 0.0
+
+    def test_le_rendu_html_et_docx_des_etiquettes(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import (  # noqa: PLC0415
+            HtmlRenderer,
+            estimate,
+        )
+
+        spec, sample = self._spec()
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert html.count("Phone") == 1
+        assert "Email :" in html
+        assert '<span style="display:inline-block;width:2.00mm"></span>' in html
+        assert "s-contact-label" in html
+        # Le titre de la seconde rubrique porte son propre style.
+        assert ".s-skills-section-title{" in html
+        docx = DocxRenderer(spec, view, cv_font_set(), photo=None).render({})
+        assert docx.startswith(b"PK")
+        contact = sections(spec)["contact"]
+        sec = next(x for x in view["sections"] if x["kind"] == "contact")
+        assert estimate(spec["styles"], contact, sec, 60.0, cv_font_set()) > 10

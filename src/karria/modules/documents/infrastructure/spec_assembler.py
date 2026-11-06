@@ -55,8 +55,9 @@ STRETCH_MIN_MM: Final = 20.0
 #: Marge ajoutée à la boîte d'un champ d'en-tête écrit sur plusieurs lignes,
 #: pour que sa ligne la plus longue tienne sans retour forcé.
 BOX_SLACK_MM: Final = 1.5
-#: Marge ajoutée au bord droit mesuré d'une colonne (mm).
-COLUMN_SLACK_MM: Final = 0.5
+#: Marge ajoutée au bord droit d'une colonne (mm), au-delà du résidu de rendu
+#: de sa ligne la plus longue (`column_right`).
+COLUMN_SLACK_MM: Final = 0.3
 #: Tolérances d'alignement des éléments d'en-tête (mm).
 EDGE_TOLERANCE_MM: Final = 1.0
 CENTER_TOLERANCE_MM: Final = 1.5
@@ -114,11 +115,16 @@ class SpecAssembler(SpecBuilder):
             msg = "Aucune rubrique reconnue dans le modèle."
             raise ValueError(msg)
         anchors = self.plan_anchors()
-        # Les formes que le plan ancre hors des rubriques sont réservées
-        # avant la mesure des rubriques, qui ne les verra pas.
+        # Les formes que le plan ancre sont réservées avant la mesure des
+        # rubriques, qui ne les verra pas : le plan prime sur la règle (un filet
+        # de frise pris pour le connecteur d'un élément se prolongeait de 112 mm).
+        self.reserved: set[int] = set()
         for d in anchors:
             if d.anchor in ("header", "page", "flow", "band", "band_separator"):
                 self.used.add(self.shape_index[d.shape])
+            elif d.anchor in ("section", "after_section"):
+                self.used.add(self.shape_index[d.shape])
+                self.reserved.add(self.shape_index[d.shape])
         by_section: dict[str, list[PlanDecoration]] = {}
         for d in anchors:
             if d.section is not None and d.anchor in ("section", "item", "after_section"):
@@ -127,19 +133,9 @@ class SpecAssembler(SpecBuilder):
         for cols in bands:
             band_top = min(s["top"] for secs in cols for s in secs)
             xs = [min(s["x"] for s in secs) for secs in cols]
-            # La ligne la plus longue d'un paragraphe touche le bord : un peu de
-            # marge, sinon une police servie d'une chasse légèrement différente
-            # replie un mot plus tôt que la source.
-            rights = [
-                max(ln.right for s in secs for ln in s["all_lines"]) + COLUMN_SLACK_MM
-                for secs in cols
-            ]
             columns: list[Json] = []
             for ci, secs in enumerate(cols):
                 col_x = xs[ci]
-                right = rights[ci]
-                if ci + 1 < len(cols):
-                    right = min(right, xs[ci + 1] - 2)
                 prev_bottom = band_top
                 spec_secs: list[Json] = []
                 for s in secs:
@@ -152,6 +148,9 @@ class SpecAssembler(SpecBuilder):
                         )
                     spec_secs.append(spec_sec)
                     prev_bottom = s["bottom"]
+                right = self.column_right(secs, spec_secs, styles)
+                if ci + 1 < len(cols):
+                    right = min(right, xs[ci + 1] - 2)
                 columns.append(
                     {
                         "x_mm": round(col_x, 2),
@@ -192,6 +191,26 @@ class SpecAssembler(SpecBuilder):
             "content_bottom_mm": round(content_bottom, 2),
         }
         return spec, sample, self.assets
+
+    def column_right(
+        self, secs: list[Json], spec_secs: list[Json], styles: dict[str, Json]
+    ) -> float:
+        """Le bord droit d'une colonne : sa ligne la plus à droite, **telle que la police servie la rend**.
+
+        Une ligne pleine touche le bord ; rendue avec la police servie et
+        l'interlettrage mesuré de son style, elle peut dépasser sa largeur
+        source d'une fraction de millimètre — et replier un mot plus tôt. Le
+        bord prend ce résidu, ligne par ligne, plus une marge de sécurité.
+        """
+        right = 0.0
+        for s, spec_sec in zip(secs, spec_secs, strict=True):
+            title_key = spec_sec.get("title_style") or "section_title"
+            for ln in s["all_lines"]:
+                key = title_key if ln.role == "section_title" else f"{s['kind']}.{ln.role}"
+                st = styles.get(key)
+                rendered = self.fonts.width_mm(ln.text, st) if st else ln.w
+                right = max(right, ln.right + max(0.0, rendered - ln.w))
+        return right + COLUMN_SLACK_MM
 
     def sections_from_plan(self) -> list[list[list[Json]]]:
         """Bandes → colonnes → rubriques, avec leurs lignes ; les coquilles vides tombent."""
@@ -282,8 +301,9 @@ class SpecAssembler(SpecBuilder):
         bottom = s["bottom"]
         for a in anchors:
             i = self.shape_index[a.shape]
-            if i in self.used:
+            if i in self.used and i not in self.reserved:
                 continue
+            self.reserved.discard(i)
             d = self.drawings[i]
             entry = {
                 **self.shape_entry(d),

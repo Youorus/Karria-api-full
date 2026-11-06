@@ -585,3 +585,106 @@ def test_une_colonne_laterale_alignee_a_gauche(built: tuple) -> None:
     assert side["align"] == "left"
     assert side["top_offset_mm"] == 1.0
     assert side["slot_order"] == ["item_dates", "item_location"]
+
+
+def test_le_plan_prime_sur_la_regle_pour_un_filet_de_rubrique() -> None:
+    """Un filet vertical dans l'élément : connecteur d'élément par la règle, filet de rubrique par le plan."""
+    from documents.infrastructure.test_spec_builder import FakeDoc, drawing, raw_line  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.pdf_reader import PdfPage  # noqa: PLC0415
+
+    lines = [
+        raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+        raw_line("L2", "EXPERIENCES", 20, 50, size=11, caps=True),
+        raw_line("L3", "Poste", 25, 57),
+        raw_line("L4", "Mission", 25, 62),
+    ]
+    rule = drawing("vline", 21, 56, 0, 9, stroke="#000000")
+    plan: Json = {
+        "gallery": {
+            "title": "T",
+            "category": "modern",
+            "description_fr": "D.",
+            "tags": ["t"],
+            "photo_shape": "none",
+        },
+        "header": {"lines": [{"line": "L1", "field": "full_name"}], "photo": None},
+        "bands": [
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            {
+                                "ref": "S1",
+                                "kind": "experiences",
+                                "title_lines": ["L2"],
+                                "items": [
+                                    {
+                                        "lines": [
+                                            {"line": "L3", "role": "item_title"},
+                                            {"line": "L4", "role": "bullet"},
+                                        ]
+                                    }
+                                ],
+                                "side_roles": [],
+                            }
+                        ]
+                    }
+                ]
+            }
+        ],
+        "decorations": [],
+    }
+
+    def assemble(decorations: list[Json]) -> Json:
+        page = PdfPage(210.0, 297.0, 1, [dict(ln) for ln in lines], [dict(rule)], [])
+        plan["decorations"] = decorations
+        spec, _, _ = SpecAssembler(
+            FakeDoc(), page, LayoutPlan.model_validate(plan), cv_font_set(), SERVED
+        ).build()
+        return sections(spec)["experiences"]
+
+    by_rule = assemble([])
+    (deco,) = by_rule["decorations"]
+    assert (deco["anchor"], deco.get("stretch")) == ("item", True)
+    by_plan = assemble(
+        [{"shape": "D1", "anchor": "section", "band": None, "section": "S1", "item": None}]
+    )
+    (deco,) = by_plan["decorations"]
+    assert deco["anchor"] == "section"
+    assert "connector" not in deco
+    assert deco["stretch"] is True
+
+
+def test_le_bord_droit_dune_colonne_compte_le_rendu_de_sa_ligne_la_plus_longue(
+    built: tuple,
+) -> None:
+    spec, _, _, assembler = built
+    (col,) = spec["bands"][2]["columns"]
+    secs = assembler.sections_from_plan()[2][0]
+    longest = max(ln.right for s in secs for ln in s["all_lines"])
+    assert col["x_mm"] + col["w_mm"] >= longest + 0.3
+    # Un style absent : la ligne compte pour sa largeur mesurée.
+    assert assembler.column_right(secs, col["sections"], {}) == pytest.approx(longest + 0.3)
+
+
+def test_un_role_pose_par_un_emplacement_compose_ne_se_repete_pas(
+    spec: Json, sample: Json, fonts: FontSet
+) -> None:
+    exp = sections(spec)["experiences"]
+    exp["slots"].append(
+        {
+            **exp["slots"][0],
+            "key": "item_title+item_dates",
+            "roles": ["item_title", "item_dates"],
+            "gap_mm": 3.0,
+            "separator": None,
+        }
+    )
+    exp["slot_order"] = ["item_title+item_dates", *exp["slot_order"]]
+    view = from_sample(spec, sample)
+    item = next(s for s in view["sections"] if s["kind"] == "experiences")["items"][0]
+    item["item_dates"] = "2021"
+    html = HtmlRenderer(spec, view, fonts, photo=None).render()
+    assert html.count(">Responsable<") == 1
+    docx = DocxRenderer(spec, view, fonts, photo=None).render({})
+    assert docx.startswith(b"PK")

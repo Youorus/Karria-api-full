@@ -308,9 +308,10 @@ def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
 def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: FontSet) -> float:
     """Hauteur estimée d'une rubrique (mm), sans navigateur."""
     kind = sec["kind"]
-    tst = styles["section_title"]
+    tst = styles[s.get("title_style") or "section_title"]
     title_lines = max(1, -(-fonts.width_mm(sec["title"], tst) // (s.get("title_w_mm") or col_w)))
     h = s["margin_top_mm"] + (0.0 if s.get("untitled") else lh(tst) * title_lines)
+    label_st = styles.get(f"{kind}.label")
     slots = {sl["key"]: sl for sl in s["slots"]}
     side = s.get("side")
     side_slots = [(sl, side["w_mm"]) for sl in side["slots"]] if side else []
@@ -327,6 +328,9 @@ def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: F
                 for v in vals:
                     lines = max(1, -(-fonts.width_mm(v, st) // max(width, 10)))
                     h += sl["margin_top_mm"] + lh(st) * lines
+                    label = sl.get("label")
+                    if label and not label["inline"] and label_st is not None:
+                        h += lh(label_st)
                 if len(sl["roles"]) > 1:
                     break
     return float(h)
@@ -420,7 +424,7 @@ class HtmlRenderer:
     ) -> str:
         """Une rubrique : titre, éléments, puces, ornements ancrés."""
         kind = sec["kind"]
-        tst = self.styles["section_title"]
+        tst = self.styles[s.get("title_style") or "section_title"]
         untitled = bool(s.get("untitled"))
         # Sans titre (un profil, des coordonnées sous la photo) : la rubrique
         # commence à sa première ligne, sans demi-blanc de titre à reprendre.
@@ -438,7 +442,7 @@ class HtmlRenderer:
         if not untitled:
             out.append(
                 self.text(
-                    "section_title",
+                    s.get("title_style") or "section_title",
                     sec["title"],
                     margin=0,
                     dx=s["title_dx_mm"],
@@ -455,9 +459,15 @@ class HtmlRenderer:
             if i and kind in LIST_KINDS and gap < 1.0:
                 gap = s["first_gap_mm"]  # deux catégories de liste : l'écart titre → liste
             rows: list[tuple[Json, list[tuple[str, str, str | None]], float]] = []
+            emitted: set[str] = set()
             for key in order:
                 sl = slots[key]
                 roles = sl["roles"]
+                # Un rôle déjà posé par un emplacement composé (« Poste | 2016 »)
+                # ne se répète pas par son emplacement seul (un élément sans dates).
+                if all(r in emitted for r in roles):
+                    continue
+                emitted.update(r for r in roles if item.get(r))
                 if len(roles) == 1:
                     val = item.get(roles[0])
                     vals = val if isinstance(val, list) else ([val] if val else [])
@@ -534,7 +544,18 @@ class HtmlRenderer:
                 st0 = self.styles[key0]
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
                 width = col_w - sl["dx_mm"]
-                if len(vals) == 1:
+                if len(vals) == 1 and sl.get("label"):
+                    role, v, path = vals[0]
+                    out.append(
+                        self.labelled_row(
+                            kind, sl, role, v, path, margin=margin_row, width=width, st0=st0
+                        )
+                        + self.marker(s, role, st0)
+                        + self.icon(s, kind, role, st0)
+                        + self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
+                        + "</div>"
+                    )
+                elif len(vals) == 1:
                     role, v, path = vals[0]
                     out.append(
                         self.text(
@@ -675,6 +696,52 @@ class HtmlRenderer:
             last_half = half(st)
         out.append("</div>")
         return "".join(out)
+
+    def labelled_row(
+        self,
+        kind: str,
+        sl: Json,
+        role: str,
+        value: str,
+        path: str | None,
+        *,
+        margin: float,
+        width: float,
+        st0: Json,
+    ) -> str:
+        """Un champ annoncé par une étiquette fixe du modèle : au-dessus (deux lignes) ou devant (une ligne).
+
+        Le bloc rendu reste ouvert, comme `text` : l'appelant y ajoute puce,
+        pictogramme et ornement, puis le ferme.
+        """
+        label = sl["label"]
+        label_key = style_key(self.styles, kind, "label")
+        label_st = self.styles[label_key]
+        if label["inline"]:
+            gap = f'<span style="display:inline-block;width:{label["gap_mm"]:.2f}mm"></span>'
+            return (
+                f'<div class="t" style="margin-top:calc({margin:.2f}mm*var(--k));margin-left:{sl["dx_mm"]:.2f}mm;'
+                f"width:{width:.2f}mm;display:flex;align-items:baseline;"
+                f'line-height:{lh(st0):.3f}mm;position:relative">'
+                f'<span class="{esc(css_class(label_key))}">{esc(label["text"])}</span>{gap}'
+                f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}"{self.anchor(path)}>{esc(value)}</span>'
+            )
+        # Au-dessus : l'étiquette à la marge mesurée, la valeur au pas mesuré sous elle.
+        above = (
+            self.text(label_key, label["text"], margin=margin, dx=label["dx_mm"], width=width)
+            + "</div>"
+        )
+        value_margin = label["pitch_mm"] - half(label_st) - half(st0)
+        return above + self.text(
+            style_key(self.styles, kind, role),
+            value,
+            margin=value_margin,
+            dx=sl["dx_mm"],
+            width=width,
+            align=sl["align"],
+            extra=";white-space:nowrap" if role == "item_dates" else "",
+            path=path,
+        )
 
     def joined_row(
         self,
