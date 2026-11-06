@@ -32,6 +32,7 @@ from karria.modules.documents.infrastructure.spec_builder import (
     Line,
     SpecBuilder,
     collapse_spaced,
+    majority_alignment,
     med,
     reference,
 )
@@ -525,6 +526,12 @@ class TestCasLimites:
         assert b.alignment(lines([50, 30, 40, 20])) == "left"
         b._col_right = 60
         assert b.alignment(lines([50, 20])) == "left"
+
+    def test_lalignement_majoritaire(self) -> None:
+        assert majority_alignment([]) == "left"
+        assert majority_alignment(["right", "right", "left"]) == "right"
+        assert majority_alignment(["right", "center", "left"]) == "left"
+        assert majority_alignment(["justify", "justify"]) == "justify"
 
     def test_lalignement_a_droite_ou_centre(self) -> None:
         b = builder([], [])

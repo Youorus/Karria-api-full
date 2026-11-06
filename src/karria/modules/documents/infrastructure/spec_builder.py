@@ -34,7 +34,7 @@ from __future__ import annotations
 import itertools
 import re
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Final
 
 from karria.modules.documents.domain.headline import synthesize_headline_style
@@ -61,6 +61,15 @@ def med(values: list[float] | list[float | None], default: float = 0.0) -> float
     """Médiane des valeurs connues."""
     known = [v for v in values if v is not None]
     return float(statistics.median(known)) if known else default
+
+
+def majority_alignment(votes: list[str]) -> str:
+    """L'alignement d'un emplacement : celui de la majorité de ses paragraphes repliés, à gauche sinon."""
+    counted = Counter(v for v in votes if v != "left")
+    if not counted:
+        return "left"
+    value, count = counted.most_common(1)[0]
+    return value if count * 2 > len(votes) else "left"
 
 
 def same_style(a: Json, b: Json) -> bool:
@@ -504,7 +513,7 @@ class SpecBuilder:
                 # Une grille : la première colonne ; sinon la référence des mesures.
                 "dx_mm": round(min(v["dx"]) if self.grid_spec(v) else reference(v["dx"]), 2),
                 "gap_mm": round(med(v["gaps"]), 2) if v["gaps"] else None,
-                "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
+                "align": majority_alignment(v["align"]),
                 "separator": v.get("separator"),
                 "label": v.get("label"),
                 # Le second champ d'une ligne composée au fer à droite (dates à la

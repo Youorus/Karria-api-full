@@ -45,6 +45,7 @@ from karria.modules.documents.infrastructure.spec_builder import (
     Line,
     SpecBuilder,
     med,
+    same_style,
 )
 
 Json = dict[str, Any]
@@ -64,6 +65,22 @@ CENTER_TOLERANCE_MM: Final = 1.5
 #: Deux champs centrés l'un sur l'autre doivent différer en largeur pour que
 #: le centrage se distingue d'un simple alignement à gauche.
 WIDTH_DIFFERENCE_MM: Final = 2.0
+
+
+def style_runs(lines: list[Line]) -> list[list[Line]]:
+    """Les lignes d'un champ, découpées en suites d'une même police et d'un même corps."""
+    runs: list[list[Line]] = []
+    for ln in lines:
+        prev = runs[-1][-1] if runs else None
+        if (
+            prev is not None
+            and prev.raw["font"] == ln.raw["font"]
+            and abs(float(prev.raw["size"]) - float(ln.raw["size"])) < 0.3  # noqa: PLR2004
+        ):
+            runs[-1].append(ln)
+        else:
+            runs.append([ln])
+    return runs
 
 
 class SpecAssembler(SpecBuilder):
@@ -415,9 +432,13 @@ class SpecAssembler(SpecBuilder):
         for h in self.plan.header.lines:
             if self.owner.get(h.line) == "header" and h.line in self.by_id:
                 by_field.setdefault(h.field, []).append(self.by_id[h.line])
+        # Un champ écrit deux fois dans deux styles (un rappel du poste en haut de
+        # page, le poste en grand sous le nom) fait deux éléments, pas un champ
+        # sur deux lignes : un champ sur plusieurs lignes garde une seule police.
         elements = [
-            self.header_element(field, sorted(lines, key=lambda ln: (ln.y, ln.x)), styles, sample)
+            self.header_element(field, run, styles, sample)
             for field, lines in by_field.items()
+            for run in style_runs(sorted(lines, key=lambda ln: (ln.y, ln.x)))
         ]
         elements.sort(key=lambda e: e["y_mm"])
         self.align_header_elements(elements)
@@ -452,9 +473,13 @@ class SpecAssembler(SpecBuilder):
     def header_element(
         self, field: str, lines: list[Line], styles: dict[str, Json], sample: Json
     ) -> Json:
-        """Un champ de l'en-tête, sur une ou plusieurs lignes."""
+        """Un champ de l'en-tête, sur une ou plusieurs lignes (d'un même style)."""
         key = f"header.{field}"
-        styles.setdefault(key, self.style_of(lines))
+        own = self.style_of(lines)
+        if key in styles and not same_style(own, styles[key]):
+            # Le même champ dans un autre style : son propre style, numéroté.
+            key = next(k for n in itertools.count(2) if (k := f"header.{field}.{n}") not in styles)
+        styles.setdefault(key, own)
         text = " ".join(ln.text for ln in lines)
         e: Json = {
             "field": field,

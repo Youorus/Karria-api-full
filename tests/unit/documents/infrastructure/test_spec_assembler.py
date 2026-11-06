@@ -694,3 +694,31 @@ def test_un_role_pose_par_un_emplacement_compose_ne_se_repete_pas(
     assert html.count(">Responsable<") == 1
     docx = DocxRenderer(spec, view, fonts, photo=None).render({})
     assert docx.startswith(b"PK")
+
+
+def test_un_champ_repete_dans_un_autre_style_fait_deux_elements(built: tuple) -> None:
+    """Un rappel du poste en petit en haut de page et le poste en grand sous le nom."""
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_assembler import style_runs  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+    def line(lid: str, text: str, y: float, **kw: Any) -> Line:
+        return Line(
+            raw_line(lid, text, 20, y, **kw), {"role": "headline", "section": "header", "item": 0}
+        )
+
+    small = line("L1", "Graphiste", 5, size=10.0)
+    big_1 = line("L2", "GRAPHISTE", 30, size=16.0)
+    big_2 = line("L3", "SENIOR", 36, size=16.0)
+    assert [[ln.id for ln in run] for run in style_runs([small, big_1, big_2])] == [
+        ["L1"],
+        ["L2", "L3"],
+    ]
+    assembler = built[3]
+    styles: Json = {}
+    sample: Json = {"identity": {}, "contact": {}}
+    first = assembler.header_element("headline", [small], styles, sample)
+    second = assembler.header_element("headline", [big_1, big_2], styles, sample)
+    assert (first["style"], second["style"]) == ("header.headline", "header.headline.2")
+    assert "sample_lines" in second
+    assert "sample_lines" not in first
