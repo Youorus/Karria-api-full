@@ -87,10 +87,10 @@ class SpecAssembler(SpecBuilder):
             self.owner.setdefault(h.line, "header")
         for ps in plan.sections():
             for t in ps.title_lines:
-                self.owner.setdefault(t, ps.id)
+                self.owner.setdefault(t, ps.ref)
             for it in ps.items:
                 for pl in it.lines:
-                    self.owner.setdefault(pl.line, ps.id)
+                    self.owner.setdefault(pl.line, ps.ref)
 
     # ------------------------------------------------------------------ construction
     def build(self) -> tuple[Json, Json, dict[str, bytes]]:  # noqa: PLR0912
@@ -201,18 +201,18 @@ class SpecAssembler(SpecBuilder):
 
     def section_lines(self, ps: PlanSection, seen_kinds: dict[str, int]) -> Json | None:
         """Les lignes d'une rubrique du plan (celles qu'elle possède), et son genre."""
-        title = [self.by_id[t] for t in ps.title_lines if self.owner.get(t) == ps.id]
+        title = [self.by_id[t] for t in ps.title_lines if self.owner.get(t) == ps.ref]
         lines = [
             self.by_id[pl.line]
             for it in ps.items
             for pl in it.lines
-            if self.owner.get(pl.line) == ps.id and pl.line in self.by_id
+            if self.owner.get(pl.line) == ps.ref and pl.line in self.by_id
         ]
         if not title and not lines:
             return None
         kind: str = ps.kind
         if kind == "other":
-            slug = slugify(" ".join(t.text for t in title)) or ps.id.lower()
+            slug = slugify(" ".join(t.text for t in title)) or ps.ref.lower()
             kind = f"{OTHER_PREFIX}{slug}"
             if kind in seen_kinds:
                 seen_kinds[kind] += 1
@@ -221,7 +221,7 @@ class SpecAssembler(SpecBuilder):
         side = frozenset(ps.side_roles)
         main = [ln for ln in lines if ln.role not in side]
         return {
-            "id": ps.id,
+            "id": ps.ref,
             "kind": kind,
             "title": title,
             "lines": lines,

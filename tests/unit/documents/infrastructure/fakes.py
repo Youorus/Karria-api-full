@@ -672,7 +672,7 @@ def plan_for(  # noqa: PLR0912 - l'ancienne heuristique de bandes et de colonnes
                         items.setdefault(item, []).append({"line": ln["id"], "role": role})
                 sections.append(
                     {
-                        "id": f"S{counter}",
+                        "ref": f"S{counter}",
                         "kind": kind,
                         "title_lines": [t["id"] for t in m["title"]],
                         "items": [{"lines": items[k]} for k in sorted(items)] or [{"lines": []}],
@@ -836,7 +836,7 @@ def _section(
     side: list[str] | None = None,
 ) -> dict[str, Any]:
     return {
-        "id": sid,
+        "ref": sid,
         "kind": kind,
         "title_lines": title,
         "items": [{"lines": [{"line": ln, "role": role} for ln, role in it]} for it in items],

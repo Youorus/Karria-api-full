@@ -107,7 +107,7 @@ PLAN: Json = {
                 {
                     "sections": [
                         {
-                            "id": "S1",
+                            "ref": "S1",
                             "kind": "summary",
                             "title_lines": ["L2"],
                             "items": [{"lines": [{"line": "L3", "role": "summary"}]}],
@@ -118,7 +118,7 @@ PLAN: Json = {
                 {
                     "sections": [
                         {
-                            "id": "S2",
+                            "ref": "S2",
                             "kind": "experiences",
                             "title_lines": ["L4"],
                             "items": [{"lines": [{"line": "L5", "role": "item_title"}]}],

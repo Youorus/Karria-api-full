@@ -163,7 +163,7 @@ class TestRubriques:
     def test_une_rubrique_dont_les_lignes_sont_prises_ailleurs_disparait(self) -> None:
         def change(plan: Json) -> None:
             first = plan["bands"][1]["columns"][0]["sections"][0]
-            plan["bands"][1]["columns"][1]["sections"].append({**first, "id": "S8"})
+            plan["bands"][1]["columns"][1]["sections"].append({**first, "ref": "S8"})
 
         spec, _, _, _ = build(change)
         assert [s["kind"] for s in spec["bands"][1]["columns"][1]["sections"]] == ["skills"]
@@ -172,7 +172,7 @@ class TestRubriques:
         def change(plan: Json) -> None:
             plan["bands"][1]["columns"][0]["sections"][0]["title_lines"] = []
             plan["bands"][1]["columns"][1]["sections"][0].update(kind="other", title_lines=[])
-            plan["bands"][1]["columns"][1]["sections"][0]["id"] = "S2"
+            plan["bands"][1]["columns"][1]["sections"][0]["ref"] = "S2"
 
         spec, _, _, _ = build(change)
         assert set(sections(spec)) >= {"other:s2", "other:s2-2"}
@@ -190,7 +190,7 @@ class TestRubriques:
             first = plan["bands"][1]["columns"][0]["sections"][0]
             plan["bands"][1]["columns"][1]["sections"][0] = {
                 **first,
-                "id": "S9",
+                "ref": "S9",
                 "items": [{"lines": [{"line": "L12", "role": "bullet"}]}],
                 "title_lines": [],
             }
