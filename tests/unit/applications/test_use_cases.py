@@ -24,6 +24,7 @@ from doubles import (
 from karria.modules.applications.application import (
     AdaptCv,
     ChangeDossierColor,
+    ChangeDossierLetterStyle,
     ChangeDossierTemplate,
     CreateDossierFromOffer,
     DecideProposition,
@@ -609,3 +610,27 @@ class TestEcrituresSousControle:
                 user, dossier.id, skills.id, Decision.ACCEPTER
             )
         assert env.dossiers.rows[dossier.id].cv["skills"][0]["name"] == "Caisse"
+
+
+class TestStyleDeLettreDuDossier:
+    async def test_le_style_se_pose_et_se_retire_sans_rien_toucher(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        change = ChangeDossierLetterStyle(env.dossiers, env.clock)
+        env.clock.advance(timedelta(minutes=1))
+
+        styled = await change.execute(user, dossier.id, "plain")
+
+        assert styled.letter_style == "plain"
+        assert styled.cv == dossier.cv
+        assert styled.primary_color == dossier.primary_color
+        assert styled.updated_at > dossier.updated_at
+        assert env.dossiers.rows[dossier.id] == styled
+        # Le même style redemandé ne réécrit rien.
+        env.clock.advance(timedelta(minutes=1))
+        assert (await change.execute(user, dossier.id, "plain")).updated_at == styled.updated_at
+        # `None` rend la main au défaut.
+        reset = await change.execute(user, dossier.id, None)
+        assert reset.letter_style is None
+        with pytest.raises(DossierNotFoundError):
+            await change.execute(uuid4(), dossier.id, "template")

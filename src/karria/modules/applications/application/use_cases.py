@@ -450,6 +450,33 @@ class ChangeDossierColor:
         return updated
 
 
+class ChangeDossierLetterStyle:
+    """Le style de lettre du dossier change à tout moment (`PUT /{id}/letter-style`, ADR-0036).
+
+    Une règle pure, sans porte : le schéma a déjà borné la valeur (`template`
+    ou `plain`). `None` rend la main au défaut (la lettre assortie du modèle
+    s'il en a une, sinon la sobre). Rien d'autre ne bouge.
+    """
+
+    def __init__(self, dossiers: DossierRepository, clock: Clock) -> None:
+        self._dossiers = dossiers
+        self._clock = clock
+
+    async def execute(self, user_id: UUID, dossier_id: UUID, letter_style: str | None) -> Dossier:
+        """Raises `DossierNotFoundError`."""
+        dossier = await _owned(self._dossiers, dossier_id, user_id)
+        updated = dossier.with_letter_style(letter_style, now=self._clock.now())
+        if updated is dossier:
+            return dossier
+        await self._dossiers.save(updated)
+        logger.info(
+            "applications.letter_style_changed",
+            dossier_id=str(dossier_id),
+            letter_style=letter_style,
+        )
+        return updated
+
+
 class DraftLetter:
     """La première ébauche de la lettre, par Karria. Remplace la lettre existante."""
 

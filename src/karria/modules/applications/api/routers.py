@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from karria.modules.applications.api.dependencies import (
     AiPrincipalDep,
     ChangeColorDep,
+    ChangeLetterStyleDep,
     ChangeTemplateDep,
     CreateDossierDep,
     DecidePropositionDep,
@@ -40,6 +41,7 @@ from karria.modules.applications.api.schemas import (
     DossierCardRead,
     DossierListRead,
     DossierRead,
+    LetterStyleChangeRequest,
     LetterWriteRequest,
     RegenerateRequest,
     TemplateChangeRequest,
@@ -234,6 +236,31 @@ async def change_color(
     d'autre ne change ; idempotent. `422` sur un code qui n'est pas `#rrggbb`.
     """
     dossier = await change.execute(principal.subject_id, dossier_id, body.primary_color)
+    return _present(dossier, logo_url)
+
+
+@router.put(
+    "/{dossier_id}/letter-style",
+    summary="Changer le style de lettre du dossier",
+    response_model=DossierRead,
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
+)
+async def change_letter_style(
+    dossier_id: UUID,
+    body: LetterStyleChangeRequest,
+    principal: CurrentPrincipalDep,
+    change: ChangeLetterStyleDep,
+    logo_url: LogoUrlDep,
+) -> DossierRead:
+    """Corps `{ "letter_style": "template" | "plain" | null }` (ADR-0036) ; à tout moment.
+
+    `template` : la lettre assortie du modèle ; `plain` : la lettre sobre ;
+    `null` rend la main au défaut (l'assortie s'il y en a une, sinon la sobre).
+    Le dossier retient le choix ; `documents` dit le style réellement servi au
+    rendu et à l'export. Rien d'autre ne change ; idempotent ; `422` hors
+    `template` | `plain`.
+    """
+    dossier = await change.execute(principal.subject_id, dossier_id, body.letter_style)
     return _present(dossier, logo_url)
 
 

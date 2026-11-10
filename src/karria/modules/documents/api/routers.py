@@ -88,6 +88,7 @@ from karria.modules.documents.application import (
     SendDocuments,
     SubmitTemplate,
 )
+from karria.modules.documents.application.use_cases import plain_letter_pages
 from karria.modules.documents.domain.errors import TemplateNotFoundError
 from karria.modules.documents.domain.templates import DocumentKind
 from karria.shared.auth import (
@@ -141,15 +142,18 @@ async def list_templates(
     category: str | None = None,
     premium: bool | None = None,
 ) -> list[TemplateRead]:
-    """Les modèles publiés (passés par la porte de qualité)."""
+    """Les modèles publiés (passés par la porte de qualité), chacun avec la lettre qu'il sert."""
     out = []
+    plain_letter = await plain_letter_pages(storage)
     for template in await use_case.execute(category=category, premium=premium):
         version = (
             await templates.get_version(template.published_version_id)
             if template.published_version_id
             else None
         )
-        out.append(await TemplateRead.present(template, version, storage))
+        out.append(
+            await TemplateRead.present(template, version, storage, plain_letter=plain_letter)
+        )
     return out
 
 
@@ -166,9 +170,11 @@ async def get_template(
     use_case: Annotated[GetTemplate, Depends(get_get_template)],
     storage: ObjectStorageDep,
 ) -> TemplateRead:
-    """Le modèle et les pages de son carrousel."""
+    """Le modèle et les pages de son carrousel : le CV, puis sa lettre (assortie, sinon sobre)."""
     template, version = await use_case.execute(template_id)
-    return await TemplateRead.present(template, version, storage, detail=True)
+    return await TemplateRead.present(
+        template, version, storage, detail=True, plain_letter=await plain_letter_pages(storage)
+    )
 
 
 @templates_router.post(
@@ -397,7 +403,9 @@ async def delete_export(
     response_model=RenderRead,
     description=(
         "Le HTML que Gotenberg imprimera, avec `data-chemin` sur chaque texte du CV "
-        "(ADR-0029). `?sample=true` rend l'exemple du modèle, sans ancres. "
+        "(ADR-0029). `?sample=true` rend l'exemple du modèle, sans ancres. Une lettre "
+        "se rend depuis la lettre assortie du modèle ou la lettre sobre (`letter_style`, "
+        "ADR-0036) ; `letter_style_served` dit laquelle. "
         "`403 template_not_owned` sur un modèle Premium non possédé ; "
         "`429 render_rate_limited` au-delà de 90 rendus par minute ; "
         "`422 render_too_large` ou `nothing_to_render`."
@@ -425,18 +433,26 @@ async def render_document(
         sample=sample,
         ats_safe=bool(body and body.ats_safe),
         primary_color=body.primary_color if body else None,
+        letter_style=body.letter_style if body else None,
     )
-    return RenderRead(html=rendered.html, pages=rendered.pages, warnings=list(rendered.warnings))
+    return RenderRead(
+        html=rendered.html,
+        pages=rendered.pages,
+        warnings=list(rendered.warnings),
+        letter_style_served=rendered.letter_style,  # type: ignore[arg-type]
+    )
 
 
 @documents_router.post(
     "/letters/export",
     status_code=status.HTTP_201_CREATED,
-    summary="Exporter une lettre de motivation (PDF, DOCX) dans le modèle",
+    summary="Exporter une lettre de motivation (PDF, DOCX) : lettre assortie ou lettre sobre",
     response_model=GeneratedCvRead,
     description=(
         "Un export `kind: letter`, listé avec les CV (`GET /cv/me/generated-cvs?kind=letter`). "
-        "Sans `template_id`, le modèle choisi. Pas de score ATS sur une lettre (ADR-0030)."
+        "Sans `template_id`, le modèle choisi. `letter_style` (`template` | `plain`) choisit la "
+        "lettre assortie du modèle ou la lettre sobre ; l'export dit le style servi "
+        "(ADR-0036). Pas de score ATS sur une lettre (ADR-0030)."
     ),
     responses=error_responses(
         ErrorCode.NOT_FOUND,
@@ -458,6 +474,7 @@ async def export_letter(
         formats=body.formats,
         dossier_id=body.dossier_id,
         primary_color=body.primary_color,
+        letter_style=body.letter_style,
     )
     return await GeneratedCvRead.present(generated, storage)
 
@@ -556,24 +573,35 @@ async def submit_template(
     name: Annotated[str, Form(min_length=2, max_length=80)],
     label: Annotated[str | None, Form(max_length=120)] = None,
     is_premium: Annotated[bool, Form()] = False,
+    letter: Annotated[UploadFile | None, File()] = None,
 ) -> VersionAdminRead:
-    """Nouvelle version d'un modèle (créé s'il n'existe pas) ; publiée seulement si la porte de qualité passe."""
-    pdf = await file.read(MAX_TEMPLATE_PDF + 1)
-    if len(pdf) > MAX_TEMPLATE_PDF:
-        # Avant : un préfixe tronqué (donc corrompu) partait en ingestion.
-        raise InvalidInputError(
-            "Le PDF dépasse la taille admise.",
-            details={
-                "reason": "template_too_large",
-                "field": "file",
-                "max_bytes": MAX_TEMPLATE_PDF,
-            },
-        )
-    version = await use_case.execute(pdf, name=name, label=label, is_premium=is_premium)
+    """Nouvelle version d'un modèle (créé s'il n'existe pas) ; publiée seulement si la porte de qualité passe.
+
+    `letter` : le PDF de la lettre assortie (ADR-0036), facultatif ; mesurée avec
+    le CV, elle passe la même porte, et la version entière reste en revue si
+    l'un des deux échoue.
+    """
+    pdf = await _read_pdf(file, "file")
+    letter_pdf = await _read_pdf(letter, "letter") if letter is not None else None
+    version = await use_case.execute(
+        pdf, name=name, label=label, is_premium=is_premium, letter=letter_pdf
+    )
     template = await templates.get(version.template_id)
     if template is None:  # pragma: no cover - créé dans la même transaction
         raise TemplateNotFoundError()
     return await VersionAdminRead.present(template, version, storage)
+
+
+async def _read_pdf(file: UploadFile, field: str) -> bytes:
+    """Le fichier déposé, refusé au-delà de la taille admise (jamais tronqué)."""
+    data = await file.read(MAX_TEMPLATE_PDF + 1)
+    if len(data) > MAX_TEMPLATE_PDF:
+        # Avant : un préfixe tronqué (donc corrompu) partait en ingestion.
+        raise InvalidInputError(
+            "Le PDF dépasse la taille admise.",
+            details={"reason": "template_too_large", "field": field, "max_bytes": MAX_TEMPLATE_PDF},
+        )
+    return data
 
 
 @internal_router.get(

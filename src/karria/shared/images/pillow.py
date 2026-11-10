@@ -312,6 +312,116 @@ def crop_to_frame(
     return _encode_png(out)
 
 
+# ---------------------------------------------------------------------------
+# Pictogrammes monochromes : mesurer l'encre, la changer en gardant les bords
+# ---------------------------------------------------------------------------
+
+#: Au-delà de ce nombre de couleurs distinctes, une image n'est pas un pictogramme.
+_MAX_INK_COLORS: Final = 4_096
+#: Une encre doit au moins s'éloigner d'autant du blanc (somme des canaux, 0–765).
+_MIN_INK_DEPTH: Final = 90
+#: Écart par canal toléré autour du segment blanc → encre (anticrénelage, arrondis).
+_INK_TOLERANCE: Final = 12
+
+Rgb = tuple[int, int, int]
+Rgba = tuple[int, int, int, int]
+
+
+def _rgb_of(hex_color: str) -> Rgb:
+    digits = hex_color.lstrip("#")
+    return int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16)
+
+
+def _over_white(pixel: Rgba) -> Rgb:
+    """Un pixel RGBA composé sur du blanc."""
+    r, g, b, a = pixel
+
+    def over(c: int) -> int:
+        return round(c * a / 255 + 255 * (1 - a / 255))
+
+    return over(r), over(g), over(b)
+
+
+def _coverage(pixel: Rgb, ink: Rgb) -> float | None:
+    """La part d'encre d'un pixel sur le segment blanc → encre, ou `None` s'il n'y est pas."""
+    to_ink = [255 - c for c in ink]
+    to_pixel = [255 - c for c in pixel]
+    t = sum(a * b for a, b in zip(to_pixel, to_ink, strict=True)) / sum(v * v for v in to_ink)
+    t = min(1.0, max(0.0, t))
+    if any(abs(a - t * b) > _INK_TOLERANCE for a, b in zip(to_pixel, to_ink, strict=True)):
+        return None
+    return t
+
+
+def single_ink(payload: bytes) -> str | None:
+    """L'encre d'un pictogramme monochrome, `#RRGGBB` ; `None` s'il a plusieurs couleurs ou aucune.
+
+    Un pictogramme rastérisé est monochrome quand chacun de ses pixels est un
+    mélange d'**une** encre et du fond — le blanc du papier, ou la
+    transparence : les bords anticrénelés sont de l'encre diluée. L'encre est
+    le pixel le plus éloigné du blanc ; tout autre pixel doit être sur le
+    segment blanc → encre, à l'arrondi près. Une photo, un logo bicolore, une
+    image vide : `None`.
+    """
+    try:
+        with Image.open(BytesIO(payload)) as source:
+            image = source.convert("RGBA")
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+    colors = image.getcolors(_MAX_INK_COLORS)
+    if not colors:
+        return None
+    pixels = [cast(Rgba, pixel) for _, pixel in colors]
+    # Sur fond transparent, les bords vivent dans l'alpha : seuls les pixels
+    # pleins disent la couleur (un bord semi-transparent a un RGB approximatif).
+    opaque = [pixel for pixel in pixels if pixel[3] == 255]  # noqa: PLR2004 - alpha plein
+    seen = {_over_white(pixel) for pixel in (opaque or pixels)}
+    ink = max(seen, key=lambda p: 765 - sum(p))
+    if 765 - sum(ink) < _MIN_INK_DEPTH:
+        return None
+    if any(_coverage(pixel, ink) is None for pixel in seen):
+        return None
+    return "#{:02X}{:02X}{:02X}".format(*ink)
+
+
+def tint_ink(payload: bytes, ink: str, new: str) -> bytes:
+    """Le pictogramme avec son encre `ink` remplacée par `new`, bords et transparence gardés.
+
+    Sur fond transparent, chaque pixel garde son alpha et prend la nouvelle
+    couleur ; sur fond blanc, chaque pixel est redilué dans le blanc à la part
+    d'encre qu'il avait. Un pixel qui n'est pas de l'encre reste tel quel.
+    """
+    ink_rgb, (nr, ng, nb) = _rgb_of(ink), _rgb_of(new)
+    with Image.open(BytesIO(payload)) as source:
+        image = source.convert("RGBA")
+    raw = image.tobytes()
+    transparent = any(raw[i] < 255 for i in range(3, len(raw), 4))  # noqa: PLR2004 - alpha plein
+    cache: dict[bytes, bytes] = {}
+    out = bytearray()
+    for i in range(0, len(raw), 4):
+        pixel = raw[i : i + 4]
+        tinted = cache.get(pixel)
+        if tinted is None:
+            r, g, b, a = pixel
+            t = None if a == 0 else _coverage(_over_white((r, g, b, a)), ink_rgb)
+            if transparent and 0 < a < 255:  # noqa: PLR2004 - un bord : l'alpha dit tout
+                tinted = bytes((nr, ng, nb, a))
+            elif t is None:
+                tinted = pixel
+            else:
+                tinted = bytes(
+                    (
+                        round(255 - t * (255 - nr)),
+                        round(255 - t * (255 - ng)),
+                        round(255 - t * (255 - nb)),
+                        255,
+                    )
+                )
+            cache[pixel] = tinted
+        out += tinted
+    return _encode_png(Image.frombytes("RGBA", image.size, bytes(out)))
+
+
 _BASE83: Final = (
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~"
 )

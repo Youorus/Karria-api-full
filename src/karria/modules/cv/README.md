@@ -3,8 +3,9 @@
 Le contrat est `karria_app/docs/contrat-api-cv.md` ; ce module le sert sous
 `/api/v1` : `GET /cv/me`, `PUT /cv/me/chapters/{chapter}`, `GET|POST /cv/draft`,
 `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{chapter}`,
-`POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/import`,
-`POST /voice/transcribe`, `GET /cv/suggestions`. Toutes exigent la session.
+`POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/me/photo/enhance`,
+`POST /cv/import`, `POST /voice/transcribe`, `GET /cv/suggestions`. Toutes
+exigent la session.
 
 Trois façons d'avoir un CV, une seule forme : **l'import** d'un CV existant
 (la voie principale depuis le 2026-11-04 — il écrit le CV directement, à
@@ -84,6 +85,13 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   reparse pas. `POST /cv/photo` rend les deux, le chapitre `photo` reçoit
   `{ image_id }`, et le serveur vérifie que la photo appartient bien à la
   personne.
+- **La photo déjà sur le CV se retravaille sans la rechoisir**
+  (`POST /cv/me/photo/enhance`, `EnhanceCurrentPhoto`, 2026-11-06) : le
+  serveur relit l'objet du bucket et le confie à `UploadPhoto` avec
+  `enhance` — même normalisation, même `CvPhoto` en attente. Le CV ne change
+  pas : la personne compare dans l'app, puis retient l'améliorée par
+  `PUT /cv/me/chapters/photo` ou garde l'originale, qui est restée.
+  `409 photo_missing` sans photo ; consentement IA requis (ADR-0025).
 - **La sortie du modèle est une donnée** (ADR-0013). Elle est bornée par un
   schéma JSON dérivé des modèles du domaine, puis revalidée par ces mêmes
   modèles ; ce qui n'y tient pas est retiré, journalisé

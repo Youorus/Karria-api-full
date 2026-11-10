@@ -3,7 +3,144 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-05**
+**Dernière mise à jour : 2026-11-06**
+
+### Session du 2026-11-06 — la photo déjà sur le CV se retravaille sans la rechoisir (module `cv` — Fable) — BRANCHE `feat/portrait`, NON POUSSÉE
+
+**Demande de Marc** : « au niveau de l'onglet CV, quand l'utilisateur change son avatar, lui
+donner la possibilité d'optimiser sa photo par IA pour la rendre professionnelle ». Côté app,
+l'édition de la photo ne proposait pas l'amélioration ; côté API, elle n'existait **qu'à l'envoi**
+(`POST /cv/photo`, `enhance=true`) — impossible de retravailler la photo déjà en place sans la
+rechoisir. D'où une route sobre de plus, et rien d'autre.
+
+- **`POST /cv/me/photo/enhance` → `201 PhotoRead`** (`api/routers.py`), `AiConsentedPrincipalDep`
+  (but `PHOTO_ENHANCEMENT`, `403 ai_consent_required`). Cas d'usage
+  `EnhanceCurrentPhoto(cvs, storage, upload)` (`application/use_cases.py`) : relit l'objet du
+  bucket `media` par `cv.image_key`, le confie à `UploadPhoto.execute(…, enhance=True)` — même
+  double normalisation (ADR-0009), même rangement, même `CvPhoto` **en attente**. Le CV ne change
+  pas : l'app compare, puis retient par `PUT /cv/me/chapters/photo { data: { image_id } }` ou garde
+  l'originale (rien à faire ; la retravaillée en attente est oubliée à la prochaine écriture de la
+  photo ou avec le compte, comme avant).
+- **Erreurs** : `404 cv_not_found` ; nouvelle `PhotoMissingError` → `409 photo_missing`
+  (`domain/errors.py`) ; `422 photo_enhance_refused` / `503 photo_enhance_unavailable` inchangées.
+  Le modèle d'image est celui de la tâche LLM `portrait` (Gemini image), rien de changé là.
+- **Tests** : `tests/unit/cv/test_use_cases.py › TestEnhanceCurrentPhoto` (3 cas : rangement et CV
+  intact, sans CV / sans photo rien ne part au générateur, refus remonte tel quel) ;
+  `tests/e2e/test_cv_api.py › TestEnhanceCurrentPhoto` (3 cas : 201 + retenue par `image_id` et
+  purge des photos en attente, 404/409, 422/503) ; la route dans la liste des routes
+  authentifiées. `make check` vert (3 550 tests ; intégration MinIO sautée, pas de MinIO local).
+- **Pas d'ADR** : aucune décision nouvelle, la route applique ADR-0008/0009/0014/0025 telles
+  quelles. README du module et contrats de l'app (`karria_app/docs/contrat-api-cv.md`,
+  `contrat-api-consentement-ia.md`) mis à jour.
+- **Reste** : relire puis fusionner `feat/portrait` dans `main` (= production Dokploy) ; vérifier
+  en prod une fois la vraie photo d'un CV passée au générateur (taille, délai, ~10 s attendues).
+### Session du 2026-11-06 — couleur d'un CV, version 2 : le décor change, le texte reste (ADR-0034 § 2026-11-06 — Fable) — branche `feat/couleurs`, NON poussée
+
+**Demande de Marc** (après avoir vu la v1 sur ses modèles) : « La couleur primaire ne doit
+jamais toucher le texte. Sur un CV à deux couleurs — texte noir, bande rouge — la couleur
+primaire change la bande, pas le texte. Le texte ne change que si c'est nécessaire (du noir
+sur un fond devenu noir). Styliser le CV au niveau des couleurs, pas du style. » Sur ses
+modèles (Sacha Dubois, Romain Dupont) comme sur Meridian/Minimalist, titres **et** décor sont
+noirs : la v1 (couleur = titres, remplacée partout) aurait recoloré les titres.
+
+**Livré** (worktree `karria_api_v2-couleurs`, branche `feat/couleurs`, `make check` vert) :
+- **`domain/palette.py` réécrit** : `primary_color_of(spec)` = couleur dominante du **décor**
+  par surface peinte (`fill`/`stroke`/`background` des décorations, `marker.color`,
+  séparateurs ; hors blanc, hors clarté ≥ 0,85 sauf si rien d'autre ; `None` sans décor) ;
+  `recolor_spec(spec, primary)` (**signature inchangée**) ne touche que le décor — teintes
+  dérivées à la même position vers le blanc/noir (plus d'écart additif), un décor gris suit
+  gris par gris, un gris dans un décor coloré reste ; `legible_styles` : un texte posé sur une
+  surface recolorée (élément d'en-tête dans un rectangle plein, colonne couverte ou à
+  `background`, barre de titre/ligne/élément) sous 4,5:1 passe en `#FFFFFF`/`#111111` selon le
+  meilleur pire-contraste sur toutes ses surfaces, et seulement si le gain est net (un style
+  partagé bande/papier — `section_title` l'est toujours — garde sa couleur). `tinted_ink`,
+  `contrast_ratio`, `decor_colors` exportés. 42 tests (`test_palette.py`).
+- **Pictogrammes teintés** : `shared.images.single_ink(png)` (monochrome sur blanc ou
+  transparent, bords anticrénelés = encre diluée, `getcolors` ≤ 4 096) et `tint_ink(png, ink,
+  new)` (redilution, alpha gardé ; `tobytes`/`frombytes`, `getdata` est déprécié en Pillow 12) ;
+  `application.tint_icons(assets, spec_origine, primary)` dans `CvRenderer.prepare`,
+  `RenderDocument._cv`/`_sample` (fil + cache borné par processus). Tests `test_images.py`
+  (5), `test_colors.py` (10).
+- **Galerie** : `gallery_traits()["primary_color"]` = `primary_color_of` ;
+  `RefreshTemplateColors` + `python -m scripts.templates refresh-colors [--dry-run]`
+  (idempotent). **À lancer en prod après déploiement** : Meridian passe de `#000000`… à
+  `#000000` (décor noir), Minimalist `#232323` → `#232323` ; vérifier avec `--dry-run`.
+  `SelectionRead.default_primary_color` suit (description). **Aucune migration.**
+- **`python -m scripts.templates render-sample NOM --out DOSSIER --color '#1F4FA3'
+  [--any-status]`** : l'exemple d'un modèle en PNG par couleur (Gotenberg). Vu sur
+  `sacha-dubois` et `romain-dupont` (v2 en revue, fidélité 0,51 — lot ingestion) en origine,
+  `#1F4FA3`, `#7B1E2B` : filets, frise, puces, séparateurs colorés, **texte noir intact** ;
+  PNG dans le scratchpad de la session (`…/scratchpad/couleurs/`).
+- Tests existants adaptés (`fakes.make_spec` porte un filet bleu `page_decorations` et une
+  `page` ; atelier/lettre/export vérifient le décor, pas les titres).
+- Docs : ADR-0034 addendum 2026-11-06 (+ index), README `documents`, `PLUS-TARD.md`
+  (pictogrammes bicolores/sur bande), `contrat-api-documents.md` § 1 (+ copie app),
+  `scripts/README.md`.
+
+**Côté app** (`karria_app-couleurs`, `feat/couleurs`) : sous-titre de la feuille « Ta couleur
+habille les bandes, les filets et les puces. Le texte reste lisible. » ; serveur simulé : la
+couleur habille la bande/filets/puces, titres intacts, texte de bande en noir si clair
+(`texteSur`) ; `contrat-api-modeles.md`. Rien à recoloriser côté app (WebView).
+
+**Reste** : valider l'addendum ; lancer `refresh-colors` en prod ; la **lettre** lit toujours
+`styles.section_title.color` comme accent (un texte : ne suit plus la couleur) — à décider
+dans le lot lettre (un filet à `primary_color_of(spec)`) ; un modèle à bande colorée réelle
+pour éprouver la règle de lisibilité sur un vrai PDF (testée sur spécifications fixes).
+### Session du 2026-11-06 — la lettre de motivation : modèle apparié ou lettre sobre (ADR-0036 — Fable) — branche `feat/lettres`, NON poussée
+
+**Demande de Marc** : la lettre du modèle quand il en a une, sinon une lettre sobre sur page
+blanche « bien comme il faut » ; les modèles s'ingèrent avec leur lettre ; la galerie montre
+exactement ce que l'atelier rend ; l'IA seulement là où elle est indispensable.
+
+**Livré côté API** (worktree `~/PycharmProjects/karria_api_v2-lettres`, branche `feat/lettres`,
+rebasée sur `2aa3ce8` ; `make check` vert, 3 641 tests, 22 S3 ignorés ; **migration 21** à
+appliquer avant le code) :
+- **Spécification de lettre** (ADR-0036 § 1) : `domain/plain_letter.py` (la lettre sobre, Carlito
+  11 pt, A4, marges 25 mm, `PLAIN_LETTER_SAMPLE`, `letter_style_served`) ;
+  `infrastructure/letter_spec_builder.py` (mesure d'une lettre appariée : piles d'en-tête
+  ancrées, colonne de texte, justification, préfixe de l'objet, `complete_spec` pour les champs
+  que le modèle n'a pas) ; `infrastructure/letter_analyzer.py` (`LetterLineLabeler`, tâche
+  `template_extract`, rôles `sender_name`… ; `LetterAnalyzer`, une seule remplaçante par famille).
+  `letter_renderer.py` réécrit pour lire une spécification de lettre (HTML : blocs absolus
+  empilés au pas, corps aux blancs mesurés ; DOCX : chaque ligne de base posée d'après la règle
+  **mesurée** de LibreOffice pour un interligne exact — `baseline_offset`, `place`).
+- **Ingestion** : `SubmitTemplate(letter=…)`, champ multipart `letter`, `--letter` du script ;
+  `ingest_paired_letter` (section dédiée en fin de `use_cases.py`, hook de quelques lignes dans
+  `_ingest`) : même mesure, même porte, échecs « lettre : … », version entière en revue ;
+  `letter_*` sur `TemplateVersion`/table/dépôt ; `report["fidelity"]["letter"|"letter_docx"]`.
+- **Choix** : `letter_style` sur `RenderRequest` / `LetterExportRequest`, `letter_style_served`
+  dans `RenderRead`, `letter_style` dans `GeneratedCvRead` ; `letter_spec_for` ;
+  `PUT /applications/{id}/letter-style` (`ChangeDossierLetterStyle`, `Dossier.letter_style`).
+- **Galerie** : `TemplateRead.cover_letters` (`template` « Lettre assortie » / `plain` « Lettre
+  sobre »), `has_letter`, `pages[].style` ; `plain_letter_pages` (cache 10 min par processus) ;
+  `PublishPlainLetterPreview` ← **`python -m scripts.templates plain-letter`** (à lancer en prod
+  par le coordinateur, Gotenberg joignable ; télécharge Carlito).
+- **Fidélité** : `measure(…, fonts_report=…)` juge la police servie quand la substitution est
+  déclarée (`served_families`) — vaut CV et lettre, **à valider par Marc** (ADR-0036 § 5).
+  `domain/fonts.py` : abréviations `-Rg/-Bd/-BdIt/-Md…`, graisse hors échelle → 400, « Inter 18pt »
+  → « Inter » (la police manquait au rendu).
+- Tests : 3 nouveaux fichiers (`test_plain_letter`, `test_letter_spec_builder`,
+  `test_letter_analyzer`), `test_letter_renderer` réécrit, lettre de test synthétique
+  (`infrastructure/fakes.py › letter_template_pdf`), ingestion/rendu/export/galerie/e2e/dossier.
+
+**Vérifié en local** (Gotenberg 3005, Anthropic `claude-opus-5-5`) : `submit cv1 --letter … --inline`
+→ version 6 de `sacha-dubois`, lettre **0,905** (SSIM tol. 0,820, mots ≤ 2 mm 0,946, style 0,996,
+décor 1,0), DOCX 0,920, lignes de base à ±0,4 mm ; seule faille « lettre : ssim_tolerant 0,820 <
+0,88 » — **polices Canva propriétaires substituées**, inatteignable sans elles (ADR-0036 § « Ce qui
+reste ouvert ») ; le CV cv1 lui-même à 0,50 (agent ingestion v2). Livrables dans le scratchpad de
+la session (`…/scratchpad/lettres/livrables/` : côte à côte, lettre sobre PNG/PDF/DOCX, DOCX de
+lettre appariée avec un autre contenu).
+
+**Fusion avec `feat/couleurs`** (branche `integration-2026-11-06`) : la lettre appariée ne lit
+plus `styles.section_title.color` ; elle garde `accent` = `primary_color_of(cv_spec)` (la
+couleur du décor) et marque `follows_decor` les textes qui l'avaient dans le PDF ;
+`recolor_letter_spec` (`domain/letter.py`) recolore son décor (teintes comprises) et ces textes
+seulement — le point signalé par l'agent couleurs est réglé.
+
+**Reste** : valider ADR-0036 (et § 5) ; décider des polices non libres ; appliquer la migration 21
+puis `plain-letter` en prod ; fusionner avec `feat/ingestion-v2` (hooks dans `_ingest`,
+`analyzer.py` non touché) ; côté app voir `karria_app/docs/REPRISE.md`.
+
 
 ### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
 

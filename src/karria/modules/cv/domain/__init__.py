@@ -26,6 +26,7 @@ from karria.modules.cv.domain.errors import (
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
     PhotoEnhanceUnavailableError,
+    PhotoMissingError,
     UnsupportedUploadError,
 )
 from karria.modules.cv.domain.normalization import (
@@ -140,6 +141,7 @@ __all__ = [
     "PhotoChapter",
     "PhotoEnhanceRefusedError",
     "PhotoEnhanceUnavailableError",
+    "PhotoMissingError",
     "Project",
     "ReceivedFile",
     "Skill",

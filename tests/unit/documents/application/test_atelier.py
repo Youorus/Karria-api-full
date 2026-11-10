@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from documents.application.conftest import Env
-from documents.fakes import CV_DATA, PNG_BYTES, FakeLogoFetcher, make_spec
+from documents.fakes import CV_DATA, PNG_BYTES, FakeLogoFetcher, make_letter_spec, make_spec
 from doubles import sample_image
 from karria.modules.documents.application import RenderDocument
 from karria.modules.documents.application.use_cases import (
@@ -193,16 +193,21 @@ class TestLettre:
 
 
 class TestCouleurPrincipale:
-    """ADR-0034 : la couleur choisie remplace celle du modèle avant le rendu."""
+    """ADR-0034 : la couleur choisie habille le décor du modèle avant le rendu ; le texte reste."""
 
-    async def test_la_couleur_choisie_recolore_la_specification_rendue(self, env: Env) -> None:
+    async def test_la_couleur_choisie_recolore_le_decor_de_la_specification_rendue(
+        self, env: Env
+    ) -> None:
         template, _ = env.templates.publish()
 
         await _atelier(env).execute(env.user, template.id, cv=CV_DATA, primary_color="#7B1E2B")
 
         [call] = env.engine.called("render_html")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
-        assert call["spec"]["styles"]["name"]["color"] != "#7B1E2B", "le nom n'est pas en bleu"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", (
+            "un titre est un texte"
+        )
+        assert call["spec"]["styles"]["name"]["color"] != "#7B1E2B", "le nom n'est pas en bordeaux"
 
     async def test_sans_couleur_ou_avec_celle_d_origine_la_specification_est_celle_du_modele(
         self, env: Env
@@ -215,18 +220,41 @@ class TestCouleurPrincipale:
         for call in env.engine.called("render_html"):
             assert call["spec"] == version.spec
 
-    async def test_la_couleur_s_applique_apres_la_variante_ats_et_a_la_lettre(
+    async def test_la_couleur_s_applique_apres_la_variante_ats_et_a_la_lettre_assortie(
         self, env: Env
     ) -> None:
-        template, _ = env.templates.publish(spec=make_spec(spaced=True))
+        template, _ = env.templates.publish(
+            spec=make_spec(spaced=True), letter_spec=make_letter_spec(accent="#1A5276")
+        )
 
         await _atelier(env).execute(
             env.user, template.id, cv=CV_DATA, ats_safe=True, primary_color="#2E7D32"
         )
-        await _atelier(env).execute(env.user, template.id, letter=LETTER, primary_color="#2E7D32")
+        letter = await _atelier(env).execute(
+            env.user, template.id, letter=LETTER, primary_color="#2E7D32"
+        )
 
         cv_call, letter_call = env.engine.called("render_html")
         title = cv_call["spec"]["styles"]["section_title"]
-        assert title["color"] == "#2E7D32"
+        assert cv_call["spec"]["page_decorations"][0]["stroke"] == "#2E7D32"
         assert title["letter_spacing_pt"] < 2.0, "l'interlettrage plafonné reste plafonné"
-        assert letter_call["spec"]["styles"]["section_title"]["color"] == "#2E7D32"
+        assert letter.letter_style == "template"
+        # La lettre assortie suit : son objet, qui avait la couleur du décor du CV,
+        # prend la couleur choisie ; le texte courant reste.
+        letter_styles = letter_call["spec"]["styles"]
+        assert letter_styles["subject"]["color"] == "#2E7D32"
+        assert letter_styles["paragraph"]["color"] == "#111111"
+        assert "section_title" not in letter_styles
+
+    async def test_sans_lettre_assortie_la_lettre_sobre_reste_neutre(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+
+        out = await _atelier(env).execute(
+            env.user, template.id, letter=LETTER, primary_color="#2E7D32"
+        )
+
+        assert out.letter_style == "plain"
+        [call] = env.engine.called("render_html")
+        assert "accent" not in call["spec"]
+        assert call["spec"]["styles"]["subject"]["color"] == "#111111"
+        assert call["spec"]["styles"]["paragraph"]["color"] == "#111111"

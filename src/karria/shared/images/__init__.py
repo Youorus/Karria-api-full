@@ -13,8 +13,10 @@ from karria.shared.images.pillow import (
     image_size,
     normalize_image,
     resize_to_png,
+    single_ink,
     sniff_content_type,
     square_icon,
+    tint_ink,
     to_webp,
 )
 from karria.shared.images.ports import (
@@ -44,7 +46,9 @@ __all__ = [
     "image_size",
     "normalize_image",
     "resize_to_png",
+    "single_ink",
     "sniff_content_type",
     "square_icon",
+    "tint_ink",
     "to_webp",
 ]

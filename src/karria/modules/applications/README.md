@@ -50,6 +50,11 @@
   rend la main à la couleur du modèle ; elle survit au changement de modèle
   (un choix de la personne, pas un attribut du modèle). Pas de porte : aucune
   règle d'un autre module.
+- **Le style de lettre se change à tout moment** (`PUT /{id}/letter-style`,
+  `ChangeDossierLetterStyle`, ADR-0036) : `template` (la lettre assortie du
+  modèle) ou `plain` (la lettre sobre), `null` = par défaut. Le dossier retient
+  le choix, rien de plus : c'est `documents` qui résout (un modèle sans lettre
+  assortie sert la sobre) et dit le style servi au rendu et à l'export.
 - **`updated_at` est celui du domaine**, pas celui de l'ORM : le dépôt écrit
   par `update()` et remet les horodatages après `create()`. Le cas d'usage s'en
   sert pour savoir si la personne a touché le dossier pendant l'adaptation.

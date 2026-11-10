@@ -22,6 +22,7 @@ from tests.unit.documents.fakes import (
     InMemoryTemplateRepository,
     InMemoryUserTemplateRepository,
     make_generated,
+    make_letter_spec,
 )
 
 from doubles import FakeClock
@@ -173,7 +174,34 @@ class TestRendu:
 
         assert response.status_code == 200, response.text
         assert response.json()["warnings"] == ["logo_unavailable"]
+        assert response.json()["letter_style_served"] == "plain"
         assert fakes.engine.called("render_html")[0]["view"]["kind"] == "letter"
+
+    async def test_la_lettre_se_rend_dans_le_style_demande_et_dit_celui_servi(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        template, version = fakes.templates.publish(letter_spec=make_letter_spec())
+
+        default = await client.post(
+            f"{API}/documents/{template.id}/render", json={"letter": LETTER}
+        )
+        plain = await client.post(
+            f"{API}/documents/{template.id}/render",
+            json={"letter": LETTER, "letter_style": "plain"},
+        )
+        cv = await client.post(f"{API}/documents/{template.id}/render", json={"cv": CV_DATA})
+        wrong = await client.post(
+            f"{API}/documents/{template.id}/render",
+            json={"letter": LETTER, "letter_style": "fancy"},
+        )
+
+        assert default.json()["letter_style_served"] == "template"
+        assert plain.json()["letter_style_served"] == "plain"
+        assert cv.json()["letter_style_served"] is None
+        assert wrong.status_code == 422
+        first, second, _ = fakes.engine.called("render_html")
+        assert first["spec"] == version.letter_spec
+        assert second["spec"]["source"] == {"producer": "karria"}
 
     async def test_au_dela_du_quota_de_rendus_la_route_repond_429(
         self, client: AsyncClient, fakes: Fakes, me: Principal, monkeypatch: pytest.MonkeyPatch
@@ -213,7 +241,27 @@ class TestLettres:
         assert "filename=Lettre%20de%20motivation%20-%20Acme.pdf" in body["pdf_url"]
         assert "filename=Lettre%20de%20motivation%20-%20Acme.docx" in body["docx_url"]
         assert body["ats"] == {"explanation": None, "explanation_status": "unavailable"}
+        assert body["letter_style"] == "plain"
         assert sum(1 for b, _ in storage.objects if b is Bucket.DOCUMENTS) == 2
+
+    async def test_l_export_garde_le_style_de_lettre_servi(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        template, _ = fakes.templates.publish(letter_spec=make_letter_spec())
+
+        default = await client.post(
+            f"{API}/documents/letters/export",
+            json={"template_id": str(template.id), "letter": LETTER},
+        )
+        plain = await client.post(
+            f"{API}/documents/letters/export",
+            json={"template_id": str(template.id), "letter": LETTER, "letter_style": "plain"},
+        )
+
+        assert default.json()["letter_style"] == "template"
+        assert plain.json()["letter_style"] == "plain"
+        relu = await client.get(f"{API}/cv/me/generated-cvs/{plain.json()['id']}")
+        assert relu.json()["letter_style"] == "plain"
 
     async def test_la_liste_des_exports_filtre_par_genre_et_dossier(
         self, client: AsyncClient, fakes: Fakes, me: Principal
@@ -458,7 +506,8 @@ class TestCouleurPrincipale:
 
         assert ok.status_code == 200, ok.text
         [call] = fakes.engine.called("render_html")
-        assert call["spec"]["styles"]["section_title"]["color"] == "#7B1E2B"
+        assert call["spec"]["page_decorations"][0]["stroke"] == "#7B1E2B", "le décor suit"
+        assert call["spec"]["styles"]["section_title"]["color"] == "#1A5276", "le texte reste"
         assert bad.status_code == 422
 
     async def test_l_export_retient_la_couleur_et_la_liste_la_rend(
@@ -475,6 +524,6 @@ class TestCouleurPrincipale:
         assert response.json()["primary_color"] == "#2E7D32"
         listed = await client.get(f"{API}/cv/me/generated-cvs?kind=cv")
         assert listed.json()["items"][0]["primary_color"] == "#2E7D32"
-        assert fakes.engine.called("render_pdf")[0]["spec"]["styles"]["section_title"]["color"] == (
+        assert fakes.engine.called("render_pdf")[0]["spec"]["page_decorations"][0]["stroke"] == (
             "#2E7D32"
         )

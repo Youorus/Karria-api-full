@@ -192,6 +192,25 @@ def style_key(styles: dict[str, Json], kind: str, role: str) -> str:
     return "section_title"
 
 
+def fit_text_css(fonts: FontSet, val: str, st: Json, avail: float) -> str:
+    """Texte trop long pour sa place : interlettrage resserré, puis corps réduit, puis retour à la ligne.
+
+    Partagé par l'en-tête du CV et les blocs d'en-tête d'une lettre (ADR-0036) :
+    décidé sans navigateur, avec les métriques réelles de la police servie.
+    """
+    if fonts.width_mm(val, st) <= avail:
+        return ""
+    ls = float(st["letter_spacing_pt"])
+    for k in (0.8, 0.6, 0.45, 0.3):
+        if fonts.width_mm(val, st, ls_pt=ls * k) <= avail:
+            return f";letter-spacing:{ls * k:.2f}pt"
+    size = float(st["size_pt"])
+    for k in (0.95, 0.9, 0.85, 0.8):
+        if fonts.width_mm(val, st, size_pt=size * k, ls_pt=ls * 0.3) <= avail:
+            return f";letter-spacing:{ls * 0.3:.2f}pt;font-size:{size * k:.2f}pt"
+    return f";letter-spacing:{ls * 0.3:.2f}pt;white-space:normal;width:{avail:.2f}mm"
+
+
 def deco_css(d: Json, left: float, top: float, extra: str = "") -> str:
     """Le CSS d'un ornement (filet, pastille, cadre)."""
     base = f"position:absolute;left:{left:.2f}mm;top:{top:.2f}mm;"
@@ -621,17 +640,7 @@ class HtmlRenderer:
 
     def fit_header_text(self, val: str, st: Json, avail: float) -> str:
         """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne."""
-        if self.fonts.width_mm(val, st) <= avail:
-            return ""
-        ls = float(st["letter_spacing_pt"])
-        for k in (0.8, 0.6, 0.45, 0.3):
-            if self.fonts.width_mm(val, st, ls_pt=ls * k) <= avail:
-                return f";letter-spacing:{ls * k:.2f}pt"
-        size = float(st["size_pt"])
-        for k in (0.95, 0.9, 0.85, 0.8):
-            if self.fonts.width_mm(val, st, size_pt=size * k, ls_pt=ls * 0.3) <= avail:
-                return f";letter-spacing:{ls * 0.3:.2f}pt;font-size:{size * k:.2f}pt"
-        return f";letter-spacing:{ls * 0.3:.2f}pt;white-space:normal;width:{avail:.2f}mm"
+        return fit_text_css(self.fonts, val, st, avail)
 
     def header(self) -> str:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""

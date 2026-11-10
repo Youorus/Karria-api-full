@@ -223,6 +223,10 @@ class Dossier:
     #: La couleur principale posée par la personne sur le modèle du dossier
     #: (`#RRGGBB`) ; `None` : la couleur du modèle (ADR-0034).
     primary_color: str | None = None
+    #: Le style de lettre retenu : `template` (la lettre assortie du modèle) ou
+    #: `plain` (la lettre sobre) ; `None` : par défaut — la lettre assortie
+    #: s'il y en a une, sinon la sobre (ADR-0036).
+    letter_style: str | None = None
 
     @classmethod
     def open(
@@ -440,6 +444,17 @@ class Dossier:
         if primary_color == self.primary_color:
             return self
         return replace(self, primary_color=primary_color, updated_at=now)
+
+    def with_letter_style(self, letter_style: str | None, *, now: datetime) -> Dossier:
+        """Le style de lettre du dossier (`template` | `plain`, déjà validé), ou `None` : par défaut.
+
+        Idempotent, comme la couleur ; il survit au changement de modèle (un
+        modèle sans lettre assortie sert la sobre quoi qu'il en soit — c'est
+        `documents` qui résout, la réponse dit le style servi).
+        """
+        if letter_style == self.letter_style:
+            return self
+        return replace(self, letter_style=letter_style, updated_at=now)
 
     def with_paragraph(self, index: int, text: str, *, now: datetime) -> Dossier:
         """Un seul paragraphe remplacé.

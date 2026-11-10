@@ -17,6 +17,7 @@ from karria.modules.documents.domain.letter import (
     letter_file_name,
     letter_warnings,
     place_and_date,
+    recolor_letter_spec,
 )
 
 pytestmark = pytest.mark.unit
@@ -122,3 +123,40 @@ class TestVue:
         assert view["closing"] == DEFAULT_CLOSING
         assert view["greeting"] == DEFAULT_GREETING
         assert view["date_line"] == "Montreuil, le 1er janvier 2026"
+
+
+PAIRED_SPEC: dict[str, Any] = {
+    "accent": "#1A5276",
+    "styles": {
+        "subject": {"color": "#1A5276", "follows_decor": True},
+        "paragraph": {"color": "#111111"},
+        "header.full_name": {"color": "#1A5276"},
+    },
+    "header": {"blocks": [], "decorations": [{"kind": "rect", "fill": "#1A5276"}]},
+    "page_decorations": [
+        {"kind": "hline", "stroke": "#8DB3D6"},
+        {"kind": "hline", "stroke": "#999999"},
+    ],
+}
+
+
+class TestCouleurDeLaLettreAppariee:
+    """ADR-0034 § 2026-11-06 : le décor suit, et seuls les textes qui portaient la couleur du décor."""
+
+    def test_le_decor_et_les_textes_marques_prennent_la_couleur_choisie(self) -> None:
+        out = recolor_letter_spec(PAIRED_SPEC, "#7b1e2b")
+        assert out["styles"]["subject"]["color"] == "#7B1E2B"
+        assert out["styles"]["paragraph"]["color"] == "#111111"
+        # Un texte à la couleur du décor mais non marqué à l'ingestion reste du texte.
+        assert out["styles"]["header.full_name"]["color"] == "#1A5276"
+        assert out["header"]["decorations"][0]["fill"] == "#7B1E2B"
+        pale, gray = out["page_decorations"]
+        assert pale["stroke"] != "#8DB3D6", "une teinte dérivée suit"
+        assert gray["stroke"] == "#999999", "un gris reste gris"
+        assert PAIRED_SPEC["styles"]["subject"]["color"] == "#1A5276", "l'original est intact"
+
+    def test_sans_couleur_sans_accent_ou_a_l_origine_rien_ne_bouge(self) -> None:
+        assert recolor_letter_spec(PAIRED_SPEC, None) is PAIRED_SPEC
+        assert recolor_letter_spec(PAIRED_SPEC, "#1a5276") is PAIRED_SPEC
+        plain = {"styles": {"subject": {"color": "#111111"}}}
+        assert recolor_letter_spec(plain, "#7B1E2B") is plain

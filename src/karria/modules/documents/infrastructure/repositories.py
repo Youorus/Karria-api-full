@@ -75,6 +75,14 @@ def _version(row: TemplateVersionModel) -> TemplateVersion:
         full_key=row.full_key,
         error=row.error,
         published_at=row.published_at,
+        letter_source_key=row.letter_source_key,
+        letter_spec=row.letter_spec,
+        letter_sample=row.letter_sample,
+        letter_labels=row.letter_labels,
+        letter_thumbnail_key=row.letter_thumbnail_key,
+        letter_thumbnail_blurhash=row.letter_thumbnail_blurhash,
+        letter_preview_key=row.letter_preview_key,
+        letter_full_key=row.letter_full_key,
     )
 
 
@@ -142,6 +150,14 @@ class TortoiseTemplateRepository:
             "full_key": version.full_key,
             "error": version.error,
             "published_at": version.published_at,
+            "letter_source_key": version.letter_source_key,
+            "letter_spec": version.letter_spec,
+            "letter_sample": version.letter_sample,
+            "letter_labels": version.letter_labels,
+            "letter_thumbnail_key": version.letter_thumbnail_key,
+            "letter_thumbnail_blurhash": version.letter_thumbnail_blurhash,
+            "letter_preview_key": version.letter_preview_key,
+            "letter_full_key": version.letter_full_key,
         }
         await TemplateVersionModel.update_or_create(defaults=values, id=version.id)
 
@@ -248,6 +264,7 @@ def _generated(row: GeneratedCvModel) -> GeneratedCv:
         dossier_id=row.dossier_id,
         company_name=row.company_name or "",
         primary_color=row.primary_color,
+        letter_style=row.letter_style,
     )
 
 
@@ -276,6 +293,7 @@ class TortoiseGeneratedCvRepository:
             dossier_id=generated.dossier_id,
             company_name=generated.company_name,
             primary_color=generated.primary_color,
+            letter_style=generated.letter_style,
         )
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:

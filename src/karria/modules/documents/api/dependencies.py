@@ -42,7 +42,9 @@ from karria.modules.documents.application import (
     LogoFetcher,
     OriginThrottle,
     PreviewTemplate,
+    PublishPlainLetterPreview,
     RecordTemplateView,
+    RefreshTemplateColors,
     RenderDocument,
     SelectTemplate,
     SendDocuments,
@@ -65,6 +67,7 @@ from karria.modules.documents.infrastructure import (
     FontLibrary,
     GotenbergClient,
     KarriaDocumentEngine,
+    LetterLineLabeler,
     LlmAtsExplainer,
     MailDocumentMailer,
     ProcrastinateTemplateJobs,
@@ -227,8 +230,13 @@ def build_engine(settings: Settings, storage: ObjectStorage) -> DocumentEngine:
         settings.documents.gotenberg_url,
         timeout_seconds=settings.documents.gotenberg_timeout_seconds,
     )
-    labeler = VisionLineLabeler(build_language_model(settings))
-    return KarriaDocumentEngine(FontLibrary(storage), labeler, gotenberg)
+    llm = build_language_model(settings)
+    return KarriaDocumentEngine(
+        FontLibrary(storage),
+        VisionLineLabeler(llm),
+        gotenberg,
+        letter_labeler=LetterLineLabeler(llm),
+    )
 
 
 def get_engine(settings: SettingsDep, storage: ObjectStorageDep) -> DocumentEngine:
@@ -450,6 +458,18 @@ def build_submit_template(storage: ObjectStorage, jobs: TemplateJobs) -> SubmitT
     return SubmitTemplate(
         get_template_repository(), storage, jobs, get_clock(), TortoiseUnitOfWork()
     )
+
+
+def build_refresh_template_colors() -> RefreshTemplateColors:
+    """La remesure de la couleur de galerie, pour `scripts/templates.py refresh-colors`."""
+    return RefreshTemplateColors(get_template_repository(), get_clock())
+
+
+def build_publish_plain_letter(
+    settings: Settings, storage: ObjectStorage
+) -> PublishPlainLetterPreview:
+    """Les aperçus de la lettre sobre pour la galerie, pour la commande `scripts.templates plain-letter`."""
+    return PublishPlainLetterPreview(build_engine(settings, storage), storage, get_clock())
 
 
 def build_explain_ats(settings: Settings) -> ExplainAts:

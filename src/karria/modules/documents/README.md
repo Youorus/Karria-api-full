@@ -1,16 +1,24 @@
 # Module `documents` — modèles de CV, exports PDF et DOCX, score ATS, atelier, lettres, envoi
 
 Décisions : ADR-0020 (validée par Marc le 2026-10-24), ADR-0029 (rendu HTML ancré),
-ADR-0030 (lettre), ADR-0031 (envoi par e-mail). Contrats :
-`karria_app/docs/contrat-api-modeles.md` et `docs/contrat-api-documents.md`.
+ADR-0030 (lettre), ADR-0031 (envoi par e-mail), ADR-0036 (lettre appariée ou lettre
+sobre). Contrats : `karria_app/docs/contrat-api-modeles.md` et
+`docs/contrat-api-documents.md`.
 
 ## Ce qu'il possède
 
 - Le **catalogue** des modèles (`documents_templates`) et leurs **versions**
   (`documents_template_versions`) : la spécification canonique tirée du PDF,
   les mesures de fidélité, le rapport de polices, les clés des aperçus et des
-  fichiers. Une version publiée ne change plus ; une nouvelle analyse crée une
-  nouvelle version (`version` + 1), que l'app utilise pour invalider ses caches.
+  fichiers — et, quand le modèle en a une, sa **lettre appariée** (`letter_*` :
+  PDF source, spécification de lettre, contenu d'exemple, rôles, aperçus),
+  mesurée par la même porte. Une version publiée ne change plus ; une nouvelle
+  analyse crée une nouvelle version (`version` + 1), que l'app utilise pour
+  invalider ses caches.
+- La **lettre sobre** (`domain/plain_letter.py`) : la spécification de lettre
+  intégrée (A4, Carlito 11 pt, lettre d'affaires française), servie à tout modèle
+  sans lettre appariée, et ses aperçus de galerie (`plain-letter/v<n>/` du bucket
+  `templates`, déposés par `scripts.templates plain-letter`).
 - La **bibliothèque de polices libres** (bucket `templates`, `fonts/<famille>/`),
   téléchargée une fois (Google Fonts, sinon Fontsource) et relue ensuite.
 - Ce que chaque personne **possède** (`documents_user_templates`) et a **choisi**
@@ -20,7 +28,9 @@ ADR-0030 (lettre), ADR-0031 (envoi par e-mail). Contrats :
 - Le **journal des envois par e-mail** (`documents_sends`) : destinataire, documents,
   état ; c'est sur lui que se compte le quota de cinq envois par jour.
 - La **lettre de motivation** comme donnée structurée (`domain/letter.py`) et ses
-  règles d'usage (une page, 3–4 paragraphes, objet explicite, politesse sobre).
+  règles d'usage (une page, 3–4 paragraphes, objet explicite, politesse sobre) ;
+  le **style servi** (`template` | `plain`, `letter_style_served`) — le dossier
+  (`applications`) retient le choix, `documents` le résout.
 - Les **chemins** `data-chemin` de la vue (`view["paths"]`, `section["paths"]`), à
   côté des éléments, jamais dedans.
 
@@ -47,7 +57,9 @@ spécification + CV ──► domain/view ──► html_renderer ──► Gote
 PDF / DOCX ──► ats_reader (comme un ATS) ──► domain/ats (score déterministe)
                                           └─► llm.LlmAtsExplainer (explication, en file)
 spécification + CV reçu ──► domain/view (+ chemins) ──► html_renderer (ancré, URL publiques) ──► l'app (WebView)
-spécification + lettre ──► domain/letter ──► letter_renderer (HTML / DOCX) ──► Gotenberg ──► PDF
+PDF de la lettre appariée ──► pdf_reader ──► fonts ──► letter_analyzer.LetterLineLabeler (rôles, tâche template_extract)
+                           ──► letter_spec_builder ──► spécification de lettre (même porte que le CV)
+spécification de lettre (appariée, ou domain/plain_letter) + lettre ──► domain/letter ──► letter_renderer (HTML / DOCX) ──► Gotenberg ──► PDF
 export(s) ──► SendDocuments (journal, quota) ──► file ──► DeliverDocuments ──► shared/mail (pièces jointes)
 ```
 
@@ -55,10 +67,19 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   pas celui de la personne — sauf sa photo. Polices copiées une fois dans le bucket
   public `assets` (`fonts/<fichier>`) pour une adresse stable ; pictogrammes en `data:` ;
   `pages` estimé par mesure, vérité dans `window.karriaFit`. 90 rendus / min / compte.
-- **Lettre** (ADR-0030) : vue `kind: "letter"`, moteurs `LetterHtmlRenderer` /
-  `LetterDocxRenderer` lus dans la même spécification (marges extérieures du modèle,
-  corps borné 10–11,5 pt, accent des titres pour l'objet). Logo téléchargé **seulement**
-  depuis l'hôte public du stockage (`infrastructure/logos.py`), converti en PNG.
+- **Lettre** (ADR-0030, ADR-0036) : vue `kind: "letter"`, moteurs `LetterHtmlRenderer` /
+  `LetterDocxRenderer` lus dans une **spécification de lettre** (blocs d'en-tête ancrés,
+  colonne de texte, blancs mesurés) : la lettre appariée du modèle, recolorée avec le CV,
+  ou la lettre sobre, neutre. `letter_spec_for` résout le style ; `template` sans lettre
+  appariée → `plain`. Le DOCX pose chaque ligne de base d'après la règle mesurée de
+  LibreOffice (`baseline_offset`). Logo téléchargé **seulement** depuis l'hôte public du
+  stockage (`infrastructure/logos.py`), converti en PNG.
+- **Lettre appariée à l'ingestion** (`ingest_paired_letter`) : `--letter` / champ
+  multipart `letter` ; une seule remplaçante par famille du modèle ; échecs préfixés
+  « lettre : » dans `gate.failures` ; la version entière reste `review` sous le seuil.
+- **Fidélité et substitutions** : `measure(…, fonts_report=…)` juge la police **servie**
+  quand la substitution est déclarée (sinon toute police non libre faisait tomber
+  `style` sous 0,95 par construction). Le SSIM, lui, voit toujours l'autre dessin.
 - **Envoi** (ADR-0031) : `202` puis travail `documents.send_documents` ; PDF sinon DOCX ;
   signé du nom de la personne ; 5 envois par jour civil UTC, comptés sur les demandes.
   Anti-hameçonnage (revues du 2026-11-05) : objet fixe, noms NFKC réduits aux lettres
@@ -77,12 +98,26 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   (`documents.font_substituted`) et rangée dans le rapport de la version.
 - **Poste visé** : toujours sous le nom (`domain/headline.py`), même quand le
   modèle n'a pas d'emplacement ; omis proprement si le CV n'en a pas.
+- **Couleur** (`domain/palette.py`, ADR-0034 § 2026-11-06) : la couleur d'un modèle est
+  celle de son **décor**, mesurée par surface (`primary_color_of` — bandes, filets, puces
+  dessinées, séparateurs ; jamais un texte). `recolor_spec(spec, primary)` ne change que le
+  décor (occurrences exactes et teintes, gris par gris sur un décor gris) ; un texte posé sur
+  une surface recolorée ne change que s'il ne se lit plus (4,5:1 → blanc ou noir profond,
+  `legible_styles`). Les pictogrammes monochromes à la couleur du décor suivent à l'envoi
+  (`application.tint_icons`, mesure et teinte par `shared.images.single_ink` / `tint_ink`,
+  cache par processus). La galerie porte cette couleur (`gallery_traits`) ;
+  `scripts/templates.py refresh-colors` la remesure sur les modèles déjà publiés.
 
 ## Exploitation
 
-- Déposer un modèle : `python -m scripts.templates submit F.pdf --name x --label X [--inline]`
-  ou `POST /api/v1/internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`).
+- Déposer un modèle : `python -m scripts.templates submit F.pdf --name x --label X [--inline] [--letter L.pdf]`
+  ou `POST /api/v1/internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`, fichiers `file` et `letter`).
+- Les aperçus de la lettre sobre (galerie) : `python -m scripts.templates plain-letter`,
+  une fois par environnement et à chaque changement de `PLAIN_LETTER_VERSION`.
 - Revue : `python -m scripts.templates list` ou `GET /api/v1/internal/templates`.
+- Couleur de galerie : `python -m scripts.templates refresh-colors [--dry-run]` après un
+  changement de sa définition ; `render-sample NOM --out DOSSIER --color '#1F4FA3'
+  [--any-status]` pour voir l'exemple d'un modèle dans une couleur.
 - Travaux de file : `documents.ingest_template`, `documents.explain_ats`,
   `documents.send_documents`.
 - Ressources publiques : `python -m scripts.assets brand <dossier branding de l'app>`

@@ -70,6 +70,11 @@ class ApplicationDossierModel(BaseDBModel):
         null=True,
         description="Couleur principale posée sur le modèle du dossier (#RRGGBB), ou NULL.",
     )
+    letter_style = fields.CharField(
+        max_length=8,
+        null=True,
+        description="Style de lettre retenu (template ou plain), ou NULL (ADR-0036).",
+    )
 
     class Meta:
         table = "applications_dossiers"

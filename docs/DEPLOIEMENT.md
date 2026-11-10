@@ -399,3 +399,23 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
 - **Vérifier** : `PUT /user-templates/me/selected` `{ "template_id": "…", "primary_color":
   "#7b1e2b" }` → `primary_color: "#7B1E2B"` et `default_primary_color` ; un
   `POST /documents/{id}/render` avec `primary_color` rend des titres de cette couleur.
+
+## Lettre appariée ou lettre sobre (ADR-0036)
+
+- **Migration 21** (`lettres_appariees` : huit colonnes `letter_*` NULL sur
+  `documents_template_versions`, `letter_style` VARCHAR(8) NULL sur `documents_generated_cvs`
+  et `applications_dossiers`) : `aerich upgrade` dans un conteneur ponctuel, **avant** le
+  code (sans les colonnes, la lecture d'une version de modèle — donc la galerie — répond 500).
+- **Commande, une fois, après le déploiement** : `uv run python -m scripts.templates plain-letter`
+  dans un conteneur de l'API (Gotenberg joignable, bucket `templates` écrit). Elle télécharge
+  Carlito 400 et 700 (Google Fonts, une fois, gardées dans `fonts/carlito/`), rend la lettre sobre
+  avec son exemple et dépose `plain-letter/v1/{vignette.webp,apercu.png,apercu_pleine_page.png,
+  sample_render.pdf,meta.json}`. Tant qu'elle n'a pas tourné, la galerie ne montre aucune page
+  de lettre pour les modèles sans lettre assortie (rien de cassé, rien d'affiché). À relancer à
+  chaque changement de `PLAIN_LETTER_VERSION`.
+- Aucune variable nouvelle. Déposer une lettre avec un modèle :
+  `python -m scripts.templates submit cv.pdf --name x --letter lettre.pdf [--inline]`.
+- **Vérifier** : `GET /templates/{id}` → `cover_letters[0].style` (`plain` ou `template`),
+  `pages[1].label` ; `POST /documents/{id}/render` `{ "letter": …, "letter_style": "plain" }`
+  → `letter_style_served: "plain"` ; `PUT /applications/{id}/letter-style`
+  `{ "letter_style": "plain" }` → `letter_style: "plain"`.

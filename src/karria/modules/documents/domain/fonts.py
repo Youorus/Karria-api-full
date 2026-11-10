@@ -158,31 +158,82 @@ class FontResolution:
         return self.origin is FontOrigin.SUBSTITUTE
 
 
+#: Les abréviations de graisse d'un **jeton de style** (après le tiret :
+#: `TTCommonsPro-Rg`, `-Bd`, `-BdIt`) — les fonderies et Canva les emploient
+#: là où Google Fonts écrit le mot entier.
+_WEIGHT_ABBREVIATIONS: Final[dict[str, int]] = {
+    "th": 100,
+    "hair": 100,
+    "xlt": 200,
+    "el": 200,
+    "lt": 300,
+    "rg": 400,
+    "reg": 400,
+    "roman": 400,
+    "md": 500,
+    "med": 500,
+    "sb": 600,
+    "smbd": 600,
+    "dmbd": 600,
+    "semi": 600,
+    "bd": 700,
+    "xbd": 800,
+    "exbd": 800,
+    "blk": 900,
+    "hv": 900,
+}
+#: Les graisses CSS valables ; au-delà, une valeur lue dans une police est du bruit.
+_WEIGHT_RANGE: Final = (100, 950)
+_OPTICAL_SIZE: Final = re.compile(r"^\d+pt$")
+
+
+def _style_token(name: str) -> str:
+    """Le jeton de style d'un nom PostScript (`TTCommonsPro-BdIt` → `bdit`), sans italique."""
+    base = re.sub(r"^[A-Z]{6}\+", "", name)
+    token = base.rsplit("-", 1)[1] if "-" in base else ""
+    token = re.sub(r"[^a-z]", "", token.lower())
+    return re.sub(r"(italic|oblique|it)$", "", token)
+
+
 def weight_from_name(name: str, default: int = 400) -> int:
-    """La graisse que dit le nom (`Raleway-SemiBold` → 600)."""
+    """La graisse que dit le nom (`Raleway-SemiBold` → 600, `TTCommonsPro-Rg` → 400).
+
+    Un mot entier d'abord ; sinon l'abréviation du jeton de style ; sinon
+    `default` — ramené à 400 s'il n'est pas une graisse CSS (une police
+    incorporée déclare parfois 1264).
+    """
     lower = re.sub(r"[^a-z]", "", name.lower())
     for word, weight in _WEIGHT_WORDS:
         if word in lower:
             return weight
-    return default
+    abbreviated = _WEIGHT_ABBREVIATIONS.get(_style_token(name))
+    if abbreviated is not None:
+        return abbreviated
+    return default if _WEIGHT_RANGE[0] <= default <= _WEIGHT_RANGE[1] else 400
 
 
 def italic_from_name(name: str) -> bool:
-    """`…Italic`, `…Oblique`, `…It` en fin de nom."""
+    """`…Italic`, `…Oblique`, `…It` en fin de nom (`Garamond-It`, `TTCommonsPro-BdIt`)."""
     lower = name.lower()
-    return "italic" in lower or "oblique" in lower or bool(re.search(r"[-_ ]it$", lower))
+    if "italic" in lower or "oblique" in lower or bool(re.search(r"[-_ ]it$", lower)):
+        return True
+    base = re.sub(r"^[A-Z]{6}\+", "", name)
+    token = re.sub(r"[^a-z]", "", base.rsplit("-", 1)[1].lower()) if "-" in base else ""
+    return token.endswith("it") and token[:-2] in _WEIGHT_ABBREVIATIONS
 
 
 def family_from_name(name: str) -> str:
     """Le nom de famille lisible : `ABCDEF+OpenSans-SemiBoldItalic` → `Open Sans`.
 
-    Le préfixe de sous-ensemble, la graisse et le style sont retirés ; les mots
-    collés en CamelCase sont séparés.
+    Le préfixe de sous-ensemble, la graisse, le style et la taille optique
+    (`Inter 18pt`) sont retirés ; les mots collés en CamelCase sont séparés.
     """
     base = re.sub(r"^[A-Z]{6}\+", "", name).split("-")[0].split(",")[0]
     spaced = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", base).strip()
     words = spaced.split()
-    while len(words) > 1 and _SUFFIXES.fullmatch(words[-1].lower()):
+    while len(words) > 1 and (
+        _SUFFIXES.fullmatch(words[-1].lower()) or _OPTICAL_SIZE.fullmatch(words[-1].lower())
+    ):
         words.pop()
     return " ".join(words) or base
 

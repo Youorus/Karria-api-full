@@ -115,9 +115,9 @@ class TestNoms:
 
 class TestTraitsDeGalerie:
     def test_un_dessin_sobre_est_pret_pour_les_ats(self) -> None:
-        traits = gallery_traits(
-            _spec({"section_title": _style(color="#1A73E8"), "body": _style("Lato")})
-        )
+        spec = _spec({"section_title": _style(color="#111111"), "body": _style("Lato")})
+        spec["header"]["decorations"] = [{"kind": "hline", "w_mm": 170, "stroke": "#1A73E8"}]
+        traits = gallery_traits(spec)
         assert traits == {
             "primary_color": "#1A73E8",
             "font_family": "Lato",
@@ -131,10 +131,11 @@ class TestTraitsDeGalerie:
         styles = {"a": _style("Lato"), "b": _style("Roboto"), "c": _style("Roboto")}
         assert gallery_traits(_spec(styles))["font_family"] == "Roboto"
 
-    def test_sans_styles_ni_titre_de_rubrique_rien_n_est_mesure(self) -> None:
-        traits = gallery_traits(_spec({}))
-        assert traits["font_family"] is None
-        assert traits["primary_color"] is None
+    def test_sans_styles_ni_decor_rien_n_est_mesure(self) -> None:
+        traits = gallery_traits(_spec({"section_title": _style(color="#1A73E8")}))
+        assert traits["font_family"] == "Lato"
+        assert traits["primary_color"] is None, "un titre n'est pas le décor"
+        assert gallery_traits(_spec({}))["font_family"] is None
 
     def test_sans_bande_le_modele_a_une_colonne(self) -> None:
         spec = {**_spec(), "bands": []}

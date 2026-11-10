@@ -51,6 +51,7 @@ from karria.modules.cv.domain import (
     Draft,
     DraftIncompleteError,
     DraftNotFoundError,
+    PhotoMissingError,
     ReceivedFile,
     SuggestionKind,
     UnsupportedUploadError,
@@ -413,6 +414,44 @@ class UploadPhoto:
         logger.info(
             "cv.photo_stored", user_id=str(user_id), photo_id=str(photo.id), enhanced=enhance
         )
+        return photo
+
+
+class EnhanceCurrentPhoto:
+    """Retravaille la photo **déjà** sur le CV, sans la rechoisir.
+
+    L'amélioration n'existait qu'à l'envoi (`POST /cv/photo`, `enhance`) :
+    depuis l'écran du CV, la personne a une photo en place et veut la
+    rendre plus professionnelle sans repasser par la galerie. On relit
+    l'objet du bucket et on le confie à `UploadPhoto` avec `enhance` — même
+    normalisation, même rangement, même référence `CvPhoto` en attente. Le
+    CV ne change pas ici : la personne compare, puis retient l'améliorée par
+    `PUT /cv/me/chapters/photo` ou garde l'originale, qui est restée.
+    """
+
+    def __init__(self, cvs: CvRepository, storage: ObjectStorage, upload: UploadPhoto) -> None:
+        self._cvs = cvs
+        self._storage = storage
+        self._upload = upload
+
+    async def execute(self, user_id: UUID) -> CvPhoto:
+        """Rend la photo améliorée, en attente d'être retenue.
+
+        Raises:
+            CvNotFoundError: La personne n'a pas de CV.
+            PhotoMissingError: Le CV n'a pas de photo.
+            PhotoEnhanceRefusedError: Le générateur refuse cette image.
+            PhotoEnhanceUnavailableError: Panne, ou rien d'exploitable rendu.
+        """
+        cv = await self._cvs.find_by_user(user_id)
+        if cv is None:
+            raise CvNotFoundError
+        if cv.image_key is None:
+            raise PhotoMissingError
+        # Le type réel se lit dans les octets (`prepare_upload`) : rien à annoncer.
+        original = await self._storage.get(Bucket.MEDIA, cv.image_key)
+        photo = await self._upload.execute(user_id, original, None, enhance=True)
+        logger.info("cv.current_photo_enhanced", user_id=str(user_id), photo_id=str(photo.id))
         return photo
 
 

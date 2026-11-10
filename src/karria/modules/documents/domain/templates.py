@@ -29,6 +29,7 @@ from uuid import UUID, uuid4
 
 from karria.modules.documents.domain.errors import InvalidFormatError, TemplateLockedError
 from karria.modules.documents.domain.letter import letter_file_name
+from karria.modules.documents.domain.palette import primary_color_of
 
 FORMATS: Final = ("pdf", "docx")
 #: Lectures anonymes de la galerie permises par origine sur la fenêtre
@@ -124,6 +125,22 @@ class TemplateVersion:
     full_key: str | None = None
     error: str | None = None
     published_at: datetime | None = None
+    #: La lettre appariée (ADR-0036) : son PDF, sa spécification de lettre, son
+    #: contenu d'exemple, les rôles de ses lignes, ses aperçus. `None` partout
+    #: quand le modèle n'en a pas : la lettre sobre est alors servie.
+    letter_source_key: str | None = None
+    letter_spec: dict[str, Any] | None = None
+    letter_sample: dict[str, Any] | None = None
+    letter_labels: dict[str, Any] | None = None
+    letter_thumbnail_key: str | None = None
+    letter_thumbnail_blurhash: str | None = None
+    letter_preview_key: str | None = None
+    letter_full_key: str | None = None
+
+    @property
+    def has_letter(self) -> bool:
+        """Le modèle a une lettre appariée, mesurée et publiée avec lui."""
+        return self.letter_spec is not None
 
     def with_status(self, status: VersionStatus, **changes: Any) -> TemplateVersion:
         """La même version, à un autre état."""
@@ -197,6 +214,9 @@ class GeneratedCv:
     #: La couleur principale avec laquelle l'export a été rendu, si la personne
     #: en a posé une (`#RRGGBB`) ; `None` : la couleur du modèle (ADR-0034).
     primary_color: str | None = None
+    #: Lettre : le style **réellement servi** (`template` ou `plain`, ADR-0036) ;
+    #: `None` pour un CV.
+    letter_style: str | None = None
 
     @staticmethod
     def new_id() -> UUID:
@@ -250,7 +270,9 @@ def export_file_name(first_name: str, last_name: str, extension: str) -> str:
 def gallery_traits(spec: dict[str, Any]) -> dict[str, Any]:
     """Ce que la galerie affiche, **mesuré** dans la spécification.
 
-    - `primary_color` : la couleur des titres de rubrique ;
+    - `primary_color` : la couleur du **décor** (bandes, filets, puces), dominante
+      par surface (`palette.primary_color_of`, ADR-0034 § 2026-11-06) — pas celle
+      d'un texte ;
     - `font_family` : la famille la plus employée par les styles ;
     - `has_photo`, `columns` : lus dans l'en-tête et les bandes ;
     - `ats` : ce que le **dessin** coûte aux ATS avant tout contenu
@@ -272,7 +294,7 @@ def gallery_traits(spec: dict[str, Any]) -> dict[str, Any]:
     if columns > 1:
         warnings.append("multi_column")
     return {
-        "primary_color": styles.get("section_title", {}).get("color"),
+        "primary_color": primary_color_of(spec),
         "font_family": families.most_common(1)[0][0] if families else None,
         "has_photo": bool(spec["header"].get("photo")),
         "columns": columns,

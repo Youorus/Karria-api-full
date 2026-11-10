@@ -37,6 +37,12 @@ class TestNoms:
             ("Inter Black", 900),
             ("Lato-Regular", 400),
             ("Lato-Thin", 100),
+            ("TTCommonsPro-Rg", 400),
+            ("TTCommonsPro-Bd", 700),
+            ("ABCDEF+TTCommonsPro-BdIt", 700),
+            ("Garet-Md", 500),
+            ("Garet-Blk", 900),
+            ("Garamond-SmBd", 600),
         ],
     )
     def test_la_graisse_la_plus_specifique_du_nom_gagne(self, name: str, weight: int) -> None:
@@ -46,6 +52,11 @@ class TestNoms:
         assert weight_from_name("Raleway") == 400
         assert weight_from_name("Raleway", default=500) == 500
 
+    def test_une_graisse_par_defaut_hors_echelle_vaut_normal(self) -> None:
+        # Une police incorporée déclare parfois 1264 : ce n'est pas une graisse CSS.
+        assert weight_from_name("TheSeasons", default=1264) == 400
+        assert weight_from_name("TheSeasons", default=0) == 400
+
     @pytest.mark.parametrize(
         ("name", "italic"),
         [
@@ -54,6 +65,9 @@ class TestNoms:
             ("Garamond-It", True),
             ("Garamond_it", True),
             ("Lato-Regular", False),
+            ("TTCommonsPro-BdIt", True),
+            ("TTCommonsPro-Bd", False),
+            ("Petit-Fruit", False),
         ],
     )
     def test_l_italique_se_lit_dans_le_nom(self, name: str, italic: bool) -> None:
@@ -68,6 +82,8 @@ class TestNoms:
             ("ArialMT", "Arial"),
             ("Montserrat,Bold", "Montserrat"),
             ("Bold", "Bold"),
+            ("Inter 18pt", "Inter"),
+            ("Inter 18pt-Bold", "Inter"),
         ],
     )
     def test_la_famille_perd_prefixe_graisse_et_style(self, name: str, family: str) -> None:

@@ -46,6 +46,7 @@ sont limitées à **30 appels par 10 minutes et par compte** (`429 ai_rate_limit
   },
   "template_id": null, // le modèle de CV choisi, ou null
   "primary_color": null, // la couleur principale posée par la personne (#RRGGBB), ou null (ADR-0034)
+  "letter_style": null, // le style de lettre retenu : "template" | "plain" | null (ADR-0036)
   "cv": {
     /* la copie adaptée, au format GET /cv/me, SANS image_url ni id */
   },
@@ -142,6 +143,7 @@ avec le nom du CV. Même forme que ce que `documents` met en page (ADR-0030).
   "offer": { "offer_id": "…", "title": "…", "company": "…", "logo_url": "…", "city": "…", "contract_label": "CDI", "source_url": "…" },
   "template_id": null,
   "primary_color": null,
+  "letter_style": null,
   "status": "candidate",
   "adaptation": "faite",
   "coverage_ratio": 0.75,
@@ -232,6 +234,19 @@ Corps `{ "decision": "accepter" | "refuser" | "revenir" }`. `accepter` applique
 `revenir` remet `before` et laisse la proposition `proposee` (« je verrai »).
 `404 proposition_not_found` ; `409 proposition_path_invalid` si l'élément visé
 a été retiré du CV à la main.
+
+### `PUT /applications/{id}/letter-style` → `200 Dossier`
+
+**2026-11-06, ADR-0036.** Corps `{ "letter_style": "template" | "plain" | null }`.
+`template` : la lettre assortie du modèle de CV ; `plain` : la lettre sobre de Karria (page
+blanche) ; `null` : par défaut — l'assortie si le modèle du dossier en a une, sinon la sobre.
+Le dossier **retient** le choix (il survit au changement de modèle et d'appareil) ; c'est le
+rendu et l'export de `documents` qui disent le style réellement servi (`letter_style_served`,
+`letter_style`) — un modèle sans lettre assortie sert la sobre quoi qu'il en soit. Rien
+d'autre ne change ; idempotent ; `422` hors `template` | `plain` | `null` ; `404
+dossier_not_found`. Le dossier (`Dossier`) et la carte (`CarteDossier`) portent
+**`letter_style`**. L'app envoie ce style dans `letter_style` du rendu et de l'export de la
+lettre (`contrat-api-documents.md`).
 
 ### `POST /applications/{id}/letter` → `200 Dossier`
 

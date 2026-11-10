@@ -2,7 +2,8 @@
 
 - `documents_templates` : la fiche de galerie, et la version publiée.
 - `documents_template_versions` : une version analysée (spécification,
-  mesures, polices, clés des fichiers) — immuable une fois publiée.
+  mesures, polices, clés des fichiers) — immuable une fois publiée ; avec sa
+  **lettre appariée** quand le modèle en a une (`letter_*`, ADR-0036).
 - `documents_user_templates` : ce que chaque personne possède.
 - `documents_selections` : le modèle choisi (un par personne).
 - `documents_generated_cvs` : les exports (clés des fichiers, score ATS),
@@ -69,6 +70,15 @@ class TemplateVersionModel(BaseDBModel):
     full_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
     error = fields.TextField(null=True)
     published_at = fields.DatetimeField(null=True)
+    # La lettre appariée (ADR-0036, migration 21) : NULL quand le modèle n'en a pas.
+    letter_source_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
+    letter_spec: dict[str, Any] | None = fields.JSONField(null=True)
+    letter_sample: dict[str, Any] | None = fields.JSONField(null=True)
+    letter_labels: dict[str, Any] | None = fields.JSONField(null=True)
+    letter_thumbnail_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
+    letter_thumbnail_blurhash = fields.CharField(max_length=64, null=True)
+    letter_preview_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
+    letter_full_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
 
     class Meta:
         table = "documents_template_versions"
@@ -128,6 +138,9 @@ class GeneratedCvModel(BaseDBModel):
     )
     primary_color = fields.CharField(
         max_length=7, null=True, description="Couleur principale du rendu (#RRGGBB), ou NULL."
+    )
+    letter_style = fields.CharField(
+        max_length=8, null=True, description="Lettre : style servi, template ou plain (ADR-0036)."
     )
 
     class Meta:

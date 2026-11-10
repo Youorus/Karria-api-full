@@ -22,6 +22,7 @@ from karria.modules.applications.application import (
     BaseCv,
     BaseCvReader,
     ChangeDossierColor,
+    ChangeDossierLetterStyle,
     ChangeDossierTemplate,
     CreateDossierFromOffer,
     CvAdapter,
@@ -288,6 +289,11 @@ def get_change_color(dossiers: DossiersDep, clock: ClockDep) -> ChangeDossierCol
     return ChangeDossierColor(dossiers, clock)
 
 
+def get_change_letter_style(dossiers: DossiersDep, clock: ClockDep) -> ChangeDossierLetterStyle:
+    """Changer le style de lettre du dossier (ADR-0036)."""
+    return ChangeDossierLetterStyle(dossiers, clock)
+
+
 def get_draft_letter(
     dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep
 ) -> DraftLetter:
@@ -323,6 +329,7 @@ DecidePropositionDep = Annotated[DecideProposition, Depends(get_decide_propositi
 UpdateDossierCvDep = Annotated[UpdateDossierCv, Depends(get_update_dossier_cv)]
 ChangeTemplateDep = Annotated[ChangeDossierTemplate, Depends(get_change_template)]
 ChangeColorDep = Annotated[ChangeDossierColor, Depends(get_change_color)]
+ChangeLetterStyleDep = Annotated[ChangeDossierLetterStyle, Depends(get_change_letter_style)]
 DraftLetterDep = Annotated[DraftLetter, Depends(get_draft_letter)]
 UpdateLetterDep = Annotated[UpdateLetter, Depends(get_update_letter)]
 RegenerateParagraphDep = Annotated[RegenerateParagraph, Depends(get_regenerate_paragraph)]
