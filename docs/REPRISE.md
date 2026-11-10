@@ -275,6 +275,14 @@ puis `plain-letter` en prod ; fusionner avec `feat/ingestion-v2` (hooks dans `_i
 `analyzer.py` non touché) ; côté app voir `karria_app/docs/REPRISE.md`.
 
 
+### 2026-11-10, nuit — mise en production du chantier « templates par Claude » (Fable, coordination) — EN PRODUCTION
+
+- **Fusionné et poussé sur `main`** (déploiement Dokploy automatique de l'API, du worker et du collecteur) : portrait IA depuis l'onglet CV (`4493dc2`), couleur v2 (ADR-0034 § 2026-11-06), lettre appariée + lettre sobre (ADR-0036, migration 21), ingestion v2 (ADR-0037, `2b6cc60`), plancher SSIM 0,80 d'une lettre sous substitution déclarée (ADR-0036 § 2026-11-10, `1666c0f`), titre de galerie du plan (`958627a`). `make check` : 3 859 tests.
+- **Prod** : migration 21 appliquée (`aerich upgrade` en conteneur ponctuel) ; `scripts.templates plain-letter` (aperçus de la lettre sobre, bucket `templates/plain-letter/v1/`) ; `refresh-colors` (0 changement) ; env Dokploy posé **directement dans la base `dokploy`** (table `application`, colonne `env`) car le cookie `/root/.dokploy-cookie` était expiré : API `LLM__TASKS__TEMPLATE_EXTRACT=anthropic:claude-opus-5-5` ; worker `LLM__PROVIDERS__ANTHROPIC__API_KEY`, `…WORKSPACE_ID`, `LLM__TASKS__TEMPLATE_EXTRACT` (le worker n'avait **aucune** variable `LLM__*`). `/root/karria-api.env` à jour. Identifiants Dokploy : API `VP-gKDv890xb1xjgYw4CK`, worker `wEJP2eb298j-fVCoPBp_x`, collecteur `18qwdIa-8ID9BcAPqWudV`.
+- **Modèles ingérés en prod** (conteneurs ponctuels `scripts.templates submit --inline`, PDF dans `/root/templates/`, Claude Opus 5.5) : publiés — Galerie Monochrome (`sacha-dubois`, **avec lettre appariée**), Frise Pharmacie (`romain-dupont`), Monolithe Anton (`cv2`), Portrait Capitales (`cv5`), Croisée Graphite (`cv6`), Frise Graphite (`cv8`), Rose Poudré Étudiant (`cv9`) ; en revue — `marketing` (SSIM 0,858, défauts du modèle source) et `cv3` (fontes non libres). `cv10` non déposé (fontes non libres, 0,77). Libellés des sept nouveaux posés depuis `labels.title` par SQL (le code le fait désormais à la publication) ; `cv5` renommé à la main car le plan avait donné le même titre que `sacha-dubois`.
+- **App** : `main` `8eca351` poussé, build Release installé sur l'iPhone de Marc à 01:41 (sans l'entitlement associated-domains, comme le 05). Non vu par Marc : écran Lettre (Du modèle · Sobre), feuille couleur, portrait IA en édition.
+- **Reste** : Marc valide ADR-0034 (addendum), 0036, 0037 ; `cv10`/`cv3`/`marketing` (fontes ou modèle source) ; rafraîchir le cookie Dokploy ; l'app ne lit `cover_letters` que si le détail est rechargé (caches).
+
 ### Session du 2026-11-05 (soir, suite) — le partage porte Karria : pied de page des documents (ADR-0035 — Fable)
 
 **Demande de Marc** : à chaque partage (CV, lettre, offre), le destinataire doit avoir de quoi
