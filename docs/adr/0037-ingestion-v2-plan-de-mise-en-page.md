@@ -206,27 +206,34 @@ en plus le plan et le côte à côte : ~15,4 k en entrée. Un modèle coûte don
 requêtes**, jamais plus ; les rendus et mesures (Gotenberg, numpy) prennent 15 à 40 s par passe
 sur une page dense.
 
-## Mesures (2026-11-06, `claude-opus-5-5`, Gotenberg 8.38.1 local)
+## Mesures (2026-11-10, `claude-opus-5-5`, Gotenberg 8.38.1 local, lot complet réingéré)
+
+Score v1 = étiquetage ligne à ligne de l'ADR-0020 ; v2 = la passe gardée de l'ingestion v2
+(p1 : le plan ; p2 : la correction) ; jetons = entrée / sortie, par passe. Un vrai CV (fixture
+complète : Langues, Projets, Intérêts, nom composé) tient sur **une page sans chevauchement** dans
+chacun des dix modèles publiés.
 
 | Modèle | v1 | v2 (passe gardée) | SSIM tol. / mots ≤ 2 mm / style / décor | pages | jetons (entrée / sortie) | verdict |
 |---|---|---|---|---|---|---|
-| romain-dupont (Canva) | 0,52 | **0,940** (p1) | 0,893 / 0,952 / 1,00 / 1,00 | 1 | 11 181 / 1 522 | publié |
-| sacha-dubois (Canva) | 0,51 | **0,916** (p1) | 0,866 / 0,905 / 1,00 / 1,00 | 1 | 10 957 / 1 338 | publié (Canva Sans → Inter déclaré, plancher 0,84) |
-| meridian (original) | 0,92 | **0,933** (p1) | 0,904 / 0,942 / 1,00 / 0,94 | 1 | 12 016 / 1 770 | publié |
-| minimalist (original) | 0,92 | **0,924** (p1) | 0,891 / 1,00 / 1,00 / 0,82 | 1 | 11 134 / 1 565 | publié |
-| marketing (original) | 0,92 | 0,842 (p2) | 0,823 / 0,816 / 1,00 / 0,78 | 1 | 12 344 + 17 637 / 1 790 + 1 790 | revue — **régression** à réexaminer (lot lancé avant les deux derniers correctifs) |
-| cv2 | — | **0,921** (p1) | 0,881 / 0,992 / 1,00 / 0,84 | 1 | 11 605 / 1 646 | publié |
-| cv6 | — | **0,922** (p1) | 0,888 / 0,980 / 1,00 / 0,85 | 1 | 11 515 / 1 550 | publié |
-| cv8 | — | **0,952** (p1) | 0,911 / 0,984 / 1,00 / 0,97 | 1 | 12 120 / 1 661 | publié |
-| cv9 | — | **0,934** (p1) | 0,911 / 0,957 / 1,00 / 0,90 | 1 | 11 111 / 1 548 | publié |
-| cv10 | — | 0,764 (p1) | 0,787 / 0,440 / 1,00 / 1,00 | 1 | 13 196 + 19 839 / 1 831 + 1 824 | revue — trois familles substituées (CatchyMager, Hatton : fontes Canva non libres ; Glacial Indifference absente de la bibliothèque) |
-| cv1 | — | 0,649 (p1) | 0,774 / 0,338 / 0,99 / 0,45 | 1 | 13 198 + 20 205 / 1 926 + 1 926 | revue — étiquettes empilées trop espacées, références en deux colonnes empilées, pastilles de frise absentes (diagnostics dans `REPRISE.md`) |
-| cv5 | — | 0,639 (p2) | 0,794 / 0,183 / 0,95 / 0,63 | 1 | 10 628 + 16 846 / 1 323 + 1 317 | revue — profil au fer à droite rendu à gauche, colonne d'expériences plus large que la page |
-| cv3 | — | — | — | — | 2 passes (plantage) | échec « Crop exceeds page dimensions » — corrigé (recadrage compté en pixels comme pdfium), pas réingéré |
+| romain-dupont (Canva) | 0,52 | **0,945** (p1) | 0,895 / 0,968 / 1,00 / 1,00 | 1 | 11 369 / 1 526 | publié |
+| sacha-dubois (Canva) | 0,51 | **0,916** (p1) | 0,866 / 0,904 / 1,00 / 1,00 | 1 | 10 957 / 1 344 | publié (Canva Sans → Inter déclaré, plancher 0,84) |
+| meridian (original) | 0,92 | **0,933** (p1) | 0,905 / 0,942 / 1,00 / 0,94 | 1 | 12 016 / 1 730 | publié |
+| minimalist (original) | 0,92 | **0,924** (p1) | 0,890 / 1,00 / 1,00 / 0,82 | 1 | 11 134 / 1 571 | publié |
+| marketing (original) | 0,92 | 0,916 (p2) | 0,858 / 0,992 / 1,00 / 0,88 | 1 | 12 344 + 17 043 / 1 776 + 1 776 | revue — score ≥ 0,90 mais SSIM 0,858 < 0,88 (filets gris pleine largeur, second titre « LANGUAGES » du modèle) |
+| cv1 | — | **0,949** (p1) | 0,889 / 1,00 / 0,99 / 1,00 | 1 | 13 198 / 1 925 | publié (était 0,649) |
+| cv2 | — | **0,921** (p1) | 0,881 / 0,992 / 1,00 / 0,84 | 1 | 11 605 / 1 655 | publié |
+| cv3 | — | 0,867 (p1) | 0,805 / 0,962 / 0,97 / 0,79 | 1 | 10 459 + 14 895 / 1 446 + 1 446 | revue — Biro Script Plus et TT Commons Pro substituées (non libres), Bebas Neue homonyme aux métriques verticales différentes (plantait avant) |
+| cv5 | — | **0,907** (p1) | 0,908 / 0,909 / 1,00 / 0,81 | 1 | 10 628 / 1 319 | publié (était 0,639) |
+| cv6 | — | **0,921** (p1) | 0,887 / 0,980 / 1,00 / 0,85 | 1 | 11 515 / 1 549 | publié |
+| cv8 | — | **0,950** (p1) | 0,907 / 0,984 / 1,00 / 0,97 | 1 | 12 120 / 1 656 | publié |
+| cv9 | — | **0,927** (p1) | 0,912 / 0,957 / 1,00 / 0,85 | 1 | 11 111 / 1 548 | publié |
+| cv10 | — | 0,766 (p1) | 0,792 / 0,440 / 1,00 / 1,00 | 1 | 13 196 + 19 813 / 1 820 + 1 861 | revue — trois familles substituées (CatchyMager, Hatton : fontes Canva non libres ; Glacial Indifference absente de la bibliothèque) : les mots se replient ailleurs |
 
 Lecture : cv4 et cv7 sont les mêmes modèles Canva que sacha-dubois et romain-dupont (lettre jointe
-en plus) ; p1/p2 = passe gardée ; un modèle coûte 11–13 k jetons en entrée et 1,3–1,9 k en sortie
-par passe (10–15 s), la passe de correction ~17–20 k en entrée.
+en plus) ; un modèle coûte 10–13 k jetons en entrée et 1,3–1,9 k en sortie par passe (10–15 s), la
+passe de correction 15–20 k en entrée ; sur la journée du 10, cv1/cv5/cv10/marketing/cv3 ont été
+réingérés deux fois (correctifs entre les deux) et cv3 a eu un plan seul en plus : 2 à 6 requêtes
+par modèle, 1 ou 2 pour la version publiée.
 
 ## Conséquences
 
