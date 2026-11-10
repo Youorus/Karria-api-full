@@ -772,3 +772,68 @@ def test_la_reserve_dentete_ignore_un_pied_de_page(spec: Json, fonts: FontSet) -
     cv = copy.deepcopy(CV)
     renderer = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None)
     assert renderer.header_reserve(column, band_top) < 100.0
+
+
+class TestVraiCvEtEnTete:
+    """cv2, meridian, cv5 : ce que le rendu d'une personne a appris de l'en-tête en absolu."""
+
+    def test_la_premiere_bande_garde_la_hauteur_que_lentete_exige(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        band = spec["bands"][0]
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        assert renderer.band_floor(0) == 0.0  # rien de l'en-tête ne descend dans la bande
+        name = spec["header"]["elements"][0]
+        name["y_mm"] = float(band["y_sample"]) + 20.0  # le nom descend dans la bande
+        floor = renderer.band_floor(0)
+        assert floor > 0.0
+        html = renderer.render()
+        assert f"min-height:{floor:.2f}mm" in html
+        # Un pied de page (plus bas que la bande suivante) ne compte pas.
+        name["y_mm"] = float(spec["bands"][1]["y_sample"]) + 5.0
+        assert renderer.band_floor(0) == 0.0
+
+    def test_une_rubrique_reserve_la_place_de_lentete_dans_son_css(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        s = spec["bands"][0]["columns"][0]["sections"][0]
+        sec = {"kind": s["kind"], "title": "T", "items": []}
+        html = renderer.section(s, sec, 60.0, reserve_mm=12.0)
+        assert "margin-top:max(calc(" in html
+        # Un texte d'en-tête au-dessus de la rubrique, dans sa colonne, fait une réserve.
+        column = spec["bands"][0]["columns"][0]
+        band_top = float(spec["bands"][0]["y_sample"])
+        column["sections"][0]["margin_top_mm"] = 30.0
+        name = spec["header"]["elements"][0]
+        name.update(x_mm=column["x_mm"] + 1.0, y_mm=band_top + 2.0)
+        assert renderer.header_reserve(column, band_top) > 0.0
+        name["y_mm"] = band_top - 50.0  # finit au-dessus de la bande : rien
+        assert renderer.header_reserve(column, band_top) == 0.0
+
+    def test_une_colonne_de_la_premiere_bande_borne_un_champ_dentete(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        name = spec["header"]["elements"][0]
+        st = spec["styles"][name["style"]]
+        band = spec["bands"][0]
+        free = renderer.header_limit(name, st)
+        name["y_mm"] = float(band["y_sample"]) + 1.0  # à la hauteur de la bande
+        column = band["columns"][-1]
+        assert (
+            renderer.header_limit(name, st) <= min(free, column["x_mm"] - 4.0 - name["x_mm"]) + 0.01
+        )
+        name["x_mm"] = column["x_mm"] + column["w_mm"] + 20.0  # à droite de toutes les colonnes
+        assert renderer.header_limit(name, st) > 0.0
+
+    def test_le_titre_dune_personne_se_resserre_sans_se_couper(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        view = from_cv(spec, CV)
+        for section in view["sections"]:
+            if section["kind"] == "skills":
+                section["title"] = "Compétences techniques et humaines"
+        html = render(spec, view, fonts)
+        assert "overflow-wrap:normal" in html
+        assert re.search(r"overflow-wrap:normal;letter-spacing:[\d.]+pt;font-size:[\d.]+pt", html)

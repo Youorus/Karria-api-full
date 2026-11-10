@@ -1051,8 +1051,18 @@ class HtmlRenderer:
             elif other["x_mm"] < e["x_mm"] - 5:
                 left_bound = max(left_bound, other["x_mm"] + other.get("w_mm", 0.0) + 4.0)
         left_bound, right_bound = self.rule_bounds(e, box, left_bound, right_bound)
-        # Une colonne de la première bande à la hauteur de l'élément (le profil à
-        # droite d'un nom en grand corps, cv2) borne aussi.
+        left_bound, right_bound = self.column_bounds(e, box, left_bound, right_bound)
+        if e.get("align") == "right":
+            return float(e["rx_mm"] - left_bound)
+        if e.get("align") == "center":
+            return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
+        return float(right_bound - e["x_mm"])
+
+    def column_bounds(
+        self, e: Json, box: float, left_bound: float, right_bound: float
+    ) -> tuple[float, float]:
+        """Une colonne de la première bande à la hauteur de l'élément (le profil à droite
+        d'un nom en grand corps, cv2) borne aussi."""
         band = self.spec["bands"][0]
         for c in band["columns"]:
             if not (band["y_sample"] <= e["y_mm"] + box and band["bottom_sample"] >= e["y_mm"]):
@@ -1061,11 +1071,7 @@ class HtmlRenderer:
                 right_bound = min(right_bound, c["x_mm"] - 4.0)
             elif c["x_mm"] + c["w_mm"] < e["x_mm"] - 5:
                 left_bound = max(left_bound, c["x_mm"] + c["w_mm"] + 4.0)
-        if e.get("align") == "right":
-            return float(e["rx_mm"] - left_bound)
-        if e.get("align") == "center":
-            return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
-        return float(right_bound - e["x_mm"])
+        return left_bound, right_bound
 
     def rule_bounds(
         self, e: Json, box: float, left_bound: float, right_bound: float
