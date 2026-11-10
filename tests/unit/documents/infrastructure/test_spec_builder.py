@@ -1218,7 +1218,7 @@ class TestBarresDeNiveauEtPolicesSubstituees:
         assert ("rect", 13.0, True) in flags
         assert ("rect", 8.0, True) in flags
         assert not any(d.get("sample_only") for d in decorations if d["kind"] == "vline")
-        assert not any(d.get("sample_only") for d in decorations if d["w_mm"] < 5)  # noqa: PLR2004
+        assert not any(d.get("sample_only") for d in decorations if d["w_mm"] < 5)
 
     def test_lespacement_des_mots_ne_se_mesure_pas_sur_une_police_substituee(self) -> None:
         fonts = cv_font_set()
