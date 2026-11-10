@@ -1036,8 +1036,14 @@ class IngestTemplateVersion:
         await self._templates.save_version(done)
         traits = gallery_traits(spec)
         meta = spec.get("meta") or {}
+        # Le nom de galerie est le travail du modèle de vision (ADR-0037 § 1) :
+        # il remplace le libellé par défaut (le nom technique mis en capitales),
+        # jamais un libellé que l'administration a posé.
+        default_label = template.name.strip().title()
+        planned_label = str(meta.get("title") or "").strip()
         updated = replace(
             template,
+            label=planned_label if template.label == default_label and planned_label else template.label,
             category=template.category or str(meta.get("category") or ""),
             description=template.description or str(meta.get("description_fr") or ""),
             tags=template.tags or tuple(str(t) for t in meta.get("tags") or ()),

@@ -155,6 +155,18 @@ class TestIngestion:
         assert template.description == "Sobre."
         assert template.tags == ("sobre",)
 
+    async def test_le_titre_du_plan_remplace_le_libelle_par_defaut_seulement(self, env: Env) -> None:
+        meta = {"title": "Élégance monochrome", "category": "elegant", "tags": ["sobre"]}
+        version = await processing(env, name="cv-7", label="Cv-7")
+        env.engine.analysis = make_analysis(spec=make_spec(meta=meta))
+        await ingest(env).execute(version.id)
+        assert env.templates.templates[version.template_id].label == "Élégance monochrome"
+
+        kept = await processing(env, name="cv-8", label="Posé par Marc")
+        env.engine.analysis = make_analysis(spec=make_spec(meta=meta))
+        await ingest(env).execute(kept.id)
+        assert env.templates.templates[kept.template_id].label == "Posé par Marc"
+
     async def test_la_fiche_garde_ce_que_l_administration_a_deja_renseigne(self, env: Env) -> None:
         version = await processing(env, category="créatif", description="À moi.", tags=("mien",))
         env.engine.analysis = make_analysis(spec=make_spec(meta={}))
