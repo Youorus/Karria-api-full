@@ -212,3 +212,17 @@ avec le CV `cv1` lui-même (0,50, hors de ce lot). Voir « Ce qui reste ouvert �
   (`-Rg`, `-Bd`, `-BdIt`, `-Md`…), ramène une graisse hors échelle (1 264) à 400 et
   retire la taille optique d'un nom de famille (« Inter 18pt » → « Inter », qui faisait
   manquer la police au rendu).
+
+## Addendum du 2026-11-10 — plancher du SSIM d'une lettre sous substitution déclarée
+
+Mesuré sur la lettre appariée de cv1 (Canva Sans, TT Commons Pro, The Seasons :
+trois fontes Canva non libres, substituées et déclarées) : score 0,905, mots à
+≤ 2 mm 0,946, style 0,996, décor 1,00, mais SSIM tolérant **0,820**, sous le
+plancher 0,88 et sous celui des substitutions déclarées du CV (0,84, ADR-0037
+§ 4). Une page de lettre n'est presque que du texte courant : le SSIM y mesure
+surtout le dessin des glyphes substitués, pas la mise en page. Décision : la
+lettre appariée a son propre plancher **0,80** sous substitution déclarée
+(`SSIM_FLOOR_SUBSTITUTED_LETTER`, `evaluate(…, letter=True)`), les autres
+planchers et le score ≥ 0,90 restant exigés tels quels. La mesure de la lettre
+porte désormais ses familles substituées (`extra["substituted_families"]`),
+comme celle du CV.

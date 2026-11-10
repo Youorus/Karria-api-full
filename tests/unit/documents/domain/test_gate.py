@@ -106,3 +106,14 @@ def test_une_substitution_declaree_abaisse_le_seul_plancher_du_ssim() -> None:
     assert "ssim_tolerant 0.835 < 0.84" in evaluate(too_low).failures
     words = _fidelity(words_within_2mm=0.85, extra={"substituted_families": ["canvasans"]})
     assert "words_within_2mm 0.850 < 0.90" in evaluate(words).failures
+
+
+def test_une_lettre_sous_substitution_declaree_a_son_propre_plancher() -> None:
+    # Mesuré sur la lettre de cv1 : SSIM 0,820, mots 0,946, score 0,905 (ADR-0036 § 2026-11-10).
+    subst = {"substituted_families": ["canvasans"]}
+    letter = _fidelity(ssim_tolerant=0.82, words_within_2mm=1.0, decoration=1.0, extra=subst)
+    assert evaluate(letter, letter=True).passed
+    assert "ssim_tolerant 0.820 < 0.84" in evaluate(letter).failures
+    too_low = _fidelity(ssim_tolerant=0.79, words_within_2mm=1.0, decoration=1.0, extra=subst)
+    assert "ssim_tolerant 0.790 < 0.80" in evaluate(too_low, letter=True).failures
+    assert not evaluate(_fidelity(ssim_tolerant=0.82, words_within_2mm=1.0), letter=True).passed

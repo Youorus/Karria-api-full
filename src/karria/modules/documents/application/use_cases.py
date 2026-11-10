@@ -1672,14 +1672,19 @@ async def ingest_paired_letter(  # noqa: PLR0917 - la chaîne d'ingestion, étap
     spec, sample = analysis.spec, analysis.sample
     view = from_letter(spec, sample, today=clock.now().date())
     rendered = await engine.render_pdf(spec, view, assets={}, photo=None)
-    fidelity = await engine.measure(source, rendered.data, fonts_report=analysis.fonts_report)
-    decision = evaluate(fidelity)
+    substituted = substituted_families(analysis.fonts_report)
+    fidelity = await engine.measure(
+        source, rendered.data, fonts_report=analysis.fonts_report, substituted=substituted
+    )
+    decision = evaluate(fidelity, letter=True)
     failures = [f"lettre : {f}" for f in decision.failures]
     if analysis.unlabeled:
         failures.append(f"lettre : lignes sans rôle : {', '.join(analysis.unlabeled)}")
     docx = await engine.render_docx(spec, view, assets={}, photo=None, fit=rendered.fit)
     docx_pdf = await engine.docx_to_pdf(docx)
-    fidelity_docx = await engine.measure(source, docx_pdf, fonts_report=analysis.fonts_report)
+    fidelity_docx = await engine.measure(
+        source, docx_pdf, fonts_report=analysis.fonts_report, substituted=substituted
+    )
     previews = await engine.previews(rendered.data)
     keys = {
         "letter_thumbnail_key": f"{prefix}/letter/vignette.webp",

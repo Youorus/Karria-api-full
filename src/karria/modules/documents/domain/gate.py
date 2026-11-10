@@ -39,6 +39,13 @@ FLOORS: Final[dict[str, float]] = {
 #: propriétaire) rendu en Inter, tout le reste à 1,0 et les mots à 0,90, donne
 #: 0,866 ; un autre modèle en donne 0,58. À reprendre si un lot en dit autrement.
 SSIM_FLOOR_SUBSTITUTED: Final = 0.84
+#: Même plancher pour une **lettre** appariée sous substitution déclarée
+#: (ADR-0036 § 2026-11-10) : une page de lettre n'est presque que du texte
+#: courant, et le SSIM y mesure surtout le dessin des glyphes substitués ; la
+#: place des mots (≥ 0,90), le style et le décor restent exigés tels quels.
+#: Mesuré sur la lettre de cv1 (Canva Sans, TT Commons Pro, The Seasons
+#: substituées) : SSIM 0,820 pour des mots à 0,946 et un score de 0,905.
+SSIM_FLOOR_SUBSTITUTED_LETTER: Final = 0.80
 WEIGHTS: Final[dict[str, float]] = {
     "ssim_tolerant": 0.45,
     "words_within_2mm": 0.25,
@@ -118,19 +125,22 @@ class GateDecision:
         return {"passed": self.passed, "failures": list(self.failures)}
 
 
-def evaluate(pdf: Fidelity) -> GateDecision:
+def evaluate(pdf: Fidelity, *, letter: bool = False) -> GateDecision:
     """Applique les seuils PDF : le score **et** chaque plancher.
 
     Une substitution de police déclarée (`extra["substituted_families"]`)
-    abaisse le seul plancher du SSIM tolérant : la place des mots, le style et
-    le décor restent exigés tels quels.
+    abaisse le seul plancher du SSIM tolérant (davantage pour une lettre,
+    `letter=True`) : la place des mots, le style et le décor restent exigés
+    tels quels.
     """
     failures: list[str] = []
     if pdf.score < PDF_SCORE_MIN:
         failures.append(f"score {pdf.score:.3f} < {PDF_SCORE_MIN:.2f}")
     floors = dict(FLOORS)
     if pdf.extra.get("substituted_families"):
-        floors["ssim_tolerant"] = SSIM_FLOOR_SUBSTITUTED
+        floors["ssim_tolerant"] = (
+            SSIM_FLOOR_SUBSTITUTED_LETTER if letter else SSIM_FLOOR_SUBSTITUTED
+        )
     for key, floor in floors.items():
         value = pdf.components()[key]
         if value < floor:
