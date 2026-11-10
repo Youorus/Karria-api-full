@@ -35,6 +35,11 @@ import pypdfium2.raw as pdfium_c
 #: Plus grande image qu'on rastérise (≈ 30 Mpx) ; au-delà, c'est une bombe de décompression.
 MAX_IMAGE_PIXELS: Final = 30_000_000
 MM: Final = 72 / 25.4
+#: Résolution du raster qui resserre la boîte d'un tracé plein, et tolérance de couleur (somme |Δ|).
+TIGHTEN_DPI: Final = 150
+TIGHTEN_TOLERANCE: Final = 40
+#: Au-delà (mm), un tracé est un fond ou une vague : sa boîte reste celle du PDF.
+TIGHTEN_MAX_MM: Final = 60.0
 _SUBSET_PREFIX: Final = re.compile(r"^[A-Z]{6}\+")
 
 Json = dict[str, Any]
@@ -71,6 +76,13 @@ def _crop_for(
 def base_font_name(font: str) -> str:
     """`ABCDEF+Raleway-Bold` → `Raleway-Bold` (préfixe de sous-ensemble retiré)."""
     return _SUBSET_PREFIX.sub("", font or "")
+
+
+def _rgb(color: str) -> tuple[int, int, int] | None:
+    """`#RRGGBB` → (r, g, b), ou rien."""
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color or ""):
+        return None
+    return int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
 
 
 def hex_color(color: Any) -> str | None:
@@ -210,6 +222,15 @@ class PdfDocument:
             for char in row:
                 if segment:
                     prev = segment[-1]
+                    if (
+                        char["text"] == prev["text"]
+                        and float(prev["x1"]) > float(prev["x0"])
+                        and abs(float(char["x0"]) - float(prev["x0"])) < 0.1  # noqa: PLR2004
+                    ):
+                        # Le même caractère réimprimé exactement au même endroit
+                        # (un gras ou une ombre par surimpression, Canva) : un
+                        # seul glyphe. Un glyphe sans chasse n'est pas une réimpression.
+                        continue
                     size = max(float(prev["size"]), float(char["size"]))
                     gap = float(char["x0"]) - float(prev["x1"])
                     if gap > max(1.5 * size, 3 * MM):
@@ -224,7 +245,7 @@ class PdfDocument:
 
     def _line(self, chars: list[Json], fonts: dict[str, EmbeddedFont], metrics: Any) -> Json:
         visible = [c for c in chars if c["text"].strip()]
-        text = words_from_glyphs(visible)
+        text = words_from_glyphs(chars)
         by_font = Counter(base_font_name(c["fontname"]) for c in visible)
         font = by_font.most_common(1)[0][0]
         main = [c for c in visible if base_font_name(c["fontname"]) == font]
@@ -470,18 +491,71 @@ class PdfDocument:
         iw, ih = image.size
         corner = int(image.getpixel((max(0, iw // 12), max(0, ih // 12))))
         center = int(image.getpixel((iw // 2, ih // 2)))
-        return corner - center > 60  # noqa: PLR2004
+        # Un rond touche les quatre bords au milieu ; un cadre (les équerres
+        # d'un QR code) a le coin clair et le centre sombre sans toucher les bords.
+        inset = max(1, min(iw, ih) // 25)
+        edges = [
+            int(image.getpixel(point))
+            for point in (
+                (iw // 2, inset),
+                (iw // 2, ih - 1 - inset),
+                (inset, ih // 2),
+                (iw - 1 - inset, ih // 2),
+            )
+        ]
+        return corner - center > 60 and all(corner - e > 60 for e in edges)  # noqa: PLR2004
+
+    def tighten(self, index: int, d: Json) -> None:
+        """La boîte **peinte** d'un tracé plein : celle de ses pixels à sa couleur.
+
+        pdfium borne un tracé par ses points de contrôle : le surligneur sous
+        un titre (une courbe) se voyait deux fois plus haut qu'il n'est peint,
+        et se dessinait sur le texte. Les rectangles et filets sont déjà justes.
+        """
+        if d["kind"] != "curve" or not d.get("fill") or max(d["w"], d["h"]) > TIGHTEN_MAX_MM:
+            return
+        page = self._pdf[index]
+        scale = TIGHTEN_DPI / 72
+        crop = _crop_for(page.get_size(), (d["x"], d["y"], d["w"], d["h"]), scale)
+        if crop is None:
+            return
+        image = page.render(scale=scale, crop=crop).to_pil().convert("RGB")
+        target = _rgb(d["fill"])
+        if target is None:
+            return
+        pixels = image.load()
+        iw, ih = image.size
+        xs: list[int] = []
+        ys: list[int] = []
+        for py in range(ih):
+            for px in range(iw):
+                r, g, b = pixels[px, py][:3]
+                if (
+                    abs(r - target[0]) + abs(g - target[1]) + abs(b - target[2])
+                    <= TIGHTEN_TOLERANCE
+                ):
+                    xs.append(px)
+                    ys.append(py)
+        if not xs:
+            return
+        px_mm = 25.4 / TIGHTEN_DPI
+        x0, y0 = d["x"] + min(xs) * px_mm, d["y"] + min(ys) * px_mm
+        x1, y1 = d["x"] + (max(xs) + 1) * px_mm, d["y"] + (max(ys) + 1) * px_mm
+        d.update(x=round(x0, 2), y=round(y0, 2), w=round(x1 - x0, 2), h=round(y1 - y0, 2))
 
     def read(self, index: int = 0, *, metrics: Any = None) -> PdfPage:
         """Tout ce que la spécification et la mesure lisent d'une page."""
         width, height = self.page_size_mm(index)
         lines = self.text_lines(index, metrics=metrics)
+        drawings = self.drawings(index)
+        for d in drawings:
+            self.tighten(index, d)
         return PdfPage(
             width_mm=round(width, 2),
             height_mm=round(height, 2),
             pages=self.page_count,
             lines=lines,
-            drawings=self.drawings(index),
+            drawings=drawings,
             images=self.images(index),
             fonts=self.fonts(index),
             producer=(self._plumber.metadata or {}).get("Producer"),
@@ -493,24 +567,27 @@ class PdfDocument:
         return title if isinstance(title, str) else str(title)
 
 
-def words_from_glyphs(glyphs: list[Json]) -> str:
-    """Le texte d'une ligne, reconstruit par l'écart entre glyphes.
+def words_from_glyphs(chars: list[Json]) -> str:
+    """Le texte d'une ligne, reconstruit par les espaces du PDF et l'écart entre glyphes.
 
-    Les espaces du PDF ne sont pas fiables : un titre « B E N J A M I N » est
+    Les espaces du PDF ne suffisent pas : un titre « B E N J A M I N » est
     souvent dessiné par interlettrage, sans espace, et un autre par des
     espaces tapés entre chaque lettre. On mesure l'écart usuel entre deux
-    glyphes de la ligne ; un mot commence là où l'écart le dépasse
-    nettement (de 80 %, et d'au moins 0,18 em).
+    glyphes visibles de la ligne ; un mot commence là où l'écart le dépasse
+    nettement (de 80 %, et d'au moins 0,18 em) — ou là où le PDF a mis une
+    espace, même étroite (une police condensée : 0,15 em, sous l'écart).
     """
+    glyphs = [c for c in chars if str(c["text"]).strip()]
     if not glyphs:
         return ""
+    spaced = {id(c) for prev, c in itertools.pairwise(chars) if not str(prev["text"]).strip()}
     gaps = [float(b["x0"]) - float(a["x1"]) for a, b in itertools.pairwise(glyphs)]
     typical = statistics.median(gaps) if gaps else 0.0
     typical = max(typical, 0.0)
     text = str(glyphs[0]["text"])
     for gap, glyph in zip(gaps, glyphs[1:], strict=True):
         size = float(glyph["size"])
-        if gap > typical + max(0.18 * size, 0.8 * typical):
+        if id(glyph) in spaced or gap > typical + max(0.18 * size, 0.8 * typical):
             text += " "
         text += str(glyph["text"])
     return text

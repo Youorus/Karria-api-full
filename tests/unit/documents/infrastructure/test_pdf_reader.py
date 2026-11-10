@@ -526,3 +526,83 @@ def test_une_zone_sans_epaisseur_ou_hors_page_se_rasterise_quand_meme() -> None:
         # Une zone hors de la page : la page entière plutôt qu'une erreur.
         whole = image_size(doc.render_png(0, dpi=72))
         assert image_size(doc.render_png(0, dpi=72, box_mm=(40, 40, 5, 5))) == whole
+
+
+def test_le_recadrage_compte_les_pixels_comme_pdfium() -> None:
+    """pdfium arrondit chaque bord au pixel supérieur : une zone qui ne laisse pas un pixel
+    à l'échelle demandée tombe sur la page entière, et le calcul rend `None`."""
+    from karria.shared.images import image_size  # noqa: PLC0415
+
+    b = PdfBuilder(80, 60)
+    b.line(5, 10, 25, 10, stroke="#000000")
+    with PdfDocument(b.to_bytes()) as doc:
+        whole = image_size(doc.render_png(0, dpi=150))
+        # 0,01 mm avant le bord droit : moins d'un point, pas un pixel à 150 dpi (cv3 plantait).
+        assert image_size(doc.render_png(0, dpi=150, box_mm=(79.99, 10, 1, 1))) == whole
+        assert doc.is_round((79.99, 10, 1, 1)) is False
+    size = (80 * MM, 60 * MM)
+    assert pdf_reader._crop_for(size, (79.99, 10, 1, 1), 150 / 72) is None
+    crop = pdf_reader._crop_for(size, (10, 10, 20, 0), 1.0)
+    assert crop is not None
+    assert crop[0] == pytest.approx(10 * MM)
+    assert crop[2] == pytest.approx(50 * MM)
+    assert crop[1] == pytest.approx(50 * MM - 1, abs=0.01)  # un point de haut
+
+
+class TestGlyphesEtRonds:
+    def test_une_espace_du_pdf_coupe_un_mot_meme_etroite(self) -> None:
+        def g(text: str, x0: float, x1: float) -> dict[str, Any]:
+            return {"text": text, "x0": x0, "x1": x1, "size": 27.0}
+
+        # Police condensée : l'espace fait 0,15 em, moins que l'écart usuel exigé.
+        chars = [g("A", 0, 10), g(" ", 10, 14), g("B", 14, 24), g("C", 24, 34)]
+        assert words_from_glyphs(chars) == "A BC"
+        assert words_from_glyphs([g(" ", 0, 4)]) == ""
+
+    def test_un_glyphe_reimprime_au_meme_endroit_ne_compte_quune_fois(self) -> None:
+        b = PdfBuilder(60, 30)
+        b.text("Mon portfolio", 5, 10, size=12)
+        b.text("Mon portfolio", 5, 10, size=12)  # surimpression (un faux gras)
+        with PdfDocument(b.to_bytes()) as doc:
+            texts = [ln["text"] for ln in doc.read().lines]
+        assert texts == ["Mon portfolio"]
+
+    def test_un_cadre_carre_nest_pas_un_rond(self) -> None:
+        b = PdfBuilder(60, 60)
+        # Un anneau : rond sombre, cœur clair — rond vu ; un cadre : bords clairs au milieu.
+        b.circle(20, 20, 8, fill="#000000")
+        b.rect(40, 10, 16, 16, fill="#000000")
+        b.rect(42, 12, 12, 12, fill="#FFFFFF")
+        b.rect(44, 14, 8, 8, fill="#000000")  # un « QR » au centre d'un cadre
+        with PdfDocument(b.to_bytes()) as doc:
+            assert doc.is_round((12, 12, 16, 16)) is True
+            assert doc.is_round((40, 10, 16, 16)) is False
+
+
+def test_la_boite_dun_trace_plein_est_celle_de_ses_pixels() -> None:
+    """Un surligneur dessiné en courbe : pdfium le borne par ses points de contrôle,
+    la boîte retenue est celle des pixels à sa couleur."""
+    b = PdfBuilder(80, 40)
+    b.circle(20, 20, 5, fill="#D8A4B5")  # une courbe pleine (rond : boîte déjà juste)
+    with PdfDocument(b.to_bytes()) as doc:
+        page = doc.read()
+        (disc,) = [d for d in page.drawings if d.get("fill") == "#D8A4B5"]
+        assert disc["kind"] == "curve"
+        assert disc["x"] == pytest.approx(15.0, abs=0.3)
+        assert disc["w"] == pytest.approx(10.0, abs=0.4)
+        # Une forme sans remplissage, un rectangle, ou une grande vague : rien à resserrer.
+        rect = {"kind": "rect", "x": 1.0, "y": 1.0, "w": 5.0, "h": 5.0, "fill": "#000000"}
+        doc.tighten(0, rect)
+        assert rect["w"] == 5.0
+        big = {"kind": "curve", "x": 1.0, "y": 1.0, "w": 70.0, "h": 30.0, "fill": "#D8A4B5"}
+        doc.tighten(0, big)
+        assert big["w"] == 70.0
+        off = {"kind": "curve", "x": 79.99, "y": 1.0, "w": 1.0, "h": 1.0, "fill": "#D8A4B5"}
+        doc.tighten(0, off)
+        assert off["x"] == 79.99
+        empty = {"kind": "curve", "x": 50.0, "y": 1.0, "w": 10.0, "h": 10.0, "fill": "#123456"}
+        doc.tighten(0, empty)
+        assert empty["w"] == 10.0
+        bad = {"kind": "curve", "x": 15.0, "y": 15.0, "w": 10.0, "h": 10.0, "fill": "pink"}
+        doc.tighten(0, bad)
+        assert bad["w"] == 10.0

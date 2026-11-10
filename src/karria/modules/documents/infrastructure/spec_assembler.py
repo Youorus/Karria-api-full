@@ -26,12 +26,17 @@ Contrat
 from __future__ import annotations
 
 import itertools
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from karria.modules.documents.infrastructure.fonts import FontSet
 from karria.modules.documents.infrastructure.layout_planner import (
+    HeaderField,
     LayoutPlan,
+    LineRole,
     PlanDecoration,
+    PlanHeaderLine,
+    PlanItem,
+    PlanLine,
     PlanSection,
     check_plan,
     plan_to_labels,
@@ -40,6 +45,7 @@ from karria.modules.documents.infrastructure.layout_planner import (
 )
 from karria.modules.documents.infrastructure.pdf_reader import PdfDocument, PdfPage
 from karria.modules.documents.infrastructure.spec_builder import (
+    CONTACT_ROLES,
     OTHER_PREFIX,
     SPEC_VERSION,
     Line,
@@ -59,6 +65,10 @@ BOX_SLACK_MM: Final = 1.5
 #: Marge ajoutée au bord droit d'une colonne (mm), au-delà du résidu de rendu
 #: de sa ligne la plus longue (`column_right`).
 COLUMN_SLACK_MM: Final = 0.3
+#: Une colonne s'arrête avant le bord de la page, quoi que disent ses lignes.
+PAGE_EDGE_MM: Final = 1.0
+#: Sous cette part de la hauteur de page, des coordonnées seules sont un pied de page.
+FOOTER_RATIO: Final = 0.85
 #: Tolérances d'alignement des éléments d'en-tête (mm).
 EDGE_TOLERANCE_MM: Final = 1.0
 CENTER_TOLERANCE_MM: Final = 1.5
@@ -67,6 +77,69 @@ CENTER_TOLERANCE_MM: Final = 1.5
 WIDTH_DIFFERENCE_MM: Final = 2.0
 #: Un nom complet en deux polices se coupe entre deux mots : il en faut deux.
 MIN_NAME_WORDS: Final = 2
+
+
+def relocate_contact_lines(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
+    """Les coordonnées que le plan met dans l'en-tête alors qu'une rubrique Contact titrée
+    et vide les attend plus bas retournent dans cette rubrique, en un élément.
+
+    Mesuré sur cv9/Sacha : « COORDONNÉES » titrée dans la colonne, téléphone,
+    courriel et adresse déclarés dans l'en-tête → posés en absolu, ils
+    chevauchaient la rubrique suivante d'un vrai CV (quatre coordonnées au lieu
+    de trois). Dans la rubrique, ils coulent avec elle. Le plan est modifié en
+    place : c'est lui qui est gardé dans les étiquettes.
+    """
+    contact = next((ps for ps in plan.sections() if ps.kind == "contact"), None)
+    if contact is None or any(pl.role in CONTACT_ROLES for it in contact.items for pl in it.lines):
+        return plan
+    by_id = {ln["id"]: ln for ln in page.lines}
+    title_y = max((by_id[t]["y"] for t in contact.title_lines if t in by_id), default=None)
+    moved = [
+        h
+        for h in plan.header.lines
+        if h.field in CONTACT_ROLES
+        and h.line in by_id
+        and (title_y is None or by_id[h.line]["y"] > title_y)
+    ]
+    if not moved:
+        return plan
+    plan.header.lines = [h for h in plan.header.lines if h not in moved]
+    contact.items.append(
+        PlanItem(lines=[PlanLine(line=h.line, role=cast("LineRole", h.field)) for h in moved])
+    )
+    return plan
+
+
+def relocate_footer_contact(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
+    """Des coordonnées en pied de page (une rubrique Contact sans titre, seule dans la
+    dernière bande, toute dans le bas de la page) sont des champs d'en-tête : posées
+    en absolu, elles restent au pied ; en bande, elles couleraient sous le contenu
+    et le tasseraient (mesuré sur cv5 : le plan les met tantôt dans l'en-tête,
+    tantôt dans une bande ; la règle tranche)."""
+    if not plan.bands:
+        return plan
+    last = plan.bands[-1]
+    sections = [s for c in last.columns for s in c.sections]
+    if len(sections) != 1 or sections[0].kind != "contact" or sections[0].title_lines:
+        return plan
+    contact = sections[0]
+    by_id = {ln["id"]: ln for ln in page.lines}
+    lines = [pl for it in contact.items for pl in it.lines if pl.line in by_id]
+    if not lines or any(pl.role not in CONTACT_ROLES for pl in lines):
+        return plan
+    if any(by_id[pl.line]["y"] < FOOTER_RATIO * page.height_mm for pl in lines):
+        return plan
+    plan.header.lines.extend(
+        PlanHeaderLine(line=pl.line, field=cast("HeaderField", pl.role)) for pl in lines
+    )
+    plan.bands.pop()
+    return plan
+
+
+def size_of(line: Line) -> float | None:
+    """Le corps d'une ligne, tel que lu dans le PDF (à défaut, celui de son style)."""
+    size = line.raw.get("size")
+    return float(size) if size else None
 
 
 def split_mixed_name(line: Line) -> tuple[Line, Line] | None:
@@ -135,11 +208,14 @@ class SpecAssembler(SpecBuilder):
         plan: LayoutPlan,
         fonts: FontSet,
         served: dict[str, tuple[str, int, bool]],
+        *,
+        substituted: frozenset[str] = frozenset(),
     ) -> None:
         for i, d in enumerate(page.drawings, 1):
             d["_id"] = shape_id(i)
+        plan = relocate_footer_contact(relocate_contact_lines(plan, page), page)
         self.labels = plan_to_labels(plan, page)
-        super().__init__(doc, page, self.labels, fonts, served)
+        super().__init__(doc, page, self.labels, fonts, served, substituted=substituted)
         self.plan = plan
         self.check = check_plan(plan, page)
         self.by_id: dict[str, Line] = {ln.id: ln for ln in self.lines}
@@ -210,7 +286,9 @@ class SpecAssembler(SpecBuilder):
                         spec_sec["width_mm"] = width
                     spec_secs.append(spec_sec)
                     prev_bottom = s["bottom"]
-                right = self.column_right(secs, spec_secs, styles)
+                # Jamais au-delà de la page : une ligne qui touche le bord droit
+                # n'y gagne pas une colonne qui déborde.
+                right = min(self.column_right(secs, spec_secs, styles), self.pw - PAGE_EDGE_MM)
                 if ci + 1 < len(cols):
                     right = min(right, xs[ci + 1] - 2)
                 columns.append(
@@ -275,27 +353,43 @@ class SpecAssembler(SpecBuilder):
             if st is None:
                 continue
             # Toute ligne tient dans la boîte, y compris celles qui ne se replient pas.
+            # Chaque ligne à son propre corps : une puce plus petite que son style
+            # (Canva) ne mesure pas au corps de l'emplacement.
             for ln in lines:
-                lower = max(lower, ln.x - col_x + self.fonts.width_mm(ln.text, st))
+                lower = max(
+                    lower, ln.x - col_x + self.fonts.width_mm(ln.text, st, size_pt=size_of(ln))
+                )
             if len(lines) < 2:  # noqa: PLR2004
                 continue
             found = True
-            if self.alignment(lines) == "justify":
-                # Un paragraphe justifié touche le bord de sa boîte : le bord est mesuré.
-                edge = max(ln.right for ln in lines[:-1]) - col_x
+            align = self.alignment(lines)
+            if align in ("justify", "right"):
+                # Un paragraphe justifié ou au fer à droite touche le bord de sa
+                # boîte : le bord est mesuré (toutes les lignes pour la droite).
+                edge = max(ln.right for ln in (lines if align == "right" else lines[:-1])) - col_x
                 measured = edge if measured is None else max(measured, edge)
             for a, b in itertools.pairwise(lines):
                 first_word = b.text.split()[0] if b.text.split() else ""
-                upper = min(upper, a.x - col_x + self.fonts.width_mm(f"{a.text} {first_word}", st))
+                upper = min(
+                    upper,
+                    a.x
+                    - col_x
+                    + self.fonts.width_mm(f"{a.text} {first_word}", st, size_pt=size_of(a)),
+                )
         if not found:
             return None
         if measured is not None:
             # Le bord mesuré, sauf si le mot suivant y tiendrait avec la police
-            # servie (plus étroite) : la preuve du repli l'emporte, sans jamais
-            # descendre sous la ligne la plus large.
+            # servie : la preuve du repli l'emporte (cv1 : au bord mesuré, Chromium
+            # remonte un mot que Canva avait replié), sans jamais descendre sous
+            # la ligne la plus large.
             width = max(lower, min(measured, upper) if upper > lower else measured)
         else:
-            width = (lower + upper) / 2 if upper > lower else lower + COLUMN_SLACK_MM
+            width = (lower + upper) / 2 if upper > lower else lower
+        # Jamais au ras de la ligne la plus large : Chromium replierait son
+        # dernier mot sur un arrondi (mesuré : « Projet » tombait d'une ligne
+        # rendue à 58,54 mm pour 58,54 mm de boîte).
+        width = max(width, lower + COLUMN_SLACK_MM)
         return round(min(width, spec_sec.get("width_mm") or float("inf")), 2)
 
     def column_right(
@@ -314,7 +408,7 @@ class SpecAssembler(SpecBuilder):
             for ln in s["all_lines"]:
                 key = title_key if ln.role == "section_title" else f"{s['kind']}.{ln.role}"
                 st = styles.get(key)
-                rendered = self.fonts.width_mm(ln.text, st) if st else ln.w
+                rendered = self.fonts.width_mm(ln.text, st, size_pt=size_of(ln)) if st else ln.w
                 right = max(right, ln.right + max(0.0, rendered - ln.w))
         return right + COLUMN_SLACK_MM
 
@@ -354,6 +448,11 @@ class SpecAssembler(SpecBuilder):
         ]
         if not title and not lines:
             return None
+        if lines and all(ln.role == "label" for ln in lines):
+            # Des étiquettes qui n'annoncent rien (« Mon portfolio » seul dans sa
+            # rubrique) sont du texte : elles se rendent, elles ne se perdent pas.
+            for ln in lines:
+                ln.role = "item_text"
         kind: str = ps.kind
         if kind == "other":
             slug = slugify(" ".join(t.text for t in title)) or f"section-{index}"
@@ -563,7 +662,11 @@ class SpecAssembler(SpecBuilder):
         if field in ("first_name", "last_name"):
             sample["identity"][field] = text.title()
         elif field == "headline":
-            sample["identity"]["headline"] = text
+            # Le poste écrit deux fois (« Graphiste » en rappel, « GRAPHISTE » en
+            # grand) : l'exemple garde la casse écrite ; le style en capitales
+            # transforme la sienne au rendu.
+            if not (text.isupper() and sample["identity"].get("headline")):
+                sample["identity"]["headline"] = text
         elif field == "full_name":
             parts = text.split()
             sample["identity"].update(

@@ -792,8 +792,13 @@ def test_un_paragraphe_justifie_dit_le_bord_de_sa_boite(built: tuple) -> None:
     from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
 
     assembler = built[3]
+    # Chaque ligne se mesure à son propre corps (9 pt, celui de `raw_line`).
     styles = {
-        "summary.summary": {**assembler.style_of([assembler.lines[0]]), "letter_spacing_pt": 0.0}
+        "summary.summary": {
+            **assembler.style_of([assembler.lines[0]]),
+            "letter_spacing_pt": 0.0,
+            "size_pt": 9.0,
+        }
     }
 
     def line(lid: str, text: str, y: float, w: float) -> Line:
@@ -823,3 +828,389 @@ def test_un_paragraphe_justifie_dit_le_bord_de_sa_boite(built: tuple) -> None:
     width_both = assembler.wrapped_box_width(both, {}, styles, 20.0)
     assert width_both is not None
     assert width_both >= assembler.fonts.width_mm(wide.text, styles["summary.summary"]) - 0.01
+
+
+def _mini_plan(sections: list[Json], header_lines: list[Json]) -> Json:
+    return {
+        "gallery": {
+            "title": "T",
+            "category": "modern",
+            "description_fr": "D.",
+            "tags": ["t"],
+            "photo_shape": "none",
+        },
+        "header": {"lines": header_lines, "photo": None},
+        "bands": [{"columns": [{"sections": sections}]}],
+        "decorations": [],
+    }
+
+
+def _assemble(lines: list[Json], plan: Json, **kw: Any) -> tuple[Json, Json, Any]:
+    from documents.infrastructure.test_spec_builder import FakeDoc  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.pdf_reader import PdfPage  # noqa: PLC0415
+
+    page = PdfPage(210.0, 297.0, 1, [dict(ln) for ln in lines], kw.pop("drawings", []), [])
+    assembler = SpecAssembler(
+        FakeDoc(), page, LayoutPlan.model_validate(plan), cv_font_set(), SERVED, **kw
+    )
+    spec, sample, _ = assembler.build()
+    return spec, sample, assembler
+
+
+class TestCoordonneesEtPosteViseDunVraiCv:
+    """cv9/Sacha : des coordonnées déclarées dans l'en-tête sous une rubrique Contact titrée,
+    un poste visé sans place sous le nom."""
+
+    def _lines(self) -> list[Json]:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        return [
+            raw_line("L1", "JEAN DUPONT", 80, 10, h=12, size=34),
+            raw_line("L2", "Un profil qui suit le nom de près", 80, 24, w=80),
+            raw_line("L3", "et continue sur une seconde ligne", 80, 29, w=80),
+            raw_line("L4", "COORDONNEES", 10, 60, size=11, caps=True),
+            raw_line("L5", "0612", 20, 68, w=12),
+            raw_line("L6", "a@b.fr", 20, 74, w=14),
+            raw_line("L7", "LANGUES", 10, 90, size=11, caps=True),
+            raw_line("L8", "Anglais", 10, 97),
+        ]
+
+    def _plan(self, *, contact_in_header: bool) -> Json:
+        contact_items = (
+            []
+            if contact_in_header
+            else [{"lines": [{"line": "L5", "role": "phone"}, {"line": "L6", "role": "email"}]}]
+        )
+        header = [{"line": "L1", "field": "full_name"}]
+        if contact_in_header:
+            header += [{"line": "L5", "field": "phone"}, {"line": "L6", "field": "email"}]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S2",
+                    "kind": "contact",
+                    "title_lines": ["L4"],
+                    "items": contact_items,
+                    "side_roles": [],
+                },
+                {
+                    "ref": "S3",
+                    "kind": "languages",
+                    "title_lines": ["L7"],
+                    "items": [{"lines": [{"line": "L8", "role": "language"}]}],
+                    "side_roles": [],
+                },
+            ],
+            header,
+        )
+        plan["bands"] = [
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            {
+                                "ref": "S1",
+                                "kind": "summary",
+                                "title_lines": [],
+                                "items": [
+                                    {
+                                        "lines": [
+                                            {"line": "L2", "role": "summary"},
+                                            {"line": "L3", "role": "summary"},
+                                        ]
+                                    }
+                                ],
+                                "side_roles": [],
+                            }
+                        ]
+                    }
+                ]
+            },
+            *plan["bands"],
+        ]
+        return plan
+
+    def test_les_coordonnees_de_lentete_retournent_dans_la_rubrique_contact_titree(self) -> None:
+        spec, sample, assembler = _assemble(self._lines(), self._plan(contact_in_header=True))
+        contact = sections(spec)["contact"]
+        assert [sl["roles"] for sl in contact["slots"]] == [["phone"], ["email"]]
+        assert [
+            e["field"] for e in spec["header"]["elements"] if e["field"] in ("phone", "email")
+        ] == []
+        assert sample["contact"] == {"phone": "0612", "email": "a@b.fr"}
+        # Le plan gardé dans les étiquettes porte le déplacement.
+        plan = assembler.labels["plan"]
+        contact_plan = next(
+            s
+            for b in plan["bands"]
+            for c in b["columns"]
+            for s in c["sections"]
+            if s["kind"] == "contact"
+        )
+        assert [pl["line"] for it in contact_plan["items"] for pl in it["lines"]] == ["L5", "L6"]
+
+    def test_une_rubrique_contact_deja_garnie_laisse_lentete_tranquille(self) -> None:
+        spec, _, _ = _assemble(self._lines(), self._plan(contact_in_header=False))
+        assert [sl["roles"] for sl in sections(spec)["contact"]["slots"]] == [["phone"], ["email"]]
+
+    def test_une_coordonnee_au_dessus_du_titre_contact_reste_dans_lentete(self) -> None:
+        lines = self._lines()
+        lines[4]["y"] = 40.0  # le téléphone au-dessus de « COORDONNEES »
+        plan = self._plan(contact_in_header=True)
+        spec, _, _ = _assemble(lines, plan)
+        fields = [e["field"] for e in spec["header"]["elements"]]
+        assert "phone" in fields
+        assert [sl["roles"] for sl in sections(spec)["contact"]["slots"]] == [["email"]]
+        # Les deux au-dessus : rien ne bouge, la rubrique vide disparaît.
+        lines[5]["y"] = 45.0
+        spec, _, _ = _assemble(lines, self._plan(contact_in_header=True))
+        assert {"phone", "email"} <= {e["field"] for e in spec["header"]["elements"]}
+        assert sections(spec)["contact"]["slots"] == []
+
+    def test_sans_place_sous_le_nom_le_poste_vise_ouvre_le_flux(self) -> None:
+        spec, _, _ = _assemble(self._lines(), self._plan(contact_in_header=False))
+        headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        assert headline["flow"] is True
+        assert headline["y_mm"] == spec["first_band_top_mm"]
+        assert headline["gap_mm"] >= 2.0
+
+    def test_avec_de_la_place_le_poste_vise_reste_en_absolu(self, spec: Json) -> None:
+        headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        assert "flow" not in headline
+
+
+class TestBoitesEtColonnes:
+    def test_un_paragraphe_au_fer_a_droite_a_sa_boite_au_bord_mesure(self) -> None:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        fonts = cv_font_set()
+        st = {
+            "family": "Testa",
+            "weight": 400,
+            "italic": False,
+            "size_pt": 9.0,
+            "letter_spacing_pt": 0.0,
+            "uppercase": False,
+        }
+
+        def flush_right(lid: str, text: str, y: float) -> Json:
+            w = fonts.width_mm(text, st)
+            return raw_line(lid, text, 100.0 - w, y, w=w)
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+            flush_right("L2", "aaaa bbbb cccc", 30),
+            flush_right("L3", "dddd eeee", 35),
+            flush_right("L4", "ffff", 40),
+            raw_line("L5", "COMPETENCES", 20, 60, size=11, caps=True),
+            raw_line("L6", "Python", 20, 67),
+        ]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "summary",
+                    "title_lines": [],
+                    "items": [
+                        {
+                            "lines": [
+                                {"line": "L2", "role": "summary"},
+                                {"line": "L3", "role": "summary"},
+                                {"line": "L4", "role": "summary"},
+                            ]
+                        }
+                    ],
+                    "side_roles": [],
+                },
+                {
+                    "ref": "S2",
+                    "kind": "skills",
+                    "title_lines": ["L5"],
+                    "items": [{"lines": [{"line": "L6", "role": "skill"}]}],
+                    "side_roles": [],
+                },
+            ],
+            [{"line": "L1", "field": "full_name"}],
+        )
+        spec, _, _ = _assemble(lines, plan)
+        summary = sections(spec)["summary"]
+        assert summary["slots"][0]["align"] == "right"
+        # La colonne commence à la première ligne ; le bord droit du paragraphe est à 100,
+        # plus la marge au-dessus de la ligne la plus large.
+        col_x = spec["bands"][0]["columns"][0]["x_mm"]
+        assert summary["width_mm"] == pytest.approx(100.0 - col_x + 0.3, abs=0.05)
+
+    def test_une_colonne_sarrete_avant_le_bord_de_la_page(self) -> None:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+            raw_line("L2", "COMPETENCES", 20, 60, size=11, caps=True),
+            raw_line("L3", "Un long texte qui touche le bord", 20, 67, w=189.5),
+        ]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "skills",
+                    "title_lines": ["L2"],
+                    "items": [{"lines": [{"line": "L3", "role": "skill"}]}],
+                    "side_roles": [],
+                }
+            ],
+            [{"line": "L1", "field": "full_name"}],
+        )
+        spec, _, _ = _assemble(lines, plan)
+        column = spec["bands"][0]["columns"][0]
+        assert column["x_mm"] + column["w_mm"] <= 210.0 - 1.0 + 0.01
+
+    def test_la_boite_garde_une_marge_au_dessus_de_la_ligne_la_plus_large(
+        self, built: tuple
+    ) -> None:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+        assembler = built[3]
+        styles = {
+            "educations.item_title": {
+                **assembler.style_of([assembler.lines[0]]),
+                "letter_spacing_pt": 0.0,
+                "size_pt": 9.0,
+            }
+        }
+        st = styles["educations.item_title"]
+        first = Line(
+            raw_line("L1", "Licence en Gestion de Projet", 10.0, 10, w=57.5),
+            {"role": "item_title", "section": "educations", "item": 1},
+        )
+        second = Line(
+            raw_line("L2", "Universite Evenementielle", 10.0, 15, w=52.0),
+            {"role": "item_title", "section": "educations", "item": 1},
+        )
+        assembler._col_right = 67.5
+        section = {
+            "kind": "educations",
+            "elements": [{"role": "item_title", "lines": [first, second]}],
+        }
+        width = assembler.wrapped_box_width(section, {}, styles, 10.0)
+        widest = max(assembler.fonts.width_mm(ln.text, st) for ln in (first, second))
+        assert width is not None
+        assert width >= widest + 0.3 - 0.01
+
+
+def test_des_etiquettes_seules_dans_leur_rubrique_sont_du_texte() -> None:
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+    lines = [
+        raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+        raw_line("L2", "COMPETENCES", 20, 50, size=11, caps=True),
+        raw_line("L3", "Python", 20, 57),
+        raw_line("L4", "Mon portfolio", 120, 250, w=30),
+    ]
+    plan = _mini_plan(
+        [
+            {
+                "ref": "S1",
+                "kind": "skills",
+                "title_lines": ["L2"],
+                "items": [{"lines": [{"line": "L3", "role": "skill"}]}],
+                "side_roles": [],
+            },
+            {
+                "ref": "S2",
+                "kind": "other",
+                "title_lines": [],
+                "items": [{"lines": [{"line": "L4", "role": "label"}]}],
+                "side_roles": [],
+            },
+        ],
+        [{"line": "L1", "field": "full_name"}],
+    )
+    spec, sample, _ = _assemble(lines, plan)
+    other = sections(spec)["other:section-2"]
+    assert [sl["roles"] for sl in other["slots"]] == [["item_text"]]
+    assert sample["others"]["other:section-2"]["items"][0]["description"] == "Mon portfolio"
+
+
+class TestPiedDePage:
+    def _lines(self) -> list[Json]:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        return [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+            raw_line("L2", "COMPETENCES", 20, 50, size=11, caps=True),
+            raw_line("L3", "Python", 20, 57),
+            raw_line("L4", "0612", 20, 270, w=12),
+            raw_line("L5", "a@b.fr", 120, 270, w=14),
+        ]
+
+    def _plan(self, *, titled: bool = False, low: bool = True, alone: bool = True) -> Json:
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "skills",
+                    "title_lines": ["L2"],
+                    "items": [{"lines": [{"line": "L3", "role": "skill"}]}],
+                    "side_roles": [],
+                }
+            ],
+            [{"line": "L1", "field": "full_name"}],
+        )
+        contact = {
+            "ref": "S2",
+            "kind": "contact",
+            "title_lines": ["L2"] if titled else [],
+            "items": [
+                {"lines": [{"line": "L4", "role": "phone"}, {"line": "L5", "role": "email"}]}
+            ],
+            "side_roles": [],
+        }
+        if alone:
+            plan["bands"].append({"columns": [{"sections": [contact]}]})
+        else:
+            plan["bands"][0]["columns"][0]["sections"].append(contact)
+        return plan
+
+    def test_des_coordonnees_en_pied_de_page_sont_des_champs_dentete(self) -> None:
+        spec, sample, assembler = _assemble(self._lines(), self._plan())
+        fields = {e["field"]: e for e in spec["header"]["elements"]}
+        assert fields["phone"]["y_mm"] == 270
+        assert fields["email"]["x_mm"] == 120
+        assert "contact" not in sections(spec)
+        assert len(spec["bands"]) == 1
+        assert sample["contact"] == {"phone": "0612", "email": "a@b.fr"}
+        plan = assembler.labels["plan"]
+        assert len(plan["bands"]) == 1
+        assert [h["field"] for h in plan["header"]["lines"]] == ["full_name", "phone", "email"]
+
+    def test_une_rubrique_contact_haute_titree_ou_accompagnee_reste_une_bande(self) -> None:
+        lines = self._lines()
+        lines[3]["y"], lines[4]["y"] = 80.0, 80.0
+        spec, _, _ = _assemble(lines, self._plan())
+        assert "contact" in sections(spec)
+        spec, _, _ = _assemble(self._lines(), self._plan(titled=True))
+        assert "contact" in sections(spec)
+        spec, _, _ = _assemble(self._lines(), self._plan(alone=False))
+        assert "contact" in sections(spec)
+        plan = self._plan()
+        plan["bands"][-1]["columns"][0]["sections"][0]["items"][0]["lines"][0]["role"] = "item_text"
+        spec, _, _ = _assemble(self._lines(), plan)
+        assert "contact" in sections(spec)
+        plan = self._plan()
+        plan["bands"][-1]["columns"][0]["sections"][0]["items"] = []
+        plan["bands"][-1]["columns"][0]["sections"][0]["title_lines"] = []
+        spec, _, _ = _assemble(self._lines(), plan)
+        assert len(spec["bands"]) == 1
+
+
+def test_un_plan_sans_bande_na_pas_de_pied_de_page() -> None:
+    from karria.modules.documents.infrastructure.pdf_reader import PdfPage  # noqa: PLC0415
+    from karria.modules.documents.infrastructure.spec_assembler import (  # noqa: PLC0415
+        relocate_footer_contact,
+    )
+
+    plan = LayoutPlan.model_validate(_mini_plan([], []))
+    plan.bands = []
+    page = PdfPage(210.0, 297.0, 1, [], [], [])
+    assert relocate_footer_contact(plan, page) is plan

@@ -822,10 +822,13 @@ class FontSet:
         size = size_pt or float(style["size_pt"])
         spacing = float(style["letter_spacing_pt"]) if ls_pt is None else ls_pt
         shown = text.upper() if style.get("uppercase") else text
+        # L'espacement des mots d'un style (paragraphe justifié dont les blancs
+        # sont plus larges que l'espace de la police) s'ajoute à chaque espace.
+        words = float(style.get("word_spacing_mm") or 0.0) * shown.count(" ")
         font = self.get(str(style["family"]), int(style["weight"]), bool(style.get("italic")))
         if font is None:
-            return (len(shown) * size * 0.55 + spacing * max(0, len(shown) - 1)) * MM_PER_PT
-        return measurer(font.data).width_pt(shown, size, spacing) * MM_PER_PT
+            return (len(shown) * size * 0.55 + spacing * max(0, len(shown) - 1)) * MM_PER_PT + words
+        return measurer(font.data).width_pt(shown, size, spacing) * MM_PER_PT + words
 
 
 @lru_cache(maxsize=256)

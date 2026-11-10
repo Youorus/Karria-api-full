@@ -525,7 +525,7 @@ def cv_template_pdf() -> bytes:
 
 #: Le second modèle : une colonne, nom centré interlettré, titre sur deux lignes.
 CENTERED_ROLES: dict[str, tuple[str, str, int]] = {
-    "MARIE": ("full_name", "header", 0),
+    "M A R I E": ("full_name", "header", 0),
     "CENTRES": ("section_title", "interests", 0),
     "INTERETS": ("section_title", "interests", 0),
     "Lecture": ("interest", "interests", 0),

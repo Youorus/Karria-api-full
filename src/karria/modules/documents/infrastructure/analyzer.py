@@ -37,6 +37,7 @@ from karria.modules.documents.domain.fonts import (
     SourceFont,
     family_from_name,
     italic_from_name,
+    substituted_families,
     weight_from_name,
 )
 from karria.modules.documents.infrastructure.fonts import (
@@ -197,7 +198,15 @@ class TemplateAnalyzer:
         font_set = FontSet(
             list({(f.family, f.weight, f.italic): f for f in files.values()}.values())
         )
-        assembler = SpecAssembler(prepared.doc, prepared.page, plan, font_set, served)
+        report = fonts_report(prepared.resolutions)
+        assembler = SpecAssembler(
+            prepared.doc,
+            prepared.page,
+            plan,
+            font_set,
+            served,
+            substituted=substituted_families(report),
+        )
         spec, sample, assets = assembler.build()
         all_files = {(f.family, f.weight, f.italic): f for f in files.values()}
         for ref in spec["fonts"]:
@@ -207,7 +216,6 @@ class TemplateAnalyzer:
                 if extra is not None:
                     all_files[(extra.family, extra.weight, extra.italic)] = extra
                     ref["weight"], ref["italic"] = extra.weight, extra.italic
-        report = fonts_report(prepared.resolutions)
         spec["fonts_report"] = report
         return AnalyzedTemplate(
             spec=spec,

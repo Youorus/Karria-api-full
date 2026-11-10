@@ -451,9 +451,13 @@ class TestEnTete:
         name = renderer.fit_header_text(text, st, natural * 0.6, name=True)
         assert "white-space:normal" not in name
         assert ";font-size:" in name
+        # Jusqu'à 35 % (un nom composé de quinze lettres dans un modèle en 48 pt).
+        assert "white-space:normal" not in renderer.fit_header_text(
+            text, st, natural * 0.36, name=True
+        )
         wrapped = renderer.fit_header_text(text, st, natural * 0.3, name=True)
         assert "white-space:normal" in wrapped
-        assert f";font-size:{float(st['size_pt']) * 0.5:.2f}pt" in wrapped
+        assert f";font-size:{float(st['size_pt']) * 0.35:.2f}pt" in wrapped
 
     @pytest.mark.parametrize(
         ("avail", "expected"),
@@ -484,3 +488,286 @@ class TestEnTete:
     def test_aucun_style_aucune_famille_principale(self, fonts: FontSet) -> None:
         renderer = HtmlRenderer({"styles": {}}, {}, fonts, photo=None)
         assert renderer.main_family == "sans-serif"
+
+
+class TestEtiquettesGrilleEtFlux:
+    """Ce que le lot cv1/cv5/cv9 a appris au rendu : étiquette au pas, grille d'éléments,
+    anneau de frise, espacement des mots, poste visé de flux, en-tête resserré."""
+
+    @staticmethod
+    def _section(spec: Json, kind: str) -> Json:
+        return next(
+            s
+            for b in spec["bands"]
+            for c in b["columns"]
+            for s in c["sections"]
+            if s["kind"] == kind
+        )
+
+    def test_une_etiquette_au_dessus_pose_la_valeur_au_pas_mesure(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        contact = self._section(spec, "contact")
+        slot = contact["slots"][0]
+        slot["label"] = {"text": "Phone", "inline": False, "pitch_mm": 4.9, "dx_mm": 0.0}
+        spec["styles"]["contact.label"] = {
+            **spec["styles"][f"contact.{slot['roles'][0]}"],
+            "box_h_mm": 4.3,
+        }
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        st0 = spec["styles"][style_key(spec["styles"], "contact", slot["roles"][0])]
+        html = renderer.labelled_row(
+            "contact", slot, slot["roles"][0], "0612", None, margin=0.0, width=40.0, st0=st0
+        )
+        # Haut en haut : le pas moins la boîte de l'étiquette (4,9 − 4,3), pas le pas entier.
+        assert "margin-top:calc(0.60mm*var(--k))" in html
+        assert "Phone" in html
+        assert "0612" in html
+
+    def test_deux_pastilles_sur_une_ligne_se_dessinent_toutes(self) -> None:
+        row_decor = {
+            "item_dates": [
+                {
+                    "kind": "rect",
+                    "dx_mm": 0.0,
+                    "h_mm": 2.8,
+                    "w_mm": 2.8,
+                    "fill": "#333333",
+                    "center_offset_mm": 0.0,
+                },
+                {
+                    "kind": "rect",
+                    "dx_mm": 0.5,
+                    "h_mm": 1.8,
+                    "w_mm": 1.8,
+                    "fill": "#FFFFFF",
+                    "center_offset_mm": 0.0,
+                },
+            ]
+        }
+        done: set[str] = set()
+        html = HtmlRenderer.row_ornament(row_decor, done, "item_dates", 6.0)
+        assert html.count("<div") == 2
+        assert "background:#333333" in html
+        assert "background:#FFFFFF" in html
+        assert HtmlRenderer.row_ornament(row_decor, done, "item_dates", 6.0) == ""
+
+    def test_des_elements_en_colonnes_se_rangent_en_grille(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        exp = self._section(spec, "experiences")
+        exp["item_columns"] = 2
+        exp["item_pitch_mm"] = 62.0
+        html = render(spec, from_cv(spec, CV), fonts)
+        assert "display:flex;flex-wrap:wrap;align-items:flex-start;width:124.00mm" in html
+        assert html.count("flex:none;width:62.00mm") >= 2
+
+    def test_lespacement_des_mots_dun_style_passe_en_css(self, spec: Json, fonts: FontSet) -> None:
+        spec["styles"]["summary.summary"]["word_spacing_mm"] = 0.49
+        html = render(spec, from_cv(spec, CV), fonts)
+        assert "word-spacing:0.49mm}" in html
+
+    def test_lexemple_garde_les_retours_a_la_ligne_dun_intitule(
+        self, cv_built: tuple, fonts: FontSet
+    ) -> None:
+        spec, sample, _ = copy.deepcopy(cv_built)
+        example = HtmlRenderer(spec, from_sample(spec, sample), fonts, photo=None)
+        html = example.text(
+            "experiences.item_title", "Licence\nUniversité", margin=0, dx=0, width=50
+        )
+        assert 'white-space:pre-line">Licence\nUniversité' in html
+        # Une personne n'a pas de retour à la ligne dans ses intitulés ; sans retour, rien.
+        person = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        assert "pre-line" not in person.text(
+            "experiences.item_title", "Licence\nUniversité", margin=0, dx=0, width=50
+        )
+        assert "pre-line" not in example.text(
+            "experiences.item_title", "Licence", margin=0, dx=0, width=50
+        )
+
+    def test_le_titre_dune_personne_se_replie_celui_de_lexemple_non(
+        self, cv_built: tuple, fonts: FontSet
+    ) -> None:
+        spec, sample, _ = copy.deepcopy(cv_built)
+        person = render(spec, from_cv(spec, CV), fonts)
+        example = render(spec, from_sample(spec, sample), fonts)
+        assert 'position:relative;white-space:nowrap">COMPETENCES' in example
+        assert 'white-space:nowrap">Compétences' not in person
+        assert ">Compétences" in person
+
+    def test_une_barre_de_niveau_de_lexemple_ne_se_dessine_pas_pour_une_personne(
+        self, cv_built: tuple, fonts: FontSet
+    ) -> None:
+        spec, sample, _ = copy.deepcopy(cv_built)
+        skills = self._section(spec, "skills")
+        skills["decorations"] = [
+            {
+                "kind": "rect",
+                "anchor": "section",
+                "dx_mm": 20.0,
+                "dy_mm": 8.0,
+                "w_mm": 13.0,
+                "h_mm": 1.9,
+                "fill": "#ABCDEF",
+                "stroke": None,
+                "stroke_pt": 0.0,
+                "sample_only": True,
+            },
+            {
+                "kind": "rect",
+                "anchor": "item",
+                "dx_mm": 20.0,
+                "dy_mm": 1.0,
+                "w_mm": 13.0,
+                "h_mm": 1.9,
+                "fill": "#FEDCBA",
+                "stroke": None,
+                "stroke_pt": 0.0,
+                "sample_only": True,
+            },
+        ]
+        assert "#ABCDEF" in render(spec, from_sample(spec, sample), fonts)
+        person = render(spec, from_cv(spec, CV), fonts)
+        assert "#ABCDEF" not in person
+        assert "#FEDCBA" not in person
+
+    def test_une_coordonnee_trop_longue_dans_sa_colonne_se_reduit(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        cv = copy.deepcopy(CV)
+        cv["contact"]["email"] = "une.adresse.vraiment.tres.longue@exemple-de-domaine.org"
+        html = render(spec, from_cv(spec, cv), fonts)
+        assert (
+            re.search(r"font-size:[\d.]+pt[^>]*>une\.adresse", html) or "white-space:normal" in html
+        )
+
+    def test_le_poste_vise_de_flux_ouvre_le_flux_pour_une_personne_seulement(
+        self, cv_built: tuple, fonts: FontSet
+    ) -> None:
+        spec, sample, _ = copy.deepcopy(cv_built)
+        headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        headline.update(flow=True, gap_mm=3.0)
+        person = render(spec, from_cv(spec, CV), fonts)
+        assert 'class="flow"' in person
+        assert 'margin-bottom:3.00mm">Ingénieure &lt;data&gt;</div>' in person
+        assert (
+            "position:absolute;left:" + str(headline["x_mm"])
+            not in person.split('class="flow"')[0].split("Ingénieure")[-1]
+        )
+        example = render(spec, from_sample(spec, sample), fonts)
+        assert "margin-bottom:3.00mm" not in example
+        view = from_cv(spec, {**CV, "identity": {"first_name": "A", "last_name": "B"}})
+        assert HtmlRenderer(spec, view, fonts, photo=None).flow_headline() == ""
+
+    def test_les_coordonnees_se_resserrent_quand_le_site_entre_dans_la_rubrique(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        elements = spec["header"]["elements"]
+        phone = next(e for e in elements if e["field"] == "phone")
+        website = {**phone, "field": "website", "y_mm": 400.0, "synthesized": True}
+        elements.append(website)
+        view = from_cv(spec, CV)
+        renderer = HtmlRenderer(spec, view, fonts, photo=None)
+        tight = renderer.tight_contact(elements)
+        assert set(tight) == {"phone", "website"}
+        assert tight["phone"] == phone["y_mm"]
+        assert tight["website"] < 400.0
+        assert tight["website"] >= tight["phone"] + lh(spec["styles"][phone["style"]])
+        html = renderer.render()
+        assert f"top:{tight['website'] - half(spec['styles'][phone['style']]):.2f}mm" in html
+        # Sans site synthétisé, ou quand tout tient : rien ne bouge.
+        website["synthesized"] = False
+        assert renderer.tight_contact(elements) == {}
+        website.update(synthesized=True, y_mm=phone["y_mm"] + 1.0)
+        assert renderer.tight_contact(elements) == {}
+        # La réserve d'en-tête au-dessus de la première rubrique de la colonne.
+        column = spec["bands"][0]["columns"][0]
+        reserve = renderer.header_reserve(column, float(spec["bands"][0]["y_sample"]))
+        assert reserve >= 0.0
+        assert renderer.column_top_under(-500.0) == spec["first_band_top_mm"]
+
+    def test_un_filet_vertical_borne_un_element_dentete(self, spec: Json, fonts: FontSet) -> None:
+        name = spec["header"]["elements"][0]
+        st = spec["styles"][name["style"]]
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        free = renderer.header_limit(name, st)
+        spec["page_decorations"].append(
+            {
+                "kind": "vline",
+                "anchor": "page",
+                "x_mm": name["x_mm"] + 30.0,
+                "y_mm": 0.0,
+                "h_mm": 297.0,
+                "w_mm": 0.0,
+                "stroke": "#000000",
+            }
+        )
+        assert renderer.header_limit(name, st) == pytest.approx(min(free, 28.0))
+        spec["page_decorations"][-1].update(x_mm=name["x_mm"] - 10.0)
+        assert renderer.header_limit(name, st) == pytest.approx(free)
+        spec["page_decorations"][-1].update(y_mm=250.0, h_mm=10.0, x_mm=name["x_mm"] + 30.0)
+        assert renderer.header_limit(name, st) == pytest.approx(free)
+        spec["page_decorations"][-1] = {
+            "kind": "vline",
+            "anchor": "flow",
+            "x_mm": name["x_mm"] + 30.0,
+            "dy_mm": -500.0,
+            "h_mm": 900.0,
+            "w_mm": 0.0,
+            "stroke": "#000000",
+        }
+        assert renderer.header_limit(name, st) == pytest.approx(min(free, 28.0))
+
+
+def test_un_trace_rasterise_se_rend_en_image_et_pas_pour_une_personne_sil_entoure_une_image(
+    cv_built: tuple, fonts: FontSet
+) -> None:
+    spec, sample, _ = copy.deepcopy(cv_built)
+    spec["page_decorations"].append(
+        {
+            "kind": "curve",
+            "anchor": "page",
+            "x_mm": 150.0,
+            "y_mm": 240.0,
+            "w_mm": 30.0,
+            "h_mm": 30.0,
+            "fill": "#D8A4B5",
+            "stroke": None,
+            "asset": "shape_9.png",
+            "sample_only": True,
+        }
+    )
+    example = render(spec, from_sample(spec, sample), fonts)
+    assert (
+        '<img src="shape_9.png" alt="" style="position:absolute;left:150.0mm;top:240.0mm;width:30.0mm;height:30.0mm">'
+        in example
+    )
+    assert "shape_9.png" not in render(spec, from_cv(spec, CV), fonts)
+    del spec["page_decorations"][-1]["sample_only"]
+    assert "shape_9.png" in render(spec, from_cv(spec, CV), fonts)
+
+
+def test_lexemple_rend_un_element_a_son_propre_corps(cv_built: tuple, fonts: FontSet) -> None:
+    spec, sample, _ = copy.deepcopy(cv_built)
+    sample["experiences"][0]["sizes"] = {"item_subtitle": 6.5}
+    html = render(spec, from_sample(spec, sample), fonts)
+    assert ";font-size:6.5pt" in html
+    view = from_cv(spec, CV)
+    view["sections"][2]["items"][0]["sizes"] = {"item_subtitle": 6.5}
+    assert ";font-size:6.5pt" not in render(spec, view, fonts)
+
+
+def test_la_reserve_dentete_ignore_un_pied_de_page(spec: Json, fonts: FontSet) -> None:
+    column = spec["bands"][0]["columns"][0]
+    band_top = float(spec["bands"][0]["y_sample"])
+    spec["header"]["elements"].append(
+        {
+            **spec["header"]["elements"][0],
+            "field": "website",
+            "y_mm": 280.0,
+            "x_mm": column["x_mm"] + 1.0,
+        }
+    )
+    cv = copy.deepcopy(CV)
+    renderer = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None)
+    assert renderer.header_reserve(column, band_top) < 100.0

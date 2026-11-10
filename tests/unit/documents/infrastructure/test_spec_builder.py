@@ -206,7 +206,9 @@ class TestRubriques:
         skills = sections(spec)["skills"]
         assert skills["slot_order"] == ["subsection_title", "skill"]
         assert skills["marker"]["shape"] == "circle"
-        assert skills["marker"]["size_mm"] == pytest.approx(1.2, abs=0.01)
+        assert skills["marker"]["size_mm"] == pytest.approx(
+            1.2, abs=0.05
+        )  # boîte peinte, au pixel près
         assert skills["marker"]["color"] == "#336699"
         assert slot(skills, "skill")["repeat_margin_mm"] is not None
 
@@ -1023,3 +1025,299 @@ class TestGrillesEtFerADroite:
         )
         spec, _, _ = b.build()
         assert slot(sections(spec)["experiences"], "item_title+item_dates")["flush_right"] is False
+
+
+class TestGrilleDElementsEtParagraphes:
+    """Références côte à côte, coordonnées d'un élément, espacement des mots, fer à droite."""
+
+    def _references(self) -> tuple[Json, Json]:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "REFERENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Harumi", 20, 57, w=20, font=BOLD),
+            raw_line("L4", "Bailey", 80, 57, w=20, font=BOLD),
+            raw_line("L5", "Wardiere", 20, 61, w=20),
+            raw_line("L6", "Wardiere", 80, 61, w=20),
+            raw_line("L7", "Phone:", 20, 66, w=10, font=BOLD),
+            raw_line("L8", "0612", 32, 66, w=10),
+            raw_line("L9", "Phone:", 80, 66, w=10, font=BOLD),
+            raw_line("L10", "0613", 92, 66, w=10),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "references", 0),
+            ("item_title", "references", 1),
+            ("item_title", "references", 2),
+            ("item_subtitle", "references", 1),
+            ("item_subtitle", "references", 2),
+            ("label", "references", 1),
+            ("phone", "references", 1),
+            ("label", "references", 2),
+            ("phone", "references", 2),
+        ]
+        spec, sample, _ = builder(lines, roles).build()
+        return spec, sample
+
+    def test_deux_references_cote_a_cote_font_une_grille_au_pas_mesure(self) -> None:
+        spec, _ = self._references()
+        refs = sections(spec)["references"]
+        assert refs["item_columns"] == 2
+        assert refs["item_pitch_mm"] == pytest.approx(60.0)
+        # Deux voisins de rangée n'ont pas d'écart ; chaque emplacement se mesure
+        # depuis la colonne de son élément (l'étiquette de la seconde référence
+        # ne porte plus l'abscisse de la seconde colonne).
+        assert refs["item_gap_mm"] == 0.0
+        assert slot(refs, "item_title")["dx_mm"] == 0.0
+        assert slot(refs, "phone")["label"]["dx_mm"] == 0.0
+        assert slot(refs, "phone")["label"]["gap_mm"] == pytest.approx(2.0)
+        assert slot(refs, "phone")["dx_mm"] == 0.0
+
+    def test_les_coordonnees_dun_element_restent_dans_lexemple(self) -> None:
+        _, sample = self._references()
+        assert [e["extra"] for e in sample["references"]] == [{"phone": "0612"}, {"phone": "0613"}]
+
+    def test_des_elements_empiles_ne_font_pas_de_grille(self, spec: Json) -> None:
+        assert "item_columns" not in sections(spec)["experiences"]
+        assert SpecBuilder.item_grid({}) == {}
+
+    def test_un_paragraphe_au_fer_a_droite_reste_un_seul_element(self) -> None:
+        b = builder([], [])
+        lines = [
+            Line(
+                raw_line("L1", "aaa bbb", 10, 10, w=40),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+            Line(
+                raw_line("L2", "ccc", 30, 14, w=20), {"role": "summary", "section": "s", "item": 0}
+            ),
+            Line(
+                raw_line("L3", "dd ee ff", 15, 18, w=35),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+        ]
+        (element,) = b.elements(lines, {})
+        assert [ln.id for ln in element["lines"]] == ["L1", "L2", "L3"]
+        centered = [
+            Line(
+                raw_line("L1", "aaa", 20, 10, w=40), {"role": "summary", "section": "s", "item": 0}
+            ),
+            Line(
+                raw_line("L2", "bb", 30, 14, w=20), {"role": "summary", "section": "s", "item": 0}
+            ),
+        ]
+        assert len(b.elements(centered, {})) == 1
+        apart = [
+            Line(
+                raw_line("L1", "aaa", 20, 10, w=40), {"role": "summary", "section": "s", "item": 0}
+            ),
+            Line(
+                raw_line("L2", "bb", 25, 14, w=20), {"role": "summary", "section": "s", "item": 0}
+            ),
+        ]
+        assert len(b.elements(apart, {})) == 2
+
+    def test_lespacement_des_mots_se_lit_sur_la_derniere_ligne_dun_paragraphe_justifie(
+        self,
+    ) -> None:
+        fonts = cv_font_set()
+        st = {
+            "family": "Testa",
+            "weight": 400,
+            "italic": False,
+            "size_pt": 9.0,
+            "letter_spacing_pt": 0.0,
+            "uppercase": False,
+        }
+        last = "un deux trois quatre cinq"
+        natural = fonts.width_mm(last, st)
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "PROFIL", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "aaaa bbbb cccc dddd", 20, 57, w=80),
+            raw_line("L4", "eeee ffff gggg hhhh", 20, 61, w=80),
+            raw_line("L5", last, 20, 65, w=natural + 4 * 0.5),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "summary", 0),
+            ("summary", "summary", 0),
+            ("summary", "summary", 0),
+            ("summary", "summary", 0),
+        ]
+        spec, _, _ = builder(lines, roles).build()
+        assert spec["styles"]["summary.summary"]["word_spacing_mm"] == pytest.approx(0.5, abs=0.02)
+        # Il entre dans la largeur rendue d'un texte de ce style.
+        assert fonts.width_mm(last, spec["styles"]["summary.summary"]) == pytest.approx(
+            natural + 2.0, abs=0.1
+        )
+
+    def test_sans_paragraphe_justifie_ou_avec_un_blanc_aberrant_pas_despacement(self) -> None:
+        fonts = cv_font_set()
+        st = {
+            "family": "Testa",
+            "weight": 400,
+            "italic": False,
+            "size_pt": 9.0,
+            "letter_spacing_pt": 0.0,
+            "uppercase": False,
+        }
+        b = builder([], [])
+        natural = fonts.width_mm("un deux trois quatre", st)
+        justified = [
+            Line(
+                raw_line("L1", "aaaa bbbb", 20, 57, w=80),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+            Line(
+                raw_line("L2", "cccc dddd", 20, 61, w=80),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+            Line(
+                raw_line("L3", "un deux trois quatre", 20, 65, w=natural + 3 * 5.0),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+        ]
+        b._col_right = 100.0
+        assert b.word_spacing(b.elements(justified, {}), st) is None  # 5 mm par espace : aberrant
+        short_last = [
+            *justified[:2],
+            Line(
+                raw_line("L3", "un deux", 20, 65, w=natural),
+                {"role": "summary", "section": "s", "item": 0},
+            ),
+        ]
+        assert b.word_spacing(b.elements(short_last, {}), st) is None  # moins de trois espaces
+        assert b.word_spacing(b.elements(justified[:1], {}), st) is None  # une ligne
+
+
+class TestBarresDeNiveauEtPolicesSubstituees:
+    def test_une_barre_de_niveau_dune_liste_est_propre_a_lexemple(self) -> None:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "LANGUES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Anglais", 20, 57, w=14),
+            raw_line("L4", "Allemand", 20, 62, w=16),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "languages", 0),
+            ("language", "languages", 0),
+            ("language", "languages", 0),
+        ]
+        bars = [
+            drawing("rect", 40, 58, 13, 1.9, fill="#EEEEEE"),
+            drawing("rect", 40, 58, 8, 1.9, fill="#333333"),
+            drawing("vline", 18, 50, 0, 20, stroke="#333333"),
+        ]
+        spec, _, _ = builder(lines, roles, drawings=bars, doc=FakeDoc(round_=False)).build()
+        decorations = sections(spec)["languages"]["decorations"]
+        flags = {(d["kind"], d.get("sample_only")) for d in decorations}
+        assert ("rect", True) in flags
+        assert all(d.get("sample_only") for d in decorations if d["kind"] == "rect")
+        assert not any(d.get("sample_only") for d in decorations if d["kind"] == "vline")
+
+    def test_lespacement_des_mots_ne_se_mesure_pas_sur_une_police_substituee(self) -> None:
+        fonts = cv_font_set()
+        st = {
+            "family": "Testa",
+            "weight": 400,
+            "italic": False,
+            "size_pt": 9.0,
+            "letter_spacing_pt": 0.0,
+            "uppercase": False,
+        }
+        last = "un deux trois quatre cinq"
+        natural = fonts.width_mm(last, st)
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "PROFIL", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "aaaa bbbb cccc dddd", 20, 57, w=80),
+            raw_line("L4", "eeee ffff gggg hhhh", 20, 61, w=80),
+            raw_line("L5", last, 20, 65, w=natural + 4 * 0.5),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "summary", 0),
+            ("summary", "summary", 0),
+            ("summary", "summary", 0),
+            ("summary", "summary", 0),
+        ]
+        b = builder(lines, roles)
+        b.substituted = frozenset({"testa"})
+        spec, _, _ = b.build()
+        assert "word_spacing_mm" not in spec["styles"]["summary.summary"]
+
+
+class TestTracesRasterises:
+    def _spec(
+        self, extra_lines: list[Json], images: list[Json], *, round_: bool = False
+    ) -> tuple[Json, dict[str, bytes]]:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "COMPETENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Python", 20, 57),
+            *extra_lines,
+        ]
+        roles = [("full_name", "header", 0), ("section_title", "skills", 0), ("skill", "skills", 0)]
+        roles += [("item_text", "skills", 0)] * len(extra_lines)
+        frame = drawing("curve", 150, 240, 30, 30, fill="#D8A4B5")
+        small = drawing("curve", 100, 240, 3, 3, fill="#D8A4B5")
+        b = builder(
+            lines, roles, drawings=[frame, small], images=images, doc=FakeDoc(round_=round_)
+        )
+        spec, _, assets = b.build()
+        return spec, assets
+
+    def test_un_grand_trace_non_rond_sans_texte_dessous_devient_une_image(self) -> None:
+        spec, assets = self._spec([], [])
+        (frame,) = [d for d in spec["page_decorations"] if d["w_mm"] == 30]
+        assert frame["asset"] == "shape_0.png"
+        assert "shape_0.png" in assets
+        assert "sample_only" not in frame
+        (small,) = [d for d in spec["page_decorations"] if d["w_mm"] == 3]
+        assert "asset" not in small
+
+    def test_un_trace_rond_ou_sous_du_texte_reste_une_forme(self) -> None:
+        spec, assets = self._spec([], [], round_=True)
+        assert not any(d.get("asset") for d in spec["page_decorations"])
+        under = raw_line("L4", "Mon portfolio", 140, 250, w=30)
+        spec, assets = self._spec([under], [])
+        assert not any(d.get("asset") for d in spec["page_decorations"])
+        assert not any(name.startswith("shape_") for name in assets)
+
+    def test_un_trace_autour_dune_image_ne_vaut_que_pour_lexemple(self) -> None:
+        image = {"x": 155, "y": 245, "w": 20, "h": 20, "png": png(10, 10), "clip": None}
+        spec, _ = self._spec([], [image])
+        (frame,) = [d for d in spec["page_decorations"] if d["w_mm"] == 30]
+        assert frame["sample_only"] is True
+
+    def test_une_rubrique_sans_titre_ni_element_a_un_haut(self) -> None:
+        b = builder([], [])
+        s = {"title": [], "top": 42.0, "bottom": 50.0}
+        assert b.anchored_decorations(s, {}, 20.0) == []
+
+
+class TestCorpsPropreDunElement:
+    def test_un_element_ecrit_plus_petit_garde_son_corps_dans_lexemple(self) -> None:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "EXPERIENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Poste", 20, 57, size=9),
+            raw_line("L4", "Mission une", 25, 62, size=9),
+            raw_line("L5", "Poste deux", 20, 80, size=9),
+            raw_line("L6", "Mission petite", 25, 85, size=6),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "experiences", 0),
+            ("item_title", "experiences", 1),
+            ("bullet", "experiences", 1),
+            ("item_title", "experiences", 2),
+            ("bullet", "experiences", 2),
+        ]
+        _, sample, _ = builder(lines, roles).build()
+        first, second = sample["experiences"]
+        assert "sizes" not in first
+        assert second["sizes"] == {"bullet": 6.0}
+        # Sans style connu pour le rôle, rien à comparer.
+        assert SpecBuilder.item_sizes("experiences", [{"role": "x", "lines": []}], {}) == {}

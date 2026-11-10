@@ -444,7 +444,9 @@ class DocxRenderer:
         """Ornements fixes (en-tête, page) et photo : ancrés à la page, derrière le texte."""
         h = self.spec["header"]
         decorations = list(h["decorations"]) + [
-            d for d in self.spec["page_decorations"] if d.get("anchor") == "page"
+            d
+            for d in self.spec["page_decorations"]
+            if d.get("anchor") == "page" and (self.view.get("sample") or not d.get("sample_only"))
         ]
         run = anchor.add_run()
         for d in decorations:
@@ -832,7 +834,12 @@ class DocxRenderer:
                 before = title.paragraph_format.space_before
                 before_mm = before / EMU_PER_MM if isinstance(before, int) else 0.0
                 title.paragraph_format.space_before = Mm(max(0.0, before_mm - extra))
-        section_shapes = [d for d in s["decorations"] if d["anchor"] == "section"]
+        sample = bool(self.view.get("sample"))
+        section_shapes = [
+            d
+            for d in s["decorations"]
+            if d["anchor"] == "section" and (sample or not d.get("sample_only"))
+        ]
         if title is not None:
             self.section_ornaments(title, s, sec, col_w, section_shapes, title_key)
             section_shapes = []
@@ -970,7 +977,7 @@ class DocxRenderer:
     ) -> Paragraph:
         """Un paragraphe d'une ligne de rubrique ; une puce du modèle devient un taquet + « • »."""
         mk = s.get("marker")
-        if role0 in ROLE_MARKER and mk:
+        if mk and role0 in (mk.get("roles") or ROLE_MARKER):
             p = self.para(
                 cell, key0, text, before_mm=before, indent_mm=sl["dx_mm"], align=sl["align"]
             )
@@ -1161,7 +1168,7 @@ class DocxRenderer:
         item_bottom = sum(before + lines * pitch for before, lines, pitch, _ in boxes.values())
         item_h = item_bottom - item_top
         for d in s["decorations"]:
-            if d["anchor"] != "item":
+            if d["anchor"] != "item" or (d.get("sample_only") and not self.view.get("sample")):
                 continue
             if d.get("attach") == "row":
                 target = next((p for p, r in paras if r == d.get("ref_role")), first_p)

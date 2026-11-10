@@ -351,6 +351,8 @@ def from_sample(spec: Json, sample: Json) -> Json:
                 "item_location": e["location"],
                 "bullet": e["bullets"],
                 "item_text": e["description"],
+                **(e.get("extra") or {}),
+                **({"sizes": e["sizes"]} if e.get("sizes") else {}),
             }
             for e in sample.get(kind) or []
         ]
@@ -373,6 +375,8 @@ def from_sample(spec: Json, sample: Json) -> Json:
                 "item_location": e["location"],
                 "bullet": e["bullets"],
                 "item_text": e["description"],
+                **(e.get("extra") or {}),
+                **({"sizes": e["sizes"]} if e.get("sizes") else {}),
             }
             for e in other.get("items") or []
         ]

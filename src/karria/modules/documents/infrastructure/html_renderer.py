@@ -61,7 +61,7 @@ PAGE_BREAK_COLOR: Final = "#cbd5e1"
 #: Réductions de corps d'un champ d'en-tête trop long, avant le retour à la ligne.
 FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8)
 #: Un nom se réduit davantage : replié, il écraserait ce qui est sous lui.
-NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5)
+NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35)
 NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
 
 
@@ -391,7 +391,9 @@ class HtmlRenderer:
             f"font-weight:{st['weight']};font-style:{'italic' if st['italic'] else 'normal'};"
             f"font-size:calc({st['size_pt']}pt{f});color:{st['color']};"
             f"letter-spacing:{st['letter_spacing_pt']}pt;line-height:calc({lh(st):.3f}mm{f});"
-            f"text-transform:{'uppercase' if st['uppercase'] else 'none'}}}"
+            f"text-transform:{'uppercase' if st['uppercase'] else 'none'}"
+            + (f";word-spacing:{st['word_spacing_mm']}mm" if st.get("word_spacing_mm") else "")
+            + "}"
         )
 
     def font_faces(self) -> str:
@@ -416,9 +418,12 @@ class HtmlRenderer:
         path: str | None = None,
     ) -> str:
         """Un bloc de texte positionné (ouvert : l'appelant ajoute puces et ornements puis ferme)."""
+        # L'exemple du modèle garde les retours à la ligne de la source (un
+        # intitulé sur deux lignes) ; le texte d'une personne n'en a pas.
+        breaks = ";white-space:pre-line" if "\n" in value and self.view.get("sample") else ""
         return (
             f'<div class="t {esc(css_class(key))}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
-            f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}">{esc(value)}'
+            f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}{breaks}">{esc(value)}'
         )
 
     def anchor(self, path: str | None) -> str:
@@ -426,20 +431,31 @@ class HtmlRenderer:
         return anchor(path) if self.anchored else ""
 
     def section(  # noqa: PLR0912, PLR0915 - le gabarit d'une rubrique, dans l'ordre du modèle
-        self, s: Json, sec: Json, col_w: float
+        self, s: Json, sec: Json, col_w: float, *, reserve_mm: float = 0.0
     ) -> str:
-        """Une rubrique : titre, éléments, puces, ornements ancrés."""
+        """Une rubrique : titre, éléments, puces, ornements ancrés.
+
+        `reserve_mm` : la place que l'en-tête occupe au-dessus de la rubrique
+        dans sa colonne (des coordonnées en absolu) ; l'ajustement ne resserre
+        pas la marge sous cette réserve.
+        """
         kind = sec["kind"]
         tst = self.styles[s.get("title_style") or "section_title"]
         untitled = bool(s.get("untitled"))
         # Sans titre (un profil, des coordonnées sous la photo) : la rubrique
         # commence à sa première ligne, sans demi-blanc de titre à reprendre.
-        margin = s["margin_top_mm"] - (0.0 if untitled else half(tst))
+        lead = 0.0 if untitled else half(tst)
+        margin = s["margin_top_mm"] - lead
+        top_css = f"calc({margin:.2f}mm*var(--k))"
+        if reserve_mm > 0:
+            top_css = f"max({top_css},{reserve_mm - lead:.2f}mm)"
         # La boîte mesurée d'un titre sur deux lignes vaut pour l'exemple ; le
         # titre d'une personne (« Expériences professionnelles ») prend la colonne.
         tw = (s.get("title_w_mm") if self.view.get("sample") else None) or col_w
-        out = [f'<section style="position:relative;margin-top:calc({margin:.2f}mm*var(--k))">']
-        nowrap = "" if s.get("title_w_mm") else ";white-space:nowrap"
+        out = [f'<section style="position:relative;margin-top:{top_css}">']
+        # Le titre d'une personne (« Centres d'intérêt » interlettré) se replie
+        # dans sa colonne ; celui de l'exemple tient sur sa ligne mesurée.
+        nowrap = "" if s.get("title_w_mm") or not self.view.get("sample") else ";white-space:nowrap"
         if s.get("title_pitch_mm"):
             # Interligne mesuré du titre sur plusieurs lignes. Le demi-blanc qu'il
             # ajoute au-dessus de la première ligne est repris par un décalage
@@ -464,8 +480,20 @@ class HtmlRenderer:
         # La boîte de texte de la rubrique, si ses paragraphes repliés l'ont dite.
         box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
         slots, order = extra_contact_slots(s, sec)
+        # Des éléments côte à côte (deux références) : une grille au pas mesuré,
+        # chaque élément dans sa colonne, les rangées à l'écart des éléments.
+        grid_items = int(s.get("item_columns") or 0)
+        item_box = min(box_w, float(s["item_pitch_mm"])) if grid_items else box_w
+        if grid_items:
+            # Le conteneur tient `item_columns` éléments au pas mesuré ; le dernier
+            # peut dépasser la colonne de quelques millimètres (comme la source).
+            grid_w = max(col_w, float(s["item_pitch_mm"]) * grid_items)
+            out.append(
+                f'<div style="display:flex;flex-wrap:wrap;align-items:flex-start;width:{grid_w:.2f}mm">'
+            )
+        row_prev_half = 0.0
         for i, item in enumerate(sec["items"]):
-            gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
+            gap = s["first_gap_mm"] if i < max(1, grid_items) else s["item_gap_mm"]
             if i and kind in LIST_KINDS and gap < 1.0:
                 gap = s["first_gap_mm"]  # deux catégories de liste : l'écart titre → liste
             rows: list[tuple[Json, list[tuple[str, str, str | None]], float]] = []
@@ -505,7 +533,9 @@ class HtmlRenderer:
             if not rows:
                 continue
             first_st = self.styles[style_key(self.styles, kind, rows[0][1][0][0])]
-            item_margin = gap - prev_half - half(first_st)
+            if not grid_items or i % grid_items == 0:
+                row_prev_half = prev_half
+            item_margin = gap - row_prev_half - half(first_st)
             # Avec une colonne latérale (frise), l'élément est une rangée : la
             # colonne latérale, une gouttière, le contenu ; sa hauteur est celle
             # du plus haut des deux, comme dans la source.
@@ -516,12 +546,13 @@ class HtmlRenderer:
             flex = (
                 f"display:flex;align-items:flex-start;margin-left:{origin:.2f}mm;" if side else ""
             )
+            cell = f"flex:none;width:{s['item_pitch_mm']:.2f}mm;" if grid_items else ""
             out.append(
-                f'<div class="item" style="position:relative;{flex}margin-top:calc({item_margin:.2f}mm*var(--k))">'
+                f'<div class="item" style="position:relative;{flex}{cell}margin-top:calc({item_margin:.2f}mm*var(--k))">'
             )
             last_item = i == len(sec["items"]) - 1
             for d in s["decorations"]:
-                if d["anchor"] != "item" or d.get("attach") == "row":
+                if d["anchor"] != "item" or d.get("attach") == "row" or not self.shown(d):
                     continue
                 inset = d.get("bottom_inset_mm", 0.0)
                 if d.get("connector") and last_item:
@@ -533,7 +564,12 @@ class HtmlRenderer:
                 out.append(
                     f'<div style="{deco_css(d, d["dx_mm"] - origin, d["dy_mm"] + half(first_st), extra)}"></div>'
                 )
-            row_decor = {d["ref_role"]: d for d in s["decorations"] if d.get("attach") == "row"}
+            # Toutes les formes posées sur une même ligne, dans l'ordre de peinture
+            # de la source (un rond sombre puis son cœur blanc font un anneau).
+            row_decor: dict[str, list[Json]] = {}
+            for d in s["decorations"]:
+                if d.get("attach") == "row":
+                    row_decor.setdefault(d["ref_role"], []).append(d)
             done_roles: set[str] = set()
             if side:
                 out.append(
@@ -558,7 +594,7 @@ class HtmlRenderer:
                 key0 = style_key(self.styles, kind, vals[0][0])
                 st0 = self.styles[key0]
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
-                width = box_w - sl["dx_mm"]
+                width = item_box - sl["dx_mm"]
                 if side:
                     # Les emplacements se mesurent depuis la colonne ; le bloc de
                     # contenu commence à `main_dx_mm` : on lui retire ce décalage.
@@ -614,6 +650,16 @@ class HtmlRenderer:
                     )
                 elif len(vals) == 1:
                     role, v, path = vals[0]
+                    extra = ";white-space:nowrap" if role == "item_dates" else ""
+                    size = (item.get("sizes") or {}).get(role)
+                    if size and self.view.get("sample"):
+                        # L'exemple garde le corps propre de cet élément (un modèle
+                        # dont une expérience est écrite plus petit que les autres).
+                        extra += f";font-size:{float(size)}pt"
+                    if role in CONTACT_ROLES and not self.view.get("sample"):
+                        # Une coordonnée d'une personne (un long courriel) se
+                        # réduit avant de se couper au milieu d'un mot.
+                        extra = self.fit_header_text(v, st0, width)
                     out.append(
                         self.text(
                             key0,
@@ -622,7 +668,7 @@ class HtmlRenderer:
                             dx=sl["dx_mm"],
                             width=width,
                             align=sl["align"],
-                            extra=";white-space:nowrap" if role == "item_dates" else "",
+                            extra=extra,
                             path=path,
                         )
                         + self.marker(s, role, st0)
@@ -638,7 +684,8 @@ class HtmlRenderer:
                         for role, _, _ in vals
                     )
                     row = self.joined_row(kind, sl, vals, margin=margin_row, width=width, st0=st0)
-                    out.append(row[: -len("</div>")] + ornament + "</div>")
+                    marker = self.marker(s, vals[0][0], st0)
+                    out.append(row[: -len("</div>")] + marker + ornament + "</div>")
                 last_half = half(st0)
             if grid_open is not None:
                 out.append("</div>")
@@ -646,8 +693,10 @@ class HtmlRenderer:
                 out.append("</div>")
             out.append("</div>")
             prev_half = last_half
+        if grid_items:
+            out.append("</div>")
         for d in s["decorations"]:
-            if d["anchor"] == "section":
+            if d["anchor"] == "section" and self.shown(d):
                 # Un filet étiré ne déborde pas de plus de 2 mm sur la rubrique suivante.
                 extra = (
                     f"height:auto;bottom:{max(d['bottom_inset_mm'], -2.0):.2f}mm;"
@@ -665,10 +714,23 @@ class HtmlRenderer:
         )
         return "".join(out)
 
+    def page_shape(self, d: Json) -> str:
+        """Un ornement fixe de la page : une forme, ou l'image d'un tracé rastérisé."""
+        if d.get("asset"):
+            return (
+                f'<img src="{esc(self.url(d["asset"]))}" alt="" style="position:absolute;'
+                f'left:{d["x_mm"]}mm;top:{d["y_mm"]}mm;width:{d["w_mm"]}mm;height:{d["h_mm"]}mm">'
+            )
+        return f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>'
+
+    def shown(self, d: Json) -> bool:
+        """Un ornement propre à l'exemple (barre de niveau d'une langue) ne se dessine que pour lui."""
+        return not d.get("sample_only") or bool(self.view.get("sample"))
+
     def marker(self, s: Json, role: str, st: Json) -> str:
         """La puce d'une ligne de liste."""
         mk = s.get("marker")
-        if role not in ROLE_MARKER or not mk:
+        if not mk or role not in (mk.get("roles") or ROLE_MARKER):
             return ""
         top = mk["dy_mm"] - mk["size_mm"] / 2 + half(st)
         radius = "50%" if mk["shape"] == "circle" else "0"
@@ -688,21 +750,25 @@ class HtmlRenderer:
         )
 
     @staticmethod
-    def row_ornament(row_decor: dict[str, Json], done: set[str], role: str, origin: float) -> str:
-        """Une pastille de frise centrée sur la ligne qu'elle marque.
+    def row_ornament(
+        row_decor: dict[str, list[Json]], done: set[str], role: str, origin: float
+    ) -> str:
+        """Les pastilles de frise centrées sur la ligne qu'elles marquent.
 
-        `origin` : l'abscisse (depuis la colonne) du bloc de texte qui la porte.
+        `origin` : l'abscisse (depuis la colonne) du bloc de texte qui les porte.
         """
         if role not in row_decor or role in done:
             return ""
-        d = row_decor[role]
         done.add(role)
-        shift = d["h_mm"] / 2 - d["center_offset_mm"]
-        return (
-            '<div style="'
-            + deco_css(d, d["dx_mm"] - origin, 0, f"top:calc(50% - {shift:.2f}mm);")
-            + '"></div>'
-        )
+        out = []
+        for d in row_decor[role]:
+            shift = d["h_mm"] / 2 - d["center_offset_mm"]
+            out.append(
+                '<div style="'
+                + deco_css(d, d["dx_mm"] - origin, 0, f"top:calc(50% - {shift:.2f}mm);")
+                + '"></div>'
+            )
+        return "".join(out)
 
     def side_block(
         self,
@@ -712,7 +778,7 @@ class HtmlRenderer:
         *,
         side: Json,
         first_st: Json,
-        row_decor: dict[str, Json],
+        row_decor: dict[str, list[Json]],
         done: set[str],
     ) -> str:
         """La colonne latérale d'un élément de frise (entreprise, dates), empilée et alignée."""
@@ -792,11 +858,19 @@ class HtmlRenderer:
                 f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}"{self.anchor(path)}>{esc(value)}</span>'
             )
         # Au-dessus : l'étiquette à la marge mesurée, la valeur au pas mesuré sous elle.
+        # Le pas est mesuré de haut en haut : la boîte de l'étiquette s'en retire
+        # (la valeur se posait à son pas **sous** l'étiquette, 4 mm trop bas).
         above = (
-            self.text(label_key, label["text"], margin=margin, dx=label["dx_mm"], width=width)
+            self.text(
+                label_key,
+                label["text"],
+                margin=margin + half(st0) - half(label_st),
+                dx=label["dx_mm"],
+                width=width,
+            )
             + "</div>"
         )
-        value_margin = label["pitch_mm"] - half(label_st) - half(st0)
+        value_margin = label["pitch_mm"] - float(label_st["box_h_mm"]) - half(label_st) - half(st0)
         return above + self.text(
             style_key(self.styles, kind, role),
             value,
@@ -844,6 +918,59 @@ class HtmlRenderer:
             f'line-height:{lh(st0):.3f}mm;position:relative">{"".join(parts)}</div>'
         )
 
+    def tight_contact(self, elements: list[Json]) -> dict[str, float]:
+        """Les coordonnées de l'en-tête resserrées quand la ligne de plus d'une personne
+        (le site, synthétisé) entrerait dans la rubrique qui commence sous elles.
+
+        Rend `{champ: y_mm}` ; vide quand tout tient (toujours pour l'exemple,
+        qui n'a pas de site).
+        """
+        contact = sorted(
+            (
+                e
+                for e in elements
+                if e["field"] in CONTACT_ROLES and self.view["header"].get(e["field"])
+            ),
+            key=lambda e: e["y_mm"],
+        )
+        if len(contact) < 2 or not any(e.get("synthesized") for e in contact):  # noqa: PLR2004
+            return {}
+        last = contact[-1]
+        box = lh(self.styles[last["style"]])
+        limit = self.column_top_under(float(last["x_mm"])) - 1.5
+        if last["y_mm"] + box <= limit:
+            return {}
+        top = float(contact[0]["y_mm"])
+        pitch = max(box, (limit - box - top) / (len(contact) - 1))
+        return {e["field"]: round(top + i * pitch, 2) for i, e in enumerate(contact)}
+
+    def header_reserve(self, column: Json, band_top: float) -> float:
+        """La hauteur que les textes de l'en-tête occupent au-dessus d'une colonne de la
+        première bande, depuis le haut de la bande : la marge de sa première rubrique ne
+        descend pas en dessous, même resserrée par l'ajustement (mesuré : les
+        coordonnées d'une personne, une ligne de plus que l'exemple, sous le titre
+        « Expériences » remonté de 40 %)."""
+        tight = self.tight_contact(self.spec["header"]["elements"])
+        bottom = 0.0
+        for e in self.spec["header"]["elements"]:
+            if not self.view["header"].get(e["field"]) or e.get("flow"):
+                continue
+            if not column["x_mm"] - 2 <= float(e["x_mm"]) <= column["x_mm"] + column["w_mm"]:
+                continue
+            y = tight.get(e["field"], float(e["y_mm"]))
+            if y >= band_top:
+                continue  # un pied de page (coordonnées en bas) n'est pas au-dessus
+            bottom = max(bottom, y + lh(self.styles[e["style"]]))
+        return max(0.0, bottom + 1.5 - band_top) if bottom else 0.0
+
+    def column_top_under(self, x: float) -> float:
+        """Le haut mesuré de la première rubrique de la colonne de la première bande à cette abscisse."""
+        band = self.spec["bands"][0]
+        for c in band["columns"]:
+            if c["x_mm"] - 2 <= x <= c["x_mm"] + c["w_mm"] and c["sections"]:
+                return float(band["y_sample"]) + float(c["sections"][0]["margin_top_mm"])
+        return float(self.spec["first_band_top_mm"])
+
     def header_limit(self, e: Json, st: Json) -> float:
         """Place disponible pour un élément d'en-tête : jusqu'à la photo, au voisin ou à la marge.
 
@@ -877,11 +1004,33 @@ class HtmlRenderer:
                 right_bound = min(right_bound, other["x_mm"] - 4.0)
             elif other["x_mm"] < e["x_mm"] - 5:
                 left_bound = max(left_bound, other["x_mm"] + other.get("w_mm", 0.0) + 4.0)
+        left_bound, right_bound = self.rule_bounds(e, box, left_bound, right_bound)
         if e.get("align") == "right":
             return float(e["rx_mm"] - left_bound)
         if e.get("align") == "center":
             return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
         return float(right_bound - e["x_mm"])
+
+    def rule_bounds(
+        self, e: Json, box: float, left_bound: float, right_bound: float
+    ) -> tuple[float, float]:
+        """Un filet vertical (d'en-tête ou de page) à la hauteur de l'élément borne aussi :
+        un poste visé au fer à droite ne le traverse pas."""
+        for d in [*self.spec["header"]["decorations"], *self.spec["page_decorations"]]:
+            if d["kind"] != "vline":
+                continue
+            top = float(
+                d["y_mm"]
+                if "y_mm" in d
+                else self.spec["first_band_top_mm"] + float(d.get("dy_mm", 0.0))
+            )
+            if not (top <= e["y_mm"] + box and top + float(d["h_mm"]) >= e["y_mm"]):
+                continue
+            if d["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, d["x_mm"] - 2.0)
+            elif d["x_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, d["x_mm"] + 2.0)
+        return left_bound, right_bound
 
     def fit_header_text(self, val: str, st: Json, avail: float, *, name: bool = False) -> str:
         """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne.
@@ -912,10 +1061,13 @@ class HtmlRenderer:
         h = self.spec["header"]
         out = [f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>' for d in h["decorations"]]
         pw = float(self.spec["page"]["width_mm"])
+        tight = self.tight_contact(h["elements"])
         for e in h["elements"]:
             val = self.view["header"].get(e["field"], "")
-            if not val:
+            if not val or e.get("flow"):
                 continue
+            if e["field"] in tight:
+                e = {**e, "y_mm": tight[e["field"]]}  # noqa: PLW2901
             st = self.styles[e["style"]]
             cls = f'class="{esc(css_class(e["style"]))}"'
             if self.view.get("sample") and e.get("sample_lines"):
@@ -1009,7 +1161,13 @@ class HtmlRenderer:
             prev_right = 0.0
             for ci, col in enumerate(band["columns"]):
                 cspec = band["spec"]["columns"][ci]
-                inner = "".join(self.section(s, sec, cspec["w_mm"]) for s, sec, _ in col)
+                reserve = (
+                    self.header_reserve(cspec, float(band["spec"]["y_sample"])) if bi == 0 else 0.0
+                )
+                inner = "".join(
+                    self.section(s, sec, cspec["w_mm"], reserve_mm=reserve if i == 0 else 0.0)
+                    for i, (s, sec, _) in enumerate(col)
+                )
                 cols.append(
                     f'<div class="col" style="margin-left:{cspec["x_mm"] - prev_right:.2f}mm;width:{cspec["w_mm"]:.2f}mm;flex:none">{inner}</div>'
                 )
@@ -1029,9 +1187,9 @@ class HtmlRenderer:
                 if d.get("anchor") == "band" and d["band"] == bi
             )
         statics = "".join(
-            f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>'
+            self.page_shape(d)
             for d in self.spec["page_decorations"]
-            if d.get("anchor") == "page"
+            if d.get("anchor") == "page" and self.shown(d)
         )
         tst = self.styles["section_title"]
         # Le haut du flux : la première bande commence à sa rubrique la plus
@@ -1056,7 +1214,24 @@ class HtmlRenderer:
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
-            f"{flows}{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
+            f"{flows}{self.flow_headline()}{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
+        )
+
+    def flow_headline(self) -> str:
+        """Le poste visé d'une personne quand le modèle ne lui laisse pas de place sous le nom :
+        il ouvre le flux et pousse la première bande (rien pour l'exemple, qui n'en a pas)."""
+        e = next((e for e in self.spec["header"]["elements"] if e.get("flow")), None)
+        if e is None:
+            return ""
+        val = self.view["header"].get(e["field"], "")
+        if not val:
+            return ""
+        pw = float(self.spec["page"]["width_mm"])
+        gap = float(e.get("gap_mm") or 2.0)
+        return (
+            f'<div class="t {esc(css_class(e["style"]))}"{self.anchor(header_path(self.view, e["field"]))} '
+            f'style="position:relative;margin-left:{e["x_mm"]}mm;width:{pw - float(e["x_mm"]) - 8:.2f}mm;'
+            f'margin-bottom:{gap:.2f}mm">{esc(val)}</div>'
         )
 
     @staticmethod

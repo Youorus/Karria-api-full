@@ -37,6 +37,7 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Final
 
+from karria.modules.documents.domain.fonts import family_match_key
 from karria.modules.documents.domain.headline import synthesize_headline_style
 from karria.modules.documents.infrastructure.fonts import MM_PER_PT, FontSet
 from karria.modules.documents.infrastructure.pdf_reader import PdfDocument, PdfPage
@@ -47,9 +48,33 @@ MM: Final = 72 / 25.4
 SPEC_VERSION: Final = 1
 ITEM_SECTIONS: Final = frozenset({"experiences", "educations", "projects", "references"})
 LIST_ROLES: Final = frozenset({"skill", "language", "interest"})
+LIST_KINDS: Final = frozenset({"skills", "languages", "interests"})
+#: Écart relatif de corps à partir duquel un élément de l'exemple garde le sien.
+SIZE_DEPARTURE: Final = 0.10
+#: Un tracé complexe au moins aussi grand (mm) se rend en image plutôt qu'en forme.
+RASTER_PATH_MM: Final = 8.0
+#: Une forme pleine plus basse que ceci dans une liste est une barre de niveau (mm).
+LEVEL_BAR_MAX_H_MM: Final = 3.0
+#: Les rôles dont l'exemple garde les retours à la ligne de la source (intitulés), pas les paragraphes.
+KEEP_BREAKS: Final = frozenset({"item_title", "item_subtitle"})
+#: Espacement des mots retenu d'un paragraphe justifié : ni le bruit de mesure, ni une aberration.
+WORD_SPACING_MIN_MM: Final = 0.1
+WORD_SPACING_MAX_MM: Final = 1.5
+#: Les coordonnées, dans l'en-tête, une rubrique Contact ou un élément (une référence).
+CONTACT_ROLES: Final = ("phone", "email", "address", "website")
 #: Préfixe des rubriques libres (« Réalisations », « Certifications »…), gardées
 #: avec leur titre : `other:<slug>` (ADR-0037).
 OTHER_PREFIX: Final = "other:"
+
+
+def overlaps(a: Json, b: Json) -> bool:
+    """Deux boîtes `x, y, w, h` (mm) qui se recouvrent."""
+    return bool(
+        a["x"] < b["x"] + b["w"]
+        and b["x"] < a["x"] + a["w"]
+        and a["y"] < b["y"] + b["h"]
+        and b["y"] < a["y"] + a["h"]
+    )
 
 
 def is_item_kind(kind: str) -> bool:
@@ -139,6 +164,8 @@ class SpecBuilder:
         labels: Json,
         fonts: FontSet,
         served: dict[str, tuple[str, int, bool]],
+        *,
+        substituted: frozenset[str] = frozenset(),
     ) -> None:
         """
         Args:
@@ -147,6 +174,8 @@ class SpecBuilder:
         """
         self.doc = doc
         self.page = page
+        #: Familles de la source servies par substitution (clés de `family_match_key`).
+        self.substituted = substituted
         self.fonts = fonts
         self.served = served
         self.meta = {
@@ -419,12 +448,23 @@ class SpecBuilder:
                 b.y - a.y for e in es for a, b in zip(e["lines"], e["lines"][1:], strict=False)
             ]
             st["pitch_mm"] = round(med(pitches), 3) if pitches else None
+            word_spacing = self.word_spacing(es, st)
+            if word_spacing is not None:
+                st["word_spacing_mm"] = word_spacing
             styles[skey] = st
         slots: dict[str, Json] = {}
         gaps_item: list[float] = []
         first_gap: list[float] = []
         previous_item_bottom: float | None = None
+        previous_item_top: float | None = None
+        # Des éléments côte à côte (deux références en colonnes) : une grille
+        # d'éléments au pas mesuré ; chaque emplacement se mesure depuis la
+        # colonne de son élément, et deux voisins de rangée n'ont pas d'écart.
+        item_grid = self.item_grid(all_groups) if is_item_kind(kind) else {}
+        origins: dict[int, float] = item_grid.pop("origins", {})
+        spec.update(item_grid)
         for item_no in sorted(all_groups):
+            origin_x = col_x + origins.get(item_no, 0.0)
             rows = self.rows(groups[item_no]) if groups.get(item_no) else []
             # Une liste en grille (deux entrées par ligne) : une entrée par rangée,
             # le nombre de colonnes se mesure ensuite (`grid_spec`).
@@ -442,7 +482,10 @@ class SpecBuilder:
             )
             all_rows = self.rows(all_groups[item_no])
             item_top = rows[0]["top"] if rows else all_rows[0]["top"]
-            if previous_item_bottom is None:
+            same_row = previous_item_top is not None and abs(item_top - previous_item_top) < 1.5  # noqa: PLR2004
+            if same_row:
+                pass
+            elif previous_item_bottom is None:
                 first_gap.append(item_top - title_bottom)
             else:
                 gaps_item.append(item_top - previous_item_bottom)
@@ -451,7 +494,7 @@ class SpecBuilder:
                 label = labels.get(id(row["elems"][0]))
                 if label is not None and not label[1]:
                     row["top"] = min(row["top"], label[0]["top"])
-            if rows:
+            if rows and not same_row:
                 item_top = rows[0]["top"]
                 if previous_item_bottom is None:
                     first_gap[-1] = item_top - title_bottom
@@ -481,10 +524,12 @@ class SpecBuilder:
                 slot.setdefault("xs", []).append(row["elems"][0]["x"])
                 label = labels.get(id(row["elems"][0]))
                 if label is not None:
-                    slot["label"] = self.label_spec(label[0], row["elems"][0], label[1], col_x)
+                    slot.setdefault(
+                        "label", self.label_spec(label[0], row["elems"][0], label[1], origin_x)
+                    )
                 slot["dx"].append(
                     (label[0]["x"] if label is not None and label[1] else row["elems"][0]["x"])
-                    - col_x
+                    - origin_x
                 )
                 if len(row["elems"]) > 1:
                     a, b = row["elems"][0], row["elems"][1]
@@ -499,7 +544,13 @@ class SpecBuilder:
                 prev = row["bottom"]
                 prev_top = row["top"]
                 prev_role = key
-            previous_item_bottom = max(r["bottom"] for r in all_rows)
+            item_bottom = max(r["bottom"] for r in all_rows)
+            previous_item_bottom = (
+                max(previous_item_bottom, item_bottom)
+                if same_row and previous_item_bottom is not None
+                else item_bottom
+            )
+            previous_item_top = item_top
         spec["first_gap_mm"] = round(med(first_gap), 2)
         # Deux éléments côte à côte (deux références en colonnes) donneraient un
         # écart négatif : le gabarit les empile, à l'écart nul.
@@ -535,8 +586,89 @@ class SpecBuilder:
         if spec["side"] is not None:
             left_bound = min(left_bound, col_x + spec["side"]["dx_mm"] - 3)
         spec["decorations"] = self.anchored_decorations(s, all_groups, col_x, left_bound=left_bound)
-        self.fill_sample(kind, all_groups, sample)
+        if kind in LIST_KINDS:
+            # Les barres de niveau d'une liste (langues) sont celles des entrées
+            # de l'exemple : une personne a d'autres langues, d'autres niveaux.
+            for d in spec["decorations"]:
+                if d["kind"] in ("rect", "curve") and d["h_mm"] <= LEVEL_BAR_MAX_H_MM:
+                    d["sample_only"] = True
+        self.fill_sample(kind, all_groups, sample, styles)
         return spec
+
+    def word_spacing(self, elements: list[Json], st: Json) -> float | None:
+        """Le blanc ajouté à chaque espace d'un paragraphe justifié, lu sur sa dernière ligne.
+
+        La dernière ligne n'est pas justifiée : sa largeur, moins celle que la
+        police servie lui donne, répartie sur ses espaces, dit l'espacement des
+        mots du dessinateur (Canva : 0,5 mm sur un corps de 8 pt). Sans lui, le
+        navigateur remonte un mot que la source avait replié.
+        """
+        extras: list[float] = []
+        for e in elements:
+            lines = e["lines"]
+            if len(lines) < 2 or self.alignment(lines) != "justify":  # noqa: PLR2004
+                continue
+            if any(family_match_key(ln.raw.get("font") or "") in self.substituted for ln in lines):
+                # Une police substituée n'a pas les largeurs de la source : le
+                # blanc mesuré mêlerait l'espacement des mots et l'écart de chasse.
+                continue
+            last = lines[-1]
+            spaces = last.text.strip().count(" ")
+            if spaces < 3:  # noqa: PLR2004
+                continue
+            extras.append((last.w - self.fonts.width_mm(last.text, st)) / spaces)
+        if not extras:
+            return None
+        extra = med(extras)
+        return round(extra, 2) if WORD_SPACING_MIN_MM <= extra <= WORD_SPACING_MAX_MM else None
+
+    @staticmethod
+    def item_sizes(kind: str, elements: list[Json], styles: dict[str, Json]) -> dict[str, float]:
+        """Les corps d'un élément de l'exemple qui s'écartent de leur style (> 10 %).
+
+        Un modèle Canva dont la troisième expérience est en 5,5 pt quand les
+        autres sont en 7,9 pt : l'exemple se rend à son corps, le gabarit
+        d'une personne garde celui du style.
+        """
+        sizes: dict[str, float] = {}
+        by_role: dict[str, list[float]] = defaultdict(list)
+        for e in elements:
+            by_role[e["role"]].extend(float(ln.raw["size"]) for ln in e["lines"])
+        for role, values in by_role.items():
+            st = styles.get(f"{kind}.{role}")
+            if st is None:
+                continue
+            size = med(values)
+            if abs(size - float(st["size_pt"])) > SIZE_DEPARTURE * float(st["size_pt"]):
+                sizes[role] = round(size, 2)
+        return sizes
+
+    @staticmethod
+    def item_grid(groups: dict[int, list[Json]]) -> Json:
+        """Des éléments côte à côte : le nombre de colonnes, leur pas, l'origine de chaque élément.
+
+        Deux éléments d'une même rangée ont le même haut (à 1,5 mm) et des
+        gauches écartées d'au moins 10 mm. Rend `{}` sans rangée partagée.
+        """
+        tops = {no: min(e["top"] for e in es) for no, es in groups.items() if es}
+        lefts = {no: min(e["x"] for e in es) for no, es in groups.items() if es}
+        rows: list[list[int]] = []
+        for no in sorted(tops, key=lambda n: (tops[n], lefts[n])):
+            row = next((r for r in rows if abs(tops[r[0]] - tops[no]) < 1.5), None)  # noqa: PLR2004
+            if row is not None and lefts[no] - lefts[row[-1]] >= 10.0:  # noqa: PLR2004
+                row.append(no)
+            else:
+                rows.append([no])
+        columns = max((len(r) for r in rows), default=0)
+        if columns < 2:  # noqa: PLR2004
+            return {}
+        x0 = min(lefts.values())
+        pitches = [lefts[b] - lefts[a] for r in rows for a, b in itertools.pairwise(r)]
+        return {
+            "item_columns": columns,
+            "item_pitch_mm": round(med(pitches), 2),
+            "origins": {no: left - x0 for no, left in lefts.items()},
+        }
 
     @staticmethod
     def grid_spec(slot: Json) -> Json:
@@ -725,17 +857,28 @@ class SpecBuilder:
             "color": d["fill"],
             "dx_mm": round(med([m["x"] - by_id[k].x for k, m in ms]), 2),
             "dy_mm": round(med([m["y"] + m["h"] / 2 - by_id[k].y for k, m in ms]), 2),
+            # Les rôles que la puce marque : une liste, ou la première ligne d'un
+            # élément (une pastille devant l'année d'une expérience).
+            "roles": sorted({by_id[k].role for k in markers}),
         }
 
     def elements(self, lines: list[Line], markers: dict[str, Json]) -> list[Json]:
         """Lignes consécutives d'un même rôle et d'un même élément → un élément (paragraphe, puce)."""
         out: list[Json] = []
         for ln in sorted(lines, key=lambda line: (line.item, line.y, line.x)):
+            # La suite d'un paragraphe partage sa marge gauche, ou sa marge
+            # droite (au fer à droite), ou son axe (centré).
             last = next(
                 (
                     e
                     for e in reversed(out)
-                    if e["item"] == ln.item and e["role"] == ln.role and abs(e["x"] - ln.x) < 1.5  # noqa: PLR2004
+                    if e["item"] == ln.item
+                    and e["role"] == ln.role
+                    and (
+                        abs(e["x"] - ln.x) < 1.5  # noqa: PLR2004
+                        or abs(e["lines"][-1].right - ln.right) < 1.5  # noqa: PLR2004
+                        or abs(e["lines"][-1].x + e["lines"][-1].w / 2 - (ln.x + ln.w / 2)) < 1.5  # noqa: PLR2004
+                    )
                 ),
                 None,
             )
@@ -799,7 +942,11 @@ class SpecBuilder:
         encore à la rubrique (la colonne latérale d'une frise l'élargit).
         """
         out: list[Json] = []
-        top = s["title"][0].y if s["title"] else min(e["top"] for es in groups.values() for e in es)
+        top = (
+            s["title"][0].y
+            if s["title"]
+            else min((e["top"] for es in groups.values() for e in es), default=s["top"])
+        )
         bottom = s["bottom"]
         left = col_x - 8 if left_bound is None else left_bound
         items = [
@@ -1013,7 +1160,8 @@ class SpecBuilder:
         styles["header.headline"] = style
         h = style["box_h_mm"]
         gap = max(2.0, 0.35 * name_style["box_h_mm"])
-        y = min(last["y_mm"] + name_style["box_h_mm"] + gap, first_top - h - 4)
+        under_name = last["y_mm"] + name_style["box_h_mm"] + gap
+        y = min(under_name, first_top - h - 4)
         x = last["x_mm"]
         out: Json = {
             "field": "headline",
@@ -1022,6 +1170,11 @@ class SpecBuilder:
             "w_mm": None,
             "synthesized": True,
         }
+        if y < under_name - 1.0 and y < last["y_mm"] + name_style["box_h_mm"]:
+            # Pas de place entre le nom et la première bande (le profil suit le
+            # nom) : le poste visé ouvre le flux, et pousse la première bande.
+            out.update(flow=True, y_mm=round(first_top, 2), gap_mm=round(gap, 2))
+            return out
         center = last["x_mm"] + (last.get("w_mm") or 0) / 2
         if last.get("w_mm") and x > 20 and abs(center - self.pw / 2) < 4:  # noqa: PLR2004
             out.update(align="center", cx_mm=round(center, 2))
@@ -1102,17 +1255,47 @@ class SpecBuilder:
                         anchor="band", band=b_i, dy_mm=round(d["y"] - b["bottom_sample"], 2)
                     )
                     break
+            self.rasterize_path(i, d, entry)
             out.append(entry)
         return out
 
+    def rasterize_path(self, index: int, d: Json, entry: Json) -> None:
+        """Un tracé complexe et grand (le cadre d'un QR code, une vague) se dessine en image.
+
+        Les moteurs ne tracent que rectangles, ronds et filets : un tracé carré
+        mais non rond devenait un disque plein (mesuré sur cv3). Rastérisé
+        depuis la source, à condition qu'aucun texte ne passe dessous (sinon
+        le texte y serait deux fois). S'il entoure une image (le QR code de
+        l'exemple), il ne vaut que pour l'exemple.
+        """
+        if d["kind"] != "curve" or max(d["w"], d["h"]) < RASTER_PATH_MM:
+            return
+        if self.doc.is_round((d["x"], d["y"], d["w"], d["h"])):
+            return
+        if any(overlaps(d, ln.raw) for ln in self.lines):
+            return
+        name = f"shape_{index}.png"
+        self.assets[name] = self.doc.render_png(dpi=300, box_mm=(d["x"], d["y"], d["w"], d["h"]))
+        entry["asset"] = name
+        if any(overlaps(d, im) for im in self.page.images):
+            entry["sample_only"] = True
+
     # ------------------------------------------------------------------ contenu d'exemple
     def fill_sample(  # noqa: PLR0912 - une branche par genre de rubrique
-        self, kind: str, groups: dict[int, list[Json]], sample: Json
+        self,
+        kind: str,
+        groups: dict[int, list[Json]],
+        sample: Json,
+        styles: dict[str, Json] | None = None,
     ) -> None:
         """Le contenu d'exemple de la rubrique, au format du CV."""
 
         def joined(e: Json) -> str:
-            return " ".join(ln.text for ln in e["lines"])
+            # Un intitulé écrit sur deux lignes (« Licence… » / « Université… »)
+            # garde son retour à la ligne : l'exemple le rend tel quel, quelle
+            # que soit la boîte ; un paragraphe se replie dans la sienne.
+            sep = "\n" if e["role"] in KEEP_BREAKS else " "
+            return sep.join(ln.text for ln in e["lines"])
 
         def text(es: list[Json], role: str) -> list[str]:
             return [joined(e) for e in es if e["role"] == role]
@@ -1135,7 +1318,7 @@ class SpecBuilder:
         elif is_item_kind(kind):
             for no in sorted(groups):
                 es = groups[no]
-                item = {
+                item: Json = {
                     "title_raw": " ".join(text(es, "item_title")),
                     "subtitle_raw": " ".join(text(es, "item_subtitle")),
                     "dates_raw": " ".join(text(es, "item_dates")),
@@ -1143,6 +1326,14 @@ class SpecBuilder:
                     "bullets": text(es, "bullet"),
                     "description": " ".join(text(es, "item_text") + text(es, "other")) or None,
                 }
+                # Les coordonnées d'un élément (une référence : téléphone, courriel)
+                # restent dans l'exemple, à leur rôle.
+                extra = {r: " ".join(text(es, r)) for r in CONTACT_ROLES if text(es, r)}
+                if extra:
+                    item["extra"] = extra
+                sizes = self.item_sizes(kind, es, styles or {})
+                if sizes:
+                    item["sizes"] = sizes
                 if kind.startswith(OTHER_PREFIX):
                     # Une rubrique libre garde son titre et ses éléments tels quels.
                     others = sample.setdefault("others", {})
