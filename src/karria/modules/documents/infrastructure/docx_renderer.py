@@ -919,7 +919,8 @@ class DocxRenderer:
                         if item_first is None:
                             item_first = p_label
                         item_paras.append((p_label, "label"))
-                        before = label["pitch_mm"]
+                        # Le pas est mesuré de haut en haut : la boîte de l'étiquette s'en retire.
+                        before = label["pitch_mm"] - float(self.styles[label_key]["box_h_mm"])
                     if label is not None and label["inline"]:
                         p = self.labelled_para(cell, kind, sl, key0, text=vals[0][1], before=before)
                     elif len(vals) == 1:

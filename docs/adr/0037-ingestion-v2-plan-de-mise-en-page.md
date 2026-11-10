@@ -109,13 +109,72 @@ pictogrammes, décor d'élément) reste celle de `spec_builder.py`, étendue à 
   mot gagné sur la ligne suivante ;
 - les ancrages du **plan priment** sur la règle déterministe (un filet de frise pris pour le
   connecteur d'un élément se prolongeait de 112 mm) ; un rôle posé par un emplacement composé
-  (« Poste | 2016 ») ne se répète pas par son emplacement seul ; deux éléments côte à côte
-  (deux références en colonnes) s'empilent à l'écart nul plutôt qu'à un écart négatif ;
+  (« Poste | 2016 ») ne se répète pas par son emplacement seul ;
 - les petites formes (< 8 mm : puces, pastilles, pictogrammes) ne sont pas proposées au
   modèle : le code les reconnaît (`markers_for`, `icons_for`, décor d'élément).
 
 Les noms de classes CSS sont générés (`css_class` : lettres, chiffres, tirets) : rien de ce qui
 vient d'un plan n'arrive tel quel dans le HTML, et `other:` n'est pas un sélecteur valide.
+
+**Ce que le lot a appris à l'assembleur (2026-11-10, treize modèles)** — chaque règle est
+mesurée sur un modèle nommé, et le plan reste ce qu'il est : le code tranche là où il se trompe.
+
+- *Le plan se trompe de côté, la règle tranche* : des coordonnées déclarées dans l'en-tête
+  alors qu'une rubrique Contact **titrée et vide** les attend plus bas y retournent, en un
+  élément (cv9, Sacha : posées en absolu, elles chevauchaient la rubrique suivante d'un vrai
+  CV) ; à l'inverse, une rubrique Contact **sans titre, seule dans la dernière bande, toute
+  dans le bas de la page** (sous 85 % de la hauteur) est un pied de page : ses lignes
+  deviennent des champs d'en-tête posés en absolu (cv5 : en bande, elles coulaient sous le
+  contenu et le tassaient de 20 %). Le plan gardé dans les étiquettes porte le déplacement.
+- *Étiquette au-dessus* : la valeur se pose au **pas mesuré de haut en haut** (la boîte de
+  l'étiquette retirée) ; elle se posait au pas sous l'étiquette, 4 mm trop bas (cv1).
+- *Éléments côte à côte* (deux références) : une **grille d'éléments** (`item_columns`,
+  `item_pitch_mm`), chaque emplacement mesuré depuis la colonne de son élément, deux voisins
+  de rangée sans écart ; le HTML les range en rangées au pas mesuré ; les coordonnées d'un
+  élément (`extra` : téléphone, courriel d'une référence) restent dans l'exemple (cv1).
+- *Anneau de frise* : toutes les formes posées sur une même ligne se dessinent, dans l'ordre
+  de peinture (un rond sombre puis son cœur blanc ; la seconde écrasait la première, cv1).
+- *Espacement des mots d'un paragraphe justifié* : lu sur sa dernière ligne (sa largeur moins
+  celle que la police servie lui donne, répartie sur ses espaces ; 0,1 à 1,5 mm, jamais sur
+  une police substituée) et écrit dans le style (`word_spacing_mm`, `word-spacing` CSS, compté
+  dans toutes les largeurs) : sans lui, Chromium remontait un mot que Canva avait replié
+  (cv1 : 0,49 mm sur un corps de 8 pt, mots à 2 mm de 0,48 → 1,00).
+- *Paragraphe au fer à droite ou centré* : la suite d'un paragraphe partage sa marge gauche,
+  **ou sa marge droite, ou son axe** (`elements`) ; sa boîte s'arrête au bord droit mesuré, comme
+  un justifié ; une boîte garde 0,3 mm au-dessus de sa ligne la plus large (Chromium repliait
+  son dernier mot sur un arrondi : « Projet » tombait d'une ligne, Sacha) ; chaque ligne se
+  mesure à son **propre corps** (une puce plus petite que son style ne mesure pas au corps de
+  l'emplacement, cv5) ; une colonne s'arrête 1 mm avant le bord de la page quoi que disent
+  ses lignes (cv5 : 211,6 mm sur une page de 210).
+- *Poste visé de flux* : sans place entre le nom et la première bande (le profil suit le nom,
+  cv9/Sacha), le poste visé synthétisé **ouvre le flux** (`flow`) et pousse la première bande
+  — pour une personne seulement, l'exemple n'en a pas.
+- *En-tête d'une personne* : un nom se réduit jusqu'à 35 % avant de se replier (« Moreau-Lefebvre »
+  dans un modèle en 48 pt) ; un filet vertical à sa hauteur borne un champ ; des coordonnées
+  d'en-tête dont la ligne de plus (le site) entrerait dans la rubrique du dessous se
+  **resserrent** (`tight_contact`) ; la marge de la première rubrique d'une colonne ne descend
+  pas sous la **réserve** que l'en-tête occupe au-dessus d'elle, même resserrée par l'ajustement
+  (`header_reserve` : « Expériences » remontait de 40 % sous le site, Sacha) ; une coordonnée
+  trop longue dans sa colonne se réduit avant de se couper ; le titre d'une personne se replie
+  dans sa colonne (l'exemple garde sa ligne mesurée).
+- *Propre à l'exemple* (`sample_only`) : les barres de niveau d'une liste (rect ≤ 3 mm de haut
+  dans skills/languages/interests ; une personne a d'autres langues), un tracé rastérisé qui
+  entoure une image (le QR code de cv3). Les deux moteurs ne les dessinent que pour l'exemple.
+- *Tracés* : un tracé complexe et grand (≥ 8 mm, courbe non ronde) sans texte dessous se rend en
+  **image** rastérisée depuis la source (`asset`) — les moteurs ne tracent que rectangles, ronds
+  et filets : le cadre carré d'un QR code devenait un disque plein ; un rond doit toucher ses
+  quatre bords (`is_round`) ; la boîte d'un tracé plein ≤ 60 mm est celle de ses **pixels peints**
+  (`tighten`) : pdfium la bornait par ses points de contrôle, le surligneur d'un titre se
+  dessinait sur le texte (cv3) ; la puce d'un élément se dessine devant le rôle qu'elle marquait
+  (`marker["roles"]`, l'année d'une expérience, cv5).
+- *Lecture du PDF* : un glyphe réimprimé exactement au même endroit (un faux gras, une ombre)
+  ne compte qu'une fois (« MMoonn ppoorrttffoolliioo », cv3) ; une espace du PDF coupe un mot
+  même étroite (0,15 em dans une police condensée : « ÀPROPOSDEMOI », cv3) ; une rubrique dont
+  toutes les lignes sont des étiquettes est du texte ; un intitulé écrit sur deux lignes garde
+  son retour à la ligne dans l'exemple (`pre-line`), un paragraphe se replie dans sa boîte ;
+  un élément de l'exemple écrit à un autre corps que son style (> 10 %) garde le sien
+  (`sizes`, cv5 : la troisième expérience en 5,5 pt pour 7,9) ; un poste écrit deux fois
+  (« Graphiste » en rappel, « GRAPHISTE » en grand) garde sa casse écrite dans l'exemple.
 
 ### 3. Une boucle de correction bornée, la meilleure passe gardée
 

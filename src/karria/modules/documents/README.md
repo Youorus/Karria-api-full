@@ -86,7 +86,13 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   `sample_lines`) ou aligné à droite (`rx_mm`), un filet de bande (`bands[i]["decorations"]`)
   ou de flux (`anchor: flow`), l'image d'exemple à son échelle (`photo.sample_image`), une
   étiquette fixe devant ou au-dessus d'un champ (`slot["label"]`), un style de titre propre à
-  une rubrique (`title_style`), un paragraphe aligné à droite ou centré (`slot["align"]`).
+  une rubrique (`title_style`), un paragraphe aligné à droite ou centré (`slot["align"]`),
+  des éléments côte à côte (`item_columns`, `item_pitch_mm`), l'espacement des mots d'un
+  justifié (`styles[k]["word_spacing_mm"]`), un poste visé qui ouvre le flux (`flow`), un
+  ornement propre à l'exemple (`sample_only` : barres de niveau, QR code), un tracé rastérisé
+  (`asset`), le corps propre d'un élément de l'exemple (`sizes`). Le code tranche là où le
+  plan se trompe de côté : coordonnées d'en-tête sous une rubrique Contact titrée, pied de
+  page en bande (ADR-0037 § 2, « ce que le lot a appris »).
 - **Polices** (`domain/fonts.py`, `infrastructure/fonts.py`) : incorporée si sa
   licence le permet et qu'elle couvre le français, sinon même famille libre,
   sinon remplaçante la plus proche (classe, hauteur d'x, capitales, chasse).
