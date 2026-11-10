@@ -93,13 +93,17 @@ def relocate_contact_lines(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
     if contact is None or any(pl.role in CONTACT_ROLES for it in contact.items for pl in it.lines):
         return plan
     by_id = {ln["id"]: ln for ln in page.lines}
-    title_y = max((by_id[t]["y"] for t in contact.title_lines if t in by_id), default=None)
+    # Sous le titre, pas à côté : « CONTACT » suivi de ses coordonnées sur la même
+    # ligne (cv10) est une bande d'en-tête, elle reste en absolu.
+    title_bottom = max(
+        (by_id[t]["y"] + by_id[t]["h"] for t in contact.title_lines if t in by_id), default=None
+    )
     moved = [
         h
         for h in plan.header.lines
         if h.field in CONTACT_ROLES
         and h.line in by_id
-        and (title_y is None or by_id[h.line]["y"] > title_y)
+        and (title_bottom is None or by_id[h.line]["y"] >= title_bottom - 1.0)
     ]
     if not moved:
         return plan

@@ -951,6 +951,8 @@ class HtmlRenderer:
         coordonnées d'une personne, une ligne de plus que l'exemple, sous le titre
         « Expériences » remonté de 40 %)."""
         tight = self.tight_contact(self.spec["header"]["elements"])
+        sections = column.get("sections") or []
+        section_top = band_top + (float(sections[0]["margin_top_mm"]) if sections else 0.0)
         bottom = 0.0
         for e in self.spec["header"]["elements"]:
             if not self.view["header"].get(e["field"]) or e.get("flow"):
@@ -958,9 +960,15 @@ class HtmlRenderer:
             if not column["x_mm"] - 2 <= float(e["x_mm"]) <= column["x_mm"] + column["w_mm"]:
                 continue
             y = tight.get(e["field"], float(e["y_mm"]))
-            if y >= band_top:
-                continue  # un pied de page (coordonnées en bas) n'est pas au-dessus
-            bottom = max(bottom, y + lh(self.styles[e["style"]]))
+            # Seuls comptent les textes qui occupent l'écart entre le haut de la
+            # bande et la rubrique : pas un pied de page (plus bas), pas une
+            # coordonnée sur la ligne du titre (cv10), pas ce qui finit au-dessus.
+            if y >= section_top - 2.0:
+                continue
+            low = y + lh(self.styles[e["style"]])
+            if low <= band_top:
+                continue
+            bottom = max(bottom, low)
         return max(0.0, bottom + 1.5 - band_top) if bottom else 0.0
 
     def column_top_under(self, x: float) -> float:

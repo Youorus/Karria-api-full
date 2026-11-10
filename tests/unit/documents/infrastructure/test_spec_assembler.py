@@ -1214,3 +1214,38 @@ def test_un_plan_sans_bande_na_pas_de_pied_de_page() -> None:
     plan.bands = []
     page = PdfPage(210.0, 297.0, 1, [], [], [])
     assert relocate_footer_contact(plan, page) is plan
+
+
+def test_des_coordonnees_a_cote_du_titre_contact_restent_dans_lentete() -> None:
+    """« CONTACT » suivi du téléphone et du courriel sur la même ligne (cv10) : une bande
+    d'en-tête, pas une rubrique ; le titre vide disparaît avec sa rubrique."""
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+    lines = [
+        raw_line("L1", "JEAN", 80, 10, h=8, size=20),
+        raw_line("L2", "CONTACT", 80, 55, size=11, caps=True),
+        raw_line("L3", "0612", 110, 55.4, w=12),
+        raw_line("L4", "a@b.fr", 140, 55.4, w=14),
+        raw_line("L5", "PROFIL", 20, 75, size=11, caps=True),
+        raw_line("L6", "Un profil.", 20, 82, w=40),
+    ]
+    plan = _mini_plan(
+        [
+            {"ref": "S0", "kind": "contact", "title_lines": ["L2"], "items": [], "side_roles": []},
+            {
+                "ref": "S1",
+                "kind": "summary",
+                "title_lines": ["L5"],
+                "items": [{"lines": [{"line": "L6", "role": "summary"}]}],
+                "side_roles": [],
+            },
+        ],
+        [
+            {"line": "L1", "field": "full_name"},
+            {"line": "L3", "field": "phone"},
+            {"line": "L4", "field": "email"},
+        ],
+    )
+    spec, _, _ = _assemble(lines, plan)
+    assert {"phone", "email"} <= {e["field"] for e in spec["header"]["elements"]}
+    assert sections(spec)["contact"]["slots"] == []

@@ -53,8 +53,10 @@ LIST_KINDS: Final = frozenset({"skills", "languages", "interests"})
 SIZE_DEPARTURE: Final = 0.10
 #: Un tracé complexe au moins aussi grand (mm) se rend en image plutôt qu'en forme.
 RASTER_PATH_MM: Final = 8.0
-#: Une forme pleine plus basse que ceci dans une liste est une barre de niveau (mm).
+#: Une forme pleine plus basse que ceci et plus large que cela dans une liste est une
+#: barre de niveau (mm) ; une puce (1 mm) n'en est pas une.
 LEVEL_BAR_MAX_H_MM: Final = 3.0
+LEVEL_BAR_MIN_W_MM: Final = 5.0
 #: Les rôles dont l'exemple garde les retours à la ligne de la source (intitulés), pas les paragraphes.
 KEEP_BREAKS: Final = frozenset({"item_title", "item_subtitle"})
 #: Espacement des mots retenu d'un paragraphe justifié : ni le bruit de mesure, ni une aberration.
@@ -590,7 +592,11 @@ class SpecBuilder:
             # Les barres de niveau d'une liste (langues) sont celles des entrées
             # de l'exemple : une personne a d'autres langues, d'autres niveaux.
             for d in spec["decorations"]:
-                if d["kind"] in ("rect", "curve") and d["h_mm"] <= LEVEL_BAR_MAX_H_MM:
+                if (
+                    d["kind"] in ("rect", "curve")
+                    and d["h_mm"] <= LEVEL_BAR_MAX_H_MM
+                    and d["w_mm"] >= LEVEL_BAR_MIN_W_MM
+                ):
                     d["sample_only"] = True
         self.fill_sample(kind, all_groups, sample, styles)
         return spec

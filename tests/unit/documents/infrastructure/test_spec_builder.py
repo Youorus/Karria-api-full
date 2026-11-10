@@ -1208,13 +1208,17 @@ class TestBarresDeNiveauEtPolicesSubstituees:
             drawing("rect", 40, 58, 13, 1.9, fill="#EEEEEE"),
             drawing("rect", 40, 58, 8, 1.9, fill="#333333"),
             drawing("vline", 18, 50, 0, 20, stroke="#333333"),
+            drawing(
+                "rect", 14, 63.5, 1.0, 1.0, fill="#333333"
+            ),  # une puce orpheline : pas une barre
         ]
         spec, _, _ = builder(lines, roles, drawings=bars, doc=FakeDoc(round_=False)).build()
         decorations = sections(spec)["languages"]["decorations"]
-        flags = {(d["kind"], d.get("sample_only")) for d in decorations}
-        assert ("rect", True) in flags
-        assert all(d.get("sample_only") for d in decorations if d["kind"] == "rect")
+        flags = {(d["kind"], d["w_mm"], bool(d.get("sample_only"))) for d in decorations}
+        assert ("rect", 13.0, True) in flags
+        assert ("rect", 8.0, True) in flags
         assert not any(d.get("sample_only") for d in decorations if d["kind"] == "vline")
+        assert not any(d.get("sample_only") for d in decorations if d["w_mm"] < 5)  # noqa: PLR2004
 
     def test_lespacement_des_mots_ne_se_mesure_pas_sur_une_police_substituee(self) -> None:
         fonts = cv_font_set()
