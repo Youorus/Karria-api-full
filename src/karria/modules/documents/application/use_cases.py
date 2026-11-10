@@ -1043,7 +1043,9 @@ class IngestTemplateVersion:
         planned_label = str(meta.get("title") or "").strip()
         updated = replace(
             template,
-            label=planned_label if template.label == default_label and planned_label else template.label,
+            label=planned_label
+            if template.label == default_label and planned_label
+            else template.label,
             category=template.category or str(meta.get("category") or ""),
             description=template.description or str(meta.get("description_fr") or ""),
             tags=template.tags or tuple(str(t) for t in meta.get("tags") or ()),
