@@ -299,9 +299,11 @@ def gallery_traits(spec: dict[str, Any]) -> dict[str, Any]:
         "has_photo": bool(spec["header"].get("photo")),
         "columns": columns,
         "ats": {"readiness": "warning" if warnings else "good", "warnings": warnings},
-        "fields_added": ["headline"]
-        if any(e.get("synthesized") for e in spec["header"]["elements"])
-        else [],
+        "fields_added": [
+            str(e.get("field") or "headline")
+            for e in spec["header"]["elements"]
+            if e.get("synthesized")
+        ],
     }
 
 

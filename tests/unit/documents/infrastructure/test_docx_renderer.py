@@ -542,3 +542,32 @@ def test_un_blanc_deja_a_lecart_nest_pas_elargi() -> None:
     p = Document().add_paragraph()
     DocxRenderer._spaced_run(p, " ", 0.01)
     assert "w:spacing" not in p._p.xml
+
+
+def test_une_etiquette_au_dessus_pose_la_valeur_au_pas_mesure_en_docx(
+    built: tuple, fonts: FontSet
+) -> None:
+    import re  # noqa: PLC0415
+
+    from karria.modules.documents.domain.view import from_cv  # noqa: PLC0415
+
+    spec, _, _ = built
+    contact = next(
+        s
+        for b in spec["bands"]
+        for c in b["columns"]
+        for s in c["sections"]
+        if s["kind"] == "contact"
+    )
+    slot = contact["slots"][0]
+    role = slot["roles"][0]
+    slot["label"] = {"text": "Phone", "inline": False, "pitch_mm": 4.9, "dx_mm": 0.0}
+    spec["styles"]["contact.label"] = {**spec["styles"][f"contact.{role}"], "box_h_mm": 4.3}
+    docx = unzip(render(spec, from_cv(spec, CV), fonts))["word/document.xml"].decode()
+    label_pos = docx.index(">Phone<")
+    # Le paragraphe de la valeur suit l'étiquette ; son espace avant vaut le pas moins la
+    # boîte de l'étiquette (0,6 mm = 34 twips), pas le pas entier (4,9 mm = 278 twips).
+    after = docx[label_pos:]
+    m = re.search(r'<w:spacing [^>]*w:before="(\d+)"', after[after.index("</w:p>") :])
+    assert m is not None
+    assert int(m.group(1)) < 120

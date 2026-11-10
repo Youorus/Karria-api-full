@@ -449,13 +449,71 @@ que la pastille dessinée du modèle (0,5 mm contre 1,06 mm sur Minimalist), et 
 faudrait :** une puce image (`w:lvlPicBulletId`) ou une police de puces incorporée.
 **Déclencheur :** la revue Fable, ou un retour de Marc sur l'aspect du DOCX.
 
+### Ingestion v2 (ADR-0037) : ce que le DOCX ne rend pas encore
+
+Le DOCX empile la colonne latérale d'une frise (entreprise, dates) **au-dessus** du contenu de
+l'élément, dans la marge de gauche, au lieu de la poser à côté ; et il pose les filets de bande
+ou de flux à leur hauteur mesurée (Word n'étire pas une forme avec un tableau). **Ce qu'il
+faudrait :** un tableau imbriqué par élément de frise (deux cellules), et une forme ancrée à la
+cellule avec sa hauteur relue après mise en page. **Déclencheur :** un retour de Marc sur le
+DOCX d'un modèle à frise.
+
+### Ingestion v2 : une famille du même nom, mais une autre fonte
+
+Canva sert « League Spartan » dans sa fonte de 2014 (The League of Moveable Type, graisse unique),
+18 à 20 % plus large que la League Spartan de Google (2021, redessinée). La résolution
+« même famille, bibliothèque libre » la prend, et l'écart de chasse part en interlettrage
+(0,6 à 1,3 mm par lettre sur cv9) : les mots restent à leur place, les titres se lisent espacés
+et dépassent 0,1 em (variante « optimisée ATS » proposée). **Ce qu'il faudrait :** quand la
+chasse de la famille homonyme s'écarte de plus de 10 % de la police incorporée sur toutes ses
+lignes, la tenir pour une autre fonte et chercher la remplaçante par métriques parmi toutes les
+familles (ou ajouter l'ancienne League Spartan, OFL, au catalogue). **Déclencheur :** un
+second modèle dans ce cas, ou un retour de Marc sur cv9.
+
+### Ingestion v2 : les barres de niveau (langues) sont du décor
+
+Des barres de niveau (une piste claire, un remplissage) sont ancrées à la rubrique à leur
+place mesurée : deux langues dans l'exemple, deux barres. Depuis le 2026-11-10 elles sont
+**propres à l'exemple** (`sample_only`) : une personne n'en a aucune, plutôt que des barres
+posées sur ses mots. **Ce qu'il faudrait :** un rôle de « jauge » par élément, rempli d'après
+le niveau du CV. **Déclencheur :** un retour de Marc.
+
+### Ingestion v2 : une fonte homonyme aux métriques verticales différentes (cv3)
+
+Canva incorpore « BebasNeueBold » (Dharma Type, boîte de ligne 9,5 mm en 27 pt) ; la
+bibliothèque sert la Bebas Neue de Google (la même graisse renommée « Regular », boîte 11,4 mm).
+Même famille, même chasse, mais les glyphes se posent 1 à 2 mm plus bas dans leur boîte : le
+surligneur mesuré sous un titre se retrouve dessus. Même famille de problème que League
+Spartan ci-dessus, par la hauteur cette fois. **Ce qu'il faudrait :** comparer aussi les
+métriques verticales (`hhea`/`OS/2`) de la famille homonyme à celles de la police incorporée,
+et corriger la position du texte de l'écart d'ascendante. **Déclencheur :** cv3 passe sinon
+(0,87 : Biro Script Plus et TT Commons Pro sont par ailleurs substituées).
+
+### Ingestion v2 : un tracé derrière un texte ne se rastérise pas
+
+Un tracé complexe (≥ 8 mm, non rond) se rend en image rastérisée depuis la source, sauf s'il
+passe sous un texte (le texte y serait deux fois). Un surligneur sous un titre (cv3) reste
+donc une forme : rectangle arrondi à la boîte peinte, sans la texture du trait. **Ce qu'il
+faudrait :** rastériser la page sans le texte (pdfium ne l'offre pas) ou vectoriser le tracé en
+SVG. **Déclencheur :** un modèle où la forme compte vraiment (une vague de couleur derrière un
+titre).
+
+### Ingestion v2 : les rubriques libres d'un vrai CV
+
+Une rubrique libre d'un modèle (« Réalisations clés », « Certifications ») est gardée avec son
+titre et rendue dans l'exemple ; le CV v2 n'a pas de rubrique libre, donc elle n'a rien à
+afficher pour une personne. **Ce qu'il faudrait :** une liste de rubriques libres dans le CV
+(titre + entrées), que `domain/view.py` apparierait par titre. **Déclencheur :** la décision de
+Marc d'ouvrir le CV à des rubriques libres.
+
 ### Marketing reste en revue
 
-Aileron est désormais servie (Fontsource, CC0) : PDF 0,82, DOCX 0,77, sous le seuil.
-Restent les défauts du **modèle** (un bloc « références » sous un second titre
-« LANGUAGES », des puces de formation non reconnues, des étiquettes « Phone : » collées
-aux coordonnées). **Ce qu'il faudrait :** signaler les titres de rubrique en double à
-l'ingestion, ou que Marc corrige le modèle Canva. **Déclencheur :** le lot
+Ingestion v2 (2026-11-10) : 0,915, mots à 2 mm 0,99, mais SSIM tolérant 0,857 sous le
+plancher 0,88 (polices de bibliothèque, pas de substitution) : les filets gris clair pleine
+largeur sous les titres et le bloc « références » sous un second titre « LANGUAGES » (défaut du
+**modèle**). **Ce qu'il faudrait :** signaler les titres de rubrique en double à
+l'ingestion, ou que Marc corrige le modèle Canva ; ou juger ce modèle sur son score global
+(≥ 0,90) plutôt que sur la composante SSIM. **Déclencheur :** le lot
 `~/Desktop/Modele de CV/v2/cv1…cv10`.
 
 ### Les URL signées visent l'adresse interne du stockage

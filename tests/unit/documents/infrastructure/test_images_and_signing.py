@@ -14,7 +14,17 @@ from pydantic import SecretStr
 
 from doubles import sample_image
 from karria.shared.config import Provider, StorageSettings
-from karria.shared.images import blurhash, crop_to_frame, image_size, resize_to_png, to_webp
+from karria.shared.images import (
+    ImageTooLargeError,
+    NotAnImageError,
+    blurhash,
+    crop_to_frame,
+    image_size,
+    resize_to_png,
+    side_by_side,
+    to_webp,
+)
+from karria.shared.images import pillow as pillow_module
 from karria.shared.images.pillow import _base83, _to_linear, _to_srgb
 from karria.shared.storage import Bucket
 from karria.shared.storage.s3 import S3ObjectStorage
@@ -40,6 +50,26 @@ class TestImagesProduites:
 
     def test_dimensions(self) -> None:
         assert image_size(sample_image(64, 48)) == (64, 48)
+
+    def test_cote_a_cote_a_la_hauteur_de_la_premiere(self) -> None:
+        out = _open(side_by_side(sample_image(40, 30), sample_image(100, 60, fmt="PNG"), gutter=4))
+        assert out.format == "PNG"
+        assert out.size == (40 + 4 + 50, 30)
+        assert out.getpixel((42, 15)) == (160, 160, 160)
+
+    def test_cote_a_cote_borne_a_la_hauteur_maximale(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(pillow_module, "MAX_SIDE_BY_SIDE_HEIGHT", 20)
+        out = _open(side_by_side(sample_image(40, 40), sample_image(80, 40), gutter=2))
+        assert out.size == (20 + 2 + 40, 20)
+
+    def test_cote_a_cote_refuse_ce_qui_n_est_pas_une_image_ou_trop_grand(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(NotAnImageError):
+            side_by_side(b"pas une image", sample_image(10, 10))
+        monkeypatch.setattr(pillow_module, "MAX_PIXELS", 100)
+        with pytest.raises(ImageTooLargeError):
+            side_by_side(sample_image(10, 10), sample_image(20, 20))
 
     def test_recadrage_d_une_image_large_au_rapport_du_cadre(self) -> None:
         out = _open(crop_to_frame(sample_image(200, 100), ratio=1.0, width=80))

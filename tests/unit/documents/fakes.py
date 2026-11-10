@@ -723,9 +723,19 @@ class FakeEngine:
         source_pdf: bytes,
         rendered_pdf: bytes,
         *,
+        substituted: frozenset[str] = frozenset(),
         fonts_report: list[dict[str, Any]] | None = None,
     ) -> Fidelity:
-        self.calls.append(("measure", {"rendered": rendered_pdf, "fonts_report": fonts_report}))
+        self.calls.append(
+            (
+                "measure",
+                {
+                    "rendered": rendered_pdf,
+                    "fonts_report": fonts_report,
+                    "substituted": substituted,
+                },
+            )
+        )
         if rendered_pdf == PDF_LETTER_BYTES:
             return self.fidelity_letter
         return self.fidelity_docx if rendered_pdf == b"%PDF-1.7 docx" else self.fidelity_pdf
@@ -795,9 +805,10 @@ def make_analysis(
         fonts=[{"family": "Inter", "origin": "google"}],
         fonts_report=[
             {"family": "Inter", "origin": "google"},
-            {"family": "Avenir", "origin": "substitute"},
+            {"family": "Avenir", "origin": "substitute", "source": "Avenir-Regular"},
         ],
         unlabeled=unlabeled or [],
+        passes=[{"pass": 1, "score": 0.95}],
     )
 
 

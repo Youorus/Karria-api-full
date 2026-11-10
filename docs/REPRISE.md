@@ -3,7 +3,140 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-06**
+**Dernière mise à jour : 2026-11-10**
+
+### Session du 2026-11-10 — ingestion v2 : le lot passe (Fable) — fusionnée dans `main` le 10 (pas encore poussée)
+
+**Feu vert de Marc** : terminer le lot ingestion v2 jusqu'au bout — appliquer les correctifs
+diagnostiqués le 06, réingérer, relancer tout le lot, rendre un vrai CV sur chaque modèle publié,
+≤ 3 requêtes Opus par modèle, rien de poussé.
+
+**Livré** (commits `514bdb4` → `2f0dafd` + la mise à jour des mesures ; `make check` vert,
+3 700 tests, 964 unitaires `documents`) — chaque règle est mesurée sur un modèle nommé,
+détaillée dans l'ADR-0037 § 2 « ce que le lot a appris » :
+- cv1 (0,65 → **0,949**) : étiquette au-dessus posée au pas de haut en haut (HTML et DOCX),
+  références en **grille d'éléments** (`item_columns`), coordonnées d'un élément dans l'exemple,
+  anneau de frise (toutes les formes d'une ligne), **espacement des mots** d'un justifié lu sur
+  sa dernière ligne (`word_spacing_mm`, Chromium remontait un mot que Canva repliait).
+- cv5 (0,64 → **0,908**) : paragraphe au fer à droite (suite par la marge droite, boîte au bord
+  mesuré), colonne bornée à la page, chaque ligne mesurée à son corps, pied de page en bande →
+  champs d'en-tête, pastille devant le rôle qu'elle marquait, corps propre d'un élément de
+  l'exemple (`sizes`), casse écrite d'un poste répété.
+- cv9/Sacha **vrai CV** : coordonnées d'en-tête → rubrique Contact titrée (le plan se trompait de
+  côté), poste visé de **flux** quand il n'y a pas de place sous le nom, nom réduit jusqu'à 35 %,
+  coordonnées resserrées et **réserve d'en-tête** sous laquelle l'ajustement ne tasse pas la
+  première rubrique, filet vertical qui borne un champ, titre d'une personne replié, coordonnée
+  trop longue réduite, barres de niveau propres à l'exemple (`sample_only`).
+- cv3 (plantage → 0,867) : recadrage pdfium compté en pixels, rubrique d'étiquettes seules = texte,
+  glyphes réimprimés dédoublonnés, espaces du PDF honorées (« ÀPROPOSDEMOI »), tracé complexe
+  **rastérisé** (le cadre d'un QR code devenait un disque), rond qui touche ses bords, boîte
+  **peinte** d'un tracé (le surligneur se dessinait sur le titre).
+- Boîte : jamais au ras de la ligne la plus large (+ 0,3 mm : « Projet » tombait d'une ligne).
+- Vrai CV, seconde passe (cv2, meridian, cv1, cv5) : la première bande garde la hauteur que
+  l'en-tête exige à côté d'elle (`band_floor`), un titre trop large se resserre sans se couper,
+  une colonne de la première bande borne un champ d'en-tête, le bas du flux ignore un pied de
+  page, le site synthétisé n'emprunte pas l'étiquette « Address ».
+- Outils de reprise (scratchpad `…/scratchpad/ingestion/`) : `assemble.py <nom> <pdf>`
+  (réassemblage + rendu + mesure + vrai CV **sans appel au modèle**, depuis `v2/<nom>/labels.json`),
+  `local_all.sh` (tout le lot), `debug_widths.py`, `plan_only.py` (un plan, une requête),
+  `render_cv.py`, `table.py` (lignes du tableau de l'ADR), `batch.sh`.
+
+**Mesures finales** (lot complet réingéré le 10, tableau détaillé dans l'ADR-0037 § Mesures) —
+**publiés (≥ 0,90)** : romain 0,945, sacha 0,916, meridian 0,933, minimalist 0,924, cv1 0,949,
+cv2 0,921, cv5 0,907, cv6 0,921, cv8 0,950, cv9 0,927 ; **en revue** : marketing 0,916 (SSIM 0,858
+sous 0,88), cv3 0,867 (fontes non libres + Bebas Neue homonyme), cv10 0,766 (fontes non libres).
+Vrai CV sur les dix publiés : une page, aucun chevauchement (`v2/<nom>/cv-reel.png`, version en
+base ; `v2/<nom>/local/cv-reel.png`, réassemblage).
+
+**Pile locale** : la base et MinIO qui portent les versions sont ceux du projet compose
+`karria_api_v2` (`cd ~/PycharmProjects/karria_api_v2 && docker compose up -d postgres minio`),
+pas ceux du worktree (volumes `karria_api_v2-ingestion_*`, vides, supprimés le 10) ; Gotenberg POC
+`docker start karria-gotenberg-poc` (port 3005). Sources de Sacha et Romain :
+`scratchpad/ingestion/sources/`.
+
+**Reste** : Marc valide l'ADR-0037 et les rendus, puis fusion ; cv10 (fontes non libres), cv3
+(fonte homonyme aux métriques différentes), marketing (SSIM 0,86 sous 0,88 : filets gris et
+titre en double du modèle) — voir le tableau et `PLUS-TARD.md` ; DOCX des frises ; rubriques
+libres d'un vrai CV.
+
+### Session du 2026-11-06 — ingestion v2 des modèles de CV : le modèle de vision dessine la structure, le code mesure, la porte juge (ADR-0037 — Fable) — branche `feat/ingestion-v2`, NON poussée
+
+**Demande de Marc** : l'API Claude sert à créer les modèles, une fois, de la façon la plus
+exploitable (édition, export, ATS) ; il ne choisit que Premium et son prix ; le fournisseur se
+change à un seul endroit ; 100 % fidèle au PDF donné. Deux modèles Canva (Sacha, Romain)
+tombaient à 0,51 / 0,52 avec l'étiquetage ligne à ligne de l'ADR-0020.
+
+**Livré** (worktree `~/PycharmProjects/karria_api_v2-ingestion`, branche `feat/ingestion-v2`,
+`make check` vert, 913 tests unitaires `documents` ; **rien n'est poussé** : Marc valide le rendu
+d'abord) :
+- **`infrastructure/layout_planner.py`** — le plan de mise en page (`LayoutPlan`, schéma imposé,
+  `ref` validé en Python, `check_plan`) dessiné par le modèle routé `template_extract`
+  (`anthropic:claude-opus-5-5` en local) : en-tête, bandes → colonnes → rubriques (sans titre,
+  libres `other`), éléments et rôles (dont `label`), colonne latérale de frise, ancrage des
+  formes (`header/page/flow/band/band_separator/section/item/after_section`), fiche de galerie.
+  Passe de correction `revise` (côte à côte + écarts). Aucun millimètre ne vient du modèle.
+- **`infrastructure/spec_assembler.py`** — plan + mesures → spécification (même JSON) ;
+  `spec_builder.py` reste la couche de mesure, étendue : rubrique sans titre, `other:<slug>`,
+  frise (`side`, `main_dx_mm`), étiquettes fixes (`slot["label"]`), style de titre par rubrique,
+  alignement droite/centré/justifié, grille de liste (`columns`, `column_pitch_mm`), second champ
+  au fer à droite (`flush_right`), boîte de texte retrouvée dans les paragraphes repliés
+  (`width_mm`), en-tête recollé (`box_w_mm`, `sample_lines`), aligné (`rx_mm`/`cx_mm`), nom en
+  deux polices scindé, site synthétisé, photo d'exemple à son échelle (`sample_image`).
+- **`infrastructure/ingestion_loop.py`** + **`diagnostics.py`** — plan → rendu → mesure → porte ;
+  une passe de correction au plus ; la meilleure passe gardée ; `report["passes"]` (score,
+  composantes, jetons, latence, modèle). `shared/images.side_by_side` (borné).
+- Porte (`domain/gate.py`) : une substitution de police **déclarée** n'est plus une faute de
+  mesure (`fidelity.measure(substituted=)`), plancher SSIM 0,84 dans ce cas (mesuré).
+- Polices : `FontLibrary.resolve_group` (une famille source → une famille servie), fiche retrouvée
+  par le nom servi (le bug « Inter 18pt » → `sans-serif`), graisse/italique lus dans la police
+  incorporée (pdfium les devinait faux), ligatures et `calt` coupés au rendu (trait d'union d'Inter
+  illisible par un ATS).
+- Rendu : classes CSS générées (`css_class`), nom réduit jusqu'à 50 % avant repli, boîtes de
+  poste visé et de titre à la place d'une personne, voisins d'en-tête par recouvrement, pas de
+  rubrique Contact empruntée quand l'en-tête porte les coordonnées.
+- `scripts/templates.py dump VERSION_ID DIR` (source, rendu, côte à côte, rapport, spec, plan).
+- Docs : ADR-0037 (« Proposée »), README du module, `PLUS-TARD.md` (DOCX des frises et filets,
+  rubriques libres d'un vrai CV, fonte homonyme League Spartan, barres de niveau).
+
+**Mesures (fidélité PDF, `claude-opus-5-5`, une ou deux passes, 11–13 k jetons en entrée et
+1,3–1,9 k en sortie par passe, 10–15 s)** — tableau complet dans l'ADR-0037 § Mesures ; artefacts
+dans `/private/tmp/claude-501/-Users-marc--PycharmProjects-karria-api/b728036c-016d-4c13-965e-0db7af7cdbe1/scratchpad/ingestion/v2/<nom>/`
+(`source.png`, `rendu.png`, `cote-a-cote.png`, `report.json`, `spec.json`, `labels.json` avec le plan,
+`cv-reel.png` pour un vrai CV ; `local/` = réassemblage sans appel au modèle).
+**Publiés (≥ 0,90)** : romain 0,940 (v1 : 0,52), sacha 0,916 (0,51), meridian 0,933, minimalist 0,924,
+cv2 0,921, cv6 0,922, cv8 0,952, cv9 0,934. **En revue** : marketing 0,842 (v1 ≈ 0,92 — régression,
+lot lancé avant les deux derniers correctifs), cv10 0,764 (trois familles substituées, deux fontes
+Canva non libres), cv1 0,649, cv5 0,639, cv3 (plantage recadrage, corrigé en pdf_reader, pas réingéré).
+Marc a arrêté les itérations le 2026-11-06 (plus d'appel au modèle).
+
+**Vrai CV rendu** (`scratchpad/ingestion/render_cv.py`, CV fictif complet) : minimalist et meridian
+tiennent sur une page sans débordement ; **cv9/sacha** : le poste visé synthétisé chevauche le nom
+(pas de place entre le nom et le profil : `synthesize_headline` plafonne à `first_top − h − 4`) et
+les coordonnées, posées en absolu dans l'en-tête alors qu'une rubrique « Coordonnées » titrée existe
+dans la colonne, chevauchent la rubrique Langues qui suit.
+
+**Reste** (diagnostics faits, correctifs NON appliqués — ordre conseillé) :
+1. `html_renderer.labelled_row` (étiquette au-dessus) : `value_margin = pitch − half(label) − half(st0)`
+   pose la valeur au pas **sous** la boîte de l'étiquette (9,2 mm au lieu de 4,9 mesurés sur cv1) ;
+   il faut retirer `label_st["box_h_mm"]` (pas mesuré de haut en haut). Un test à écrire.
+2. `spec_assembler` : quand le plan donne une rubrique `contact` titrée sans ligne et des lignes
+   `phone/email/address` dans l'en-tête sous ce titre, les déplacer dans la rubrique (cv9, sacha —
+   les deux vrais CV en dépendent) ; poste visé synthétisé sans place → élément **de flux** avant
+   la première bande plutôt qu'en absolu.
+3. Paragraphe au fer à droite/centré (`alignment` le détecte, cv5 profil : droites à 192,28 mm) :
+   `wrapped_box_width` et `dx` sont pensés pour une boîte ancrée à gauche ; pour la droite, fixer
+   `dx + width` au bord droit mesuré. Puis cv5 : `column_right` donne 101,5 mm à la colonne
+   d'expériences (bord à 211,6 mm > page 210) — à tracer ligne par ligne avec
+   `scratchpad/ingestion/assemble.py cv5 …` (`local/report.json` liste les mots déplacés).
+4. cv1 : deux références côte à côte → `columns`/`column_pitch_mm` pour les rubriques à éléments
+   (comme la grille des listes), `dx` relatif à la colonne de l'élément (l'étiquette « Phone: »
+   prend aujourd'hui le `dx` de la seconde référence : 62,4 mm) ; `fill_sample` ne garde pas
+   `phone/email` d'un élément (quatre lignes absentes du rendu) ; pastilles `attach: row` sur
+   `item_dates` invisibles au rendu — à regarder dans `local/cv.html`.
+5. marketing : réingérer avec le code courant (titre « LANGUAGES » en double et bloc de références
+   dans la source) ; cv3 : réingérer (correctif commité) ; cv10 : accepter ou acheter les fontes.
+6. Valider l'ADR-0037 et le rendu (Marc), fusionner la branche ; rubriques libres d'un vrai CV ;
+   DOCX des frises ; `extra_contact_slots` couvre le site/LinkedIn d'un vrai CV, à vérifier à l'écran.
 
 ### Session du 2026-11-06 — la photo déjà sur le CV se retravaille sans la rechoisir (module `cv` — Fable) — BRANCHE `feat/portrait`, NON POUSSÉE
 

@@ -537,6 +537,13 @@ class FontLibrary:
                 # ingestion ultérieure (qui télécharge) doit encore la voir.
                 return None
             record = await self._fetch(family, key)
+        if record is not None and record.family != family:
+            # Le nom lu dans la police porte parfois une taille optique
+            # (« Inter 18pt » pour la famille Inter) : une fiche rangée sous
+            # `inter` mais nommée ainsi ne se retrouvait plus par son propre
+            # nom, et le rendu retombait en `sans-serif`. Le nom servi est
+            # celui sous lequel la fiche est demandée et se retrouve.
+            record.family = family
         self._records[key] = record
         return record
 
@@ -681,6 +688,54 @@ class FontLibrary:
         )
         return resolution
 
+    async def resolve_group(self, sources: list[SourceFont]) -> list[FontResolution]:
+        """Les polices d'une même famille du PDF → une **même** famille servie.
+
+        Résolues une à une, les graisses d'une famille substituée pouvaient
+        partir chacune vers la remplaçante la plus proche de ses propres
+        métriques (Inter pour le romain, Montserrat pour l'italique) : le
+        modèle se rendait en deux familles. La famille se décide sur sa
+        graisse de référence (le romain le plus proche de 400) ; les autres
+        suivent, à la graisse et au style les plus proches de la remplaçante.
+        Une police incorporée réutilisable, elle, reste servie telle quelle.
+        """
+        if not sources:
+            return []
+        anchor = min(sources, key=lambda s: (s.italic, abs(s.weight - 400)))
+        first = await self.resolve(anchor)
+        out: list[FontResolution | None] = [first if s is anchor else None for s in sources]
+        record = await self.family(first.family) if first.origin is FontOrigin.SUBSTITUTE else None
+        for i, source in enumerate(sources):
+            if out[i] is not None:
+                continue
+            if (
+                record is None
+                or not record.styles
+                or (source.reuse_allowed and not source.missing_chars)
+            ):
+                out[i] = await self.resolve(source)
+                continue
+            out[i] = FontResolution(
+                source=source.name,
+                family=record.family,
+                weight=nearest_weight(
+                    source.weight, record.available(source.italic) or record.available(False)
+                ),
+                italic=source.italic and bool(record.available(True)),
+                origin=FontOrigin.SUBSTITUTE,
+                licence=record.licence,
+                distance=first.distance,
+                note=f"{source.family} suit {record.family}, comme {anchor.name} (une famille source, une famille servie)",
+            )
+            logger.warning(
+                "documents.font_substituted",
+                source=source.name,
+                family=record.family,
+                distance=first.distance,
+                follows=anchor.name,
+            )
+        return [r for r in out if r is not None]
+
 
 def source_font(
     name: str, embedded: bytes | None, *, weight: int, italic: bool, family: str
@@ -767,10 +822,13 @@ class FontSet:
         size = size_pt or float(style["size_pt"])
         spacing = float(style["letter_spacing_pt"]) if ls_pt is None else ls_pt
         shown = text.upper() if style.get("uppercase") else text
+        # L'espacement des mots d'un style (paragraphe justifié dont les blancs
+        # sont plus larges que l'espace de la police) s'ajoute à chaque espace.
+        words = float(style.get("word_spacing_mm") or 0.0) * shown.count(" ")
         font = self.get(str(style["family"]), int(style["weight"]), bool(style.get("italic")))
         if font is None:
-            return (len(shown) * size * 0.55 + spacing * max(0, len(shown) - 1)) * MM_PER_PT
-        return measurer(font.data).width_pt(shown, size, spacing) * MM_PER_PT
+            return (len(shown) * size * 0.55 + spacing * max(0, len(shown) - 1)) * MM_PER_PT + words
+        return measurer(font.data).width_pt(shown, size, spacing) * MM_PER_PT + words
 
 
 @lru_cache(maxsize=256)

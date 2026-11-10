@@ -1,17 +1,24 @@
-"""Analyse d'un PDF de modèle : polices résolues, rôles des lignes, spécification.
+"""Analyse d'un PDF de modèle : polices résolues, plan de mise en page, spécification.
 
 Contrat
 -------
 L'ordre compte, et il est fixé ici :
 
-1. lire les polices du PDF et les **résoudre** (`FontLibrary.resolve`) : la
-   géométrie des lignes se pose avec les métriques verticales de la police
-   **servie**, celles qu'emploiera Chromium ;
-2. lire la page (lignes, formes, images) ;
-3. demander les rôles des lignes au modèle de vision (`LineLabeler`) ; une
-   ligne sans rôle bloque la publication (elle est signalée dans le rapport) ;
-4. construire la spécification, puis compléter les polices servies avec les
-   graisses que la spécification a ajoutées (le poste visé synthétisé).
+1. **préparer** (`prepare`) : lire les polices du PDF et les **résoudre**
+   (`FontLibrary.resolve_group`, une famille source → une famille servie) ;
+   la géométrie des lignes se pose avec les métriques verticales de la police
+   **servie**, celles qu'emploiera Chromium ; lire la page (lignes, formes,
+   images) et la rastériser ;
+2. demander le **plan** de mise en page au modèle de vision
+   (`LayoutPlanner`, ADR-0037) : qui est quoi, qui s'ancre à quoi ; une ligne
+   que le plan ne place pas bloque la publication (elle est signalée) ;
+3. **assembler** (`assemble`) la spécification d'après le plan et les mesures
+   (`SpecAssembler`), puis compléter les polices servies avec les graisses
+   que la spécification a ajoutées (le poste visé synthétisé).
+
+`prepare` et `assemble` sont séparés pour que la boucle d'ingestion
+(`ingestion_loop.py`) assemble plusieurs plans sur une même lecture ;
+`analyze` les enchaîne pour un appel simple.
 
 Le rapport de polices (`fonts_report`) dit, pour chaque police du PDF, ce qui
 est servi et pourquoi : il part dans la revue du modèle.
@@ -20,25 +27,38 @@ est servi et pourquoi : il part dans la revue du modèle.
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Final, Protocol
+from typing import Any, Final
 
 from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.domain.fonts import (
     FontResolution,
+    SourceFont,
     family_from_name,
     italic_from_name,
+    substituted_families,
     weight_from_name,
 )
 from karria.modules.documents.infrastructure.fonts import (
+    FontFacts,
     FontFile,
     FontLibrary,
     FontSet,
     facts_of,
     source_font,
 )
-from karria.modules.documents.infrastructure.pdf_reader import PdfDocument, VerticalMetrics
-from karria.modules.documents.infrastructure.spec_builder import SpecBuilder
+from karria.modules.documents.infrastructure.layout_planner import (
+    LayoutPlan,
+    LayoutPlanner,
+    measured_inputs,
+)
+from karria.modules.documents.infrastructure.pdf_reader import (
+    PdfDocument,
+    PdfPage,
+    VerticalMetrics,
+)
+from karria.modules.documents.infrastructure.spec_assembler import SpecAssembler
 from karria.shared.logging import get_logger
 
 logger = get_logger(__name__)
@@ -48,14 +68,6 @@ logger = get_logger(__name__)
 MAX_PAGE_AREA_MM2: Final = 250_000.0
 
 Json = dict[str, Any]
-
-
-class LineLabeler(Protocol):
-    """Donne un rôle à chaque ligne d'un modèle (modèle de vision)."""
-
-    async def label(self, page_png: bytes, lines: list[Json]) -> Json:
-        """`{title, category, description_fr, tags, photo_shape, columns, lines: [{line, role, section, item}]}`."""
-        ...
 
 
 @dataclass(slots=True)
@@ -70,46 +82,91 @@ class AnalyzedTemplate:
     fonts_report: list[Json]
     page_png: bytes
     unlabeled: list[str] = field(default_factory=list)
+    plan: LayoutPlan | None = None
+    #: Les passes de la boucle d'ingestion (score, verdict, jetons), par passe.
+    passes: list[Json] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PreparedTemplate:
+    """Une page lue, ses polices résolues, son image : de quoi assembler un plan.
+
+    Tient le PDF ouvert (pdfium) : à fermer (`close`) ou à employer comme
+    gestionnaire de contexte.
+    """
+
+    doc: PdfDocument
+    page: PdfPage
+    page_png: bytes
+    resolutions: dict[str, FontResolution]
+    files: dict[str, FontFile]
+
+    @property
+    def measured(self) -> Json:
+        """Ce que le planificateur reçoit."""
+        return measured_inputs(self.page)
+
+    def __enter__(self) -> PreparedTemplate:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Libère les ressources natives du PDF."""
+        self.doc.close()
 
 
 class TemplateAnalyzer:
     """PDF de modèle → spécification, avec ses polices."""
 
-    def __init__(self, library: FontLibrary, labeler: LineLabeler) -> None:
+    def __init__(self, library: FontLibrary, planner: LayoutPlanner | None = None) -> None:
+        """`planner` : le modèle de vision qui dessine le plan ; sans lui, seule la résolution
+        des polices sert (l'analyseur de lettre la partage, ADR-0036)."""
         self._library = library
-        self._labeler = labeler
+        self._planner = planner
 
     async def resolve_fonts(
         self, doc: PdfDocument
     ) -> tuple[dict[str, FontResolution], dict[str, FontFile]]:
-        """Chaque police du PDF → la police servie (résolution et fichier)."""
+        """Chaque police du PDF → la police servie (résolution et fichier), famille par famille."""
         resolutions: dict[str, FontResolution] = {}
         files: dict[str, FontFile] = {}
         embedded = doc.fonts()
         names = sorted({c["font"] for c in doc.text_lines()})
+        groups: dict[str, list[SourceFont]] = defaultdict(list)
         for name in names:
             font = embedded.get(name)
-            weight = weight_from_name(name, default=font.weight if font and font.weight else 400)
-            italic = italic_from_name(name) or bool(font and font.italic)
-            source = source_font(
-                name,
-                font.data if font else None,
-                weight=weight,
-                italic=italic,
-                family=family_from_name(name),
+            # La graisse lue dans la police incorporée (OS/2) ; pdfium la devine
+            # mal (mesuré : 1016 pour un italique régulier, 265 pour un romain).
+            facts = embedded_facts(font.data) if font and font.data else None
+            default = facts.weight if facts and facts.weight else 400
+            weight = weight_from_name(name, default=default)
+            italic = italic_from_name(name) or bool(facts.italic if facts else font and font.italic)
+            family = family_from_name(name)
+            groups[family].append(
+                source_font(
+                    name, font.data if font else None, weight=weight, italic=italic, family=family
+                )
             )
-            resolution = await self._library.resolve(source)
-            resolutions[name] = resolution
-            served = await self._library.file(
-                resolution.family, resolution.weight, resolution.italic, download=True
-            )
-            if served is not None:
-                files[name] = served
+        for sources in groups.values():
+            for resolution in await self._library.resolve_group(sources):
+                resolutions[resolution.source] = resolution
+                served = await self._library.file(
+                    resolution.family, resolution.weight, resolution.italic, download=True
+                )
+                if served is not None:
+                    files[resolution.source] = served
         return resolutions, files
 
-    async def analyze(self, pdf: bytes, *, labels: Json | None = None) -> AnalyzedTemplate:
-        """Analyse un PDF de modèle d'une page."""
-        with PdfDocument(pdf) as doc:
+    async def prepare(self, pdf: bytes) -> PreparedTemplate:
+        """Lit le PDF (une page), résout ses polices, pose sa géométrie, le rastérise.
+
+        Raises:
+            TemplateIngestionError: Plusieurs pages, ou une page trop grande.
+        """
+        doc = PdfDocument(pdf)
+        try:
             if doc.page_count != 1:
                 raise TemplateIngestionError(
                     f"{doc.page_count} pages : un modèle de CV tient sur une seule page"
@@ -131,20 +188,28 @@ class TemplateAnalyzer:
             # Lecture et rastérisation : plusieurs secondes de CPU, hors de la boucle.
             page = await asyncio.to_thread(doc.read, metrics=metrics)
             page_png = await asyncio.to_thread(doc.render_png, dpi=100)
-            if labels is None:
-                compact = [
-                    {k: ln[k] for k in ("id", "text", "font", "size", "bold", "x", "y", "w")}
-                    for ln in page.lines
-                ]
-                labels = await self._labeler.label(page_png, compact)
-            known = {ln["id"] for ln in page.lines}
-            got = {lb["line"] for lb in labels.get("lines", [])}
-            unlabeled = sorted(known - got, key=lambda s: int(s[1:]) if s[1:].isdigit() else 0)
-            served = {name: (f.family, f.weight, f.italic) for name, f in files.items()}
-            font_set = FontSet(
-                list({(f.family, f.weight, f.italic): f for f in files.values()}.values())
-            )
-            spec, sample, assets = SpecBuilder(doc, page, labels, font_set, served).build()
+        except BaseException:
+            doc.close()
+            raise
+        return PreparedTemplate(doc, page, page_png, resolutions, files)
+
+    async def assemble(self, prepared: PreparedTemplate, plan: LayoutPlan) -> AnalyzedTemplate:
+        """La spécification d'un plan sur une page préparée."""
+        files = prepared.files
+        served = {name: (f.family, f.weight, f.italic) for name, f in files.items()}
+        font_set = FontSet(
+            list({(f.family, f.weight, f.italic): f for f in files.values()}.values())
+        )
+        report = fonts_report(prepared.resolutions)
+        assembler = SpecAssembler(
+            prepared.doc,
+            prepared.page,
+            plan,
+            font_set,
+            served,
+            substituted=substituted_families(report),
+        )
+        spec, sample, assets = assembler.build()
         all_files = {(f.family, f.weight, f.italic): f for f in files.values()}
         for ref in spec["fonts"]:
             key = (ref["family"], ref["weight"], ref["italic"])
@@ -153,30 +218,53 @@ class TemplateAnalyzer:
                 if extra is not None:
                     all_files[(extra.family, extra.weight, extra.italic)] = extra
                     ref["weight"], ref["italic"] = extra.weight, extra.italic
-        report = [
-            {
-                "source": r.source,
-                "served": f"{r.family} {r.weight}{' italique' if r.italic else ''}",
-                "family": r.family,
-                "weight": r.weight,
-                "italic": r.italic,
-                "origin": r.origin.value,
-                "licence": r.licence,
-                "distance": r.distance,
-                "note": r.note,
-            }
-            for r in resolutions.values()
-        ]
-        for line in report:
-            logger.info("documents.font_resolved", **{k: v for k, v in line.items() if k != "note"})
         spec["fonts_report"] = report
         return AnalyzedTemplate(
             spec=spec,
             sample=sample,
-            labels=labels,
+            labels=assembler.labels,
             assets=assets,
             fonts=list(all_files.values()),
             fonts_report=report,
-            page_png=page_png,
-            unlabeled=unlabeled,
+            page_png=prepared.page_png,
+            unlabeled=list(assembler.check.unplaced),
+            plan=plan,
         )
+
+    async def analyze(self, pdf: bytes, *, plan: LayoutPlan | None = None) -> AnalyzedTemplate:
+        """Analyse un PDF de modèle d'une page : préparation, plan (sauf s'il est donné), assemblage."""
+        with await self.prepare(pdf) as prepared:
+            if plan is None:
+                if self._planner is None:
+                    raise TemplateIngestionError("aucun modèle de vision branché pour le plan")
+                plan = (await self._planner.plan(prepared.page_png, prepared.measured)).plan
+            return await self.assemble(prepared, plan)
+
+
+def embedded_facts(data: bytes) -> FontFacts | None:
+    """Ce que fontTools lit d'une police incorporée, ou rien si elle ne se lit pas."""
+    try:
+        return facts_of(data)
+    except Exception:
+        return None
+
+
+def fonts_report(resolutions: dict[str, FontResolution]) -> list[Json]:
+    """Pour chaque police du PDF, ce qui est servi et pourquoi (journalisé)."""
+    report = [
+        {
+            "source": r.source,
+            "served": f"{r.family} {r.weight}{' italique' if r.italic else ''}",
+            "family": r.family,
+            "weight": r.weight,
+            "italic": r.italic,
+            "origin": r.origin.value,
+            "licence": r.licence,
+            "distance": r.distance,
+            "note": r.note,
+        }
+        for r in resolutions.values()
+    ]
+    for line in report:
+        logger.info("documents.font_resolved", **{k: v for k, v in line.items() if k != "note"})
+    return report

@@ -127,6 +127,12 @@ class TestAppariement:
         assert out["matched"] == 0
         assert out["median_shift_mm"] is None
 
+    def test_une_substitution_declaree_compte_comme_une_police_concordante(self) -> None:
+        src = [self._w("a", 0, font="canvasans"), self._w("b", 0, font="aileron")]
+        ren = [self._w("a", 0, font="inter"), self._w("b", 0, font="arimo")]
+        assert structural(src, ren)["font"] == 0.0
+        assert structural(src, ren, substituted=frozenset({"canvasans"}))["font"] == 0.5
+
 
 class TestDecor:
     def test_formes_visibles_hors_fond_blanc_et_hors_page(self) -> None:
@@ -160,6 +166,13 @@ class TestMesure:
         assert (out.font_match, out.size_match, out.color_match) == (1.0, 1.0, 1.0)
         assert out.decoration == 1.0
         assert (out.pages_source, out.pages_render) == (1, 1)
+
+    def test_les_familles_substituees_sont_rapportees(self) -> None:
+        page = _page()
+        out = measure(page, page, substituted=frozenset({"helvetica"}))
+        assert out.font_match == 1.0
+        assert out.to_json()["substituted_families"] == ["helvetica"]
+        assert "substituted_families" not in measure(page, page).to_json()
 
     def test_un_rendu_decale_et_sans_filet(self) -> None:
         out = measure(_page(), _page(3.0, rule=False))

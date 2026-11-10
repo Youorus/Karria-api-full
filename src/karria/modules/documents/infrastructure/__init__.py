@@ -3,6 +3,7 @@
 from karria.modules.documents.infrastructure.engine import KarriaDocumentEngine
 from karria.modules.documents.infrastructure.fonts import FontLibrary
 from karria.modules.documents.infrastructure.gotenberg import GotenbergClient
+from karria.modules.documents.infrastructure.layout_planner import VisionLayoutPlanner
 from karria.modules.documents.infrastructure.letter_analyzer import LetterLineLabeler
 from karria.modules.documents.infrastructure.llm import LlmAtsExplainer, VisionLineLabeler
 from karria.modules.documents.infrastructure.logos import StorageLogoFetcher
@@ -28,5 +29,6 @@ __all__ = [
     "TortoiseSendRepository",
     "TortoiseTemplateRepository",
     "TortoiseUserTemplateRepository",
+    "VisionLayoutPlanner",
     "VisionLineLabeler",
 ]

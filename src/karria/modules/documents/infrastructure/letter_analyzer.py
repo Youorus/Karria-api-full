@@ -149,7 +149,7 @@ class LetterAnalyzer:
         self._library = library
         self._labeler = labeler
         # La résolution des polices est celle du CV, à l'identique.
-        self._fonts = TemplateAnalyzer(library, labeler)
+        self._fonts = TemplateAnalyzer(library)
 
     async def _unify_substitutes(
         self, resolutions: dict[str, FontResolution], files: dict[str, FontFile]

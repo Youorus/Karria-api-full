@@ -55,8 +55,11 @@ class FakeGotenberg:
         return self.pdf
 
 
-class FakeLabeler:
-    async def label(self, page_png: bytes, lines: list[dict[str, Any]]) -> dict[str, Any]:
+class FakePlanner:
+    async def plan(self, page_png: bytes, measured: dict[str, Any]) -> Any:
+        raise AssertionError("non appelé")
+
+    async def revise(self, *args: Any) -> Any:
         raise AssertionError("non appelé")
 
 
@@ -72,7 +75,7 @@ class FakeHtmlRenderer:
 
 def _engine(pdf: bytes = b"") -> tuple[KarriaDocumentEngine, FakeLibrary, FakeGotenberg]:
     library, gotenberg = FakeLibrary(), FakeGotenberg(pdf)
-    engine = KarriaDocumentEngine(library, FakeLabeler(), gotenberg)  # type: ignore[arg-type]
+    engine = KarriaDocumentEngine(library, FakePlanner(), gotenberg)  # type: ignore[arg-type]
     return engine, library, gotenberg
 
 
@@ -97,17 +100,25 @@ async def test_l_analyse_rend_le_contrat_du_port(monkeypatch: pytest.MonkeyPatch
         unlabeled=["L3"],
     )
 
-    async def fake_analyze(pdf: bytes) -> AnalyzedTemplate:
+    analyzed.passes = [{"pass": 1, "score": 0.5}]
+    seen: dict[str, Any] = {}
+
+    async def fake_run(self: Any, pdf: bytes) -> AnalyzedTemplate:
         assert pdf == b"%PDF"
+        seen["render"], seen["measure"] = self._render, self._measure
         return analyzed
 
-    monkeypatch.setattr(engine._analyzer, "analyze", fake_analyze)
+    monkeypatch.setattr(engine_module.IngestionLoop, "run", fake_run)
     out = await engine.analyze(b"%PDF")
     assert out.spec == {"s": 1}
     assert out.fonts == [{"family": "Testa", "weight": 700, "italic": True}]
     assert out.fonts_report == [{"source": "Testa-Bold"}]
     assert out.unlabeled == ["L3"]
     assert out.assets == {"a.png": b"A"}
+    assert out.passes == [{"pass": 1, "score": 0.5}]
+    # La boucle rend et mesure avec le moteur lui-même.
+    assert seen["render"] == engine.render_pdf
+    assert seen["measure"] == engine.measure
 
 
 class TestRenduPdf:
@@ -230,9 +241,9 @@ class TestLettreAppariee:
         library, gotenberg = FakeLibrary(), FakeGotenberg(b"")
         engine = KarriaDocumentEngine(
             library,  # type: ignore[arg-type]
-            FakeLabeler(),  # type: ignore[arg-type]
+            FakePlanner(),  # type: ignore[arg-type]
             gotenberg,  # type: ignore[arg-type]
-            letter_labeler=FakeLabeler(),  # type: ignore[arg-type]
+            letter_labeler=object(),  # type: ignore[arg-type]
         )
         analyzed = AnalyzedLetter(
             spec={"kind": "letter"},
@@ -263,14 +274,24 @@ class TestLettreAppariee:
         engine, _, _ = _engine()
         seen: dict[str, Any] = {}
 
-        def fake_measure(source: bytes, render: bytes, *, font_map: Any = None) -> str:
+        def fake_measure(
+            source: bytes, render: bytes, *, font_map: Any = None, substituted: Any = None
+        ) -> str:
             seen["font_map"] = font_map
+            seen["substituted"] = substituted
             return "fidelity"
 
         monkeypatch.setattr(engine_module, "measure", fake_measure)
         await engine.measure(b"s", b"r")
         assert seen["font_map"] is None
+        assert seen["substituted"] == frozenset()
+        # Les deux règles coexistent : la famille servie (ADR-0036) et la substitution
+        # déclarée (ADR-0037, plancher SSIM) voyagent ensemble.
         await engine.measure(
-            b"s", b"r", fonts_report=[{"source": "TTCommonsPro-Rg", "family": "Barlow"}]
+            b"s",
+            b"r",
+            fonts_report=[{"source": "TTCommonsPro-Rg", "family": "Barlow"}],
+            substituted=frozenset({"ttcommonspro"}),
         )
         assert seen["font_map"] == {"ttcommonspro": "barlow"}
+        assert seen["substituted"] == frozenset({"ttcommonspro"})

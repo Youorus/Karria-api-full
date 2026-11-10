@@ -519,8 +519,39 @@ class TestBibliotheque:
     ) -> None:
         catalogue = FakeCatalogue({"Arimo": ({"400": REGULAR}, "Apache-2.0", "google-fonts")})
         out = await FontLibrary(storage, catalogue, shared_cache=False).candidates()
-        assert [f.family for f in out] == ["Testa"]  # la famille lue dans la police
+        # Le nom lu dans la police (« Testa ») ne porte pas la clé de la fiche
+        # (`arimo`) : c'est le nom demandé qui est servi, pour que la fiche se
+        # retrouve par le nom qu'elle porte.
+        assert [f.family for f in out] == ["Arimo"]
         assert catalogue.calls == list(CURATED_FAMILIES)
+
+    async def test_une_taille_optique_dans_le_nom_ne_perd_pas_la_fiche(
+        self, storage: InMemoryObjectStorage
+    ) -> None:
+        """Google sert « Inter 18pt » comme nom de famille des instances d'Inter :
+        la fiche est rangée sous `inter`, et doit se retrouver par le nom servi."""
+        optical = build_font(family="Testa 18pt", style="Regular", weight=400)
+        catalogue = FakeCatalogue({"Testa": ({"400": optical}, "OFL-1.1", "google-fonts")})
+        library = FontLibrary(storage, catalogue, shared_cache=False)
+        record = await library.family("Testa")
+        assert record is not None
+        assert record.family == "Testa"
+        served = await library.file(record.family, 400, False, download=True)
+        assert served is not None
+        assert served.family == "Testa"
+        # Une fiche déjà rangée avec l'ancien nom est relue sous le nom demandé.
+        legacy = {**record.to_json(), "family": "Testa 18pt"}
+        await storage.put(
+            Bucket.TEMPLATES,
+            "fonts/testa/family.json",
+            json.dumps(legacy).encode(),
+            content_type="application/json",
+        )
+        again = FontLibrary(storage, catalogue, shared_cache=False)
+        relu = await again.family("Testa")
+        assert relu is not None
+        assert relu.family == "Testa"
+        assert catalogue.calls == ["Testa"]
 
 
 def _source(**kw: Any) -> SourceFont:
@@ -658,3 +689,65 @@ class TestJeuDePolices:
 def test_la_police_de_test_couvre_le_francais() -> None:
     assert "œ" in FULL_CHARS
     assert "•" in FULL_CHARS
+
+
+class TestResolutionGroupee:
+    async def test_une_famille_substituee_sert_une_seule_famille(
+        self, storage: InMemoryObjectStorage
+    ) -> None:
+        """Le romain décide de la remplaçante ; l'italique et le gras la suivent."""
+        catalogue = FakeCatalogue(
+            {
+                "Arimo": ({"400": build_font(family="Arimo"), "700": BOLD}, "Apache-2.0", "g"),
+                "Montserrat": (
+                    {"400": REGULAR, "400i": build_font(style="Italic", italic_angle=-12)},
+                    "OFL-1.1",
+                    "g",
+                ),
+            }
+        )
+        library = FontLibrary(storage, catalogue, shared_cache=False)
+        sources = [
+            _source(
+                family="Rare",
+                name="Rare-Italic",
+                italic=True,
+                weight=400,
+                missing_chars=frozenset("é"),
+            ),
+            _source(family="Rare", name="Rare-Bold", weight=700, missing_chars=frozenset("é")),
+            _source(family="Rare", name="Rare-Regular", weight=400, missing_chars=frozenset("é")),
+        ]
+        out = await library.resolve_group(sources)
+        assert [r.source for r in out] == ["Rare-Italic", "Rare-Bold", "Rare-Regular"]
+        assert {r.family for r in out} == {"Arimo"}
+        assert all(r.origin is FontOrigin.SUBSTITUTE for r in out)
+        by_source = {r.source: r for r in out}
+        assert by_source["Rare-Bold"].weight == 700
+        assert by_source["Rare-Italic"].italic is False  # Arimo de test n'a pas d'italique
+        assert "suit Arimo" in by_source["Rare-Italic"].note
+        assert "suit" not in by_source["Rare-Regular"].note
+
+    async def test_une_police_incorporee_reutilisable_reste_servie_telle_quelle(
+        self, storage: InMemoryObjectStorage
+    ) -> None:
+        catalogue = FakeCatalogue(
+            {"Arimo": ({"400": build_font(family="Arimo")}, "Apache-2.0", "g")}
+        )
+        library = FontLibrary(storage, catalogue, shared_cache=False)
+        sources = [
+            _source(family="Rare", name="Rare-Regular", weight=400, missing_chars=frozenset("é")),
+            _source(family="Rare", name="Rare-Bold", weight=700, reuse_allowed=True),
+        ]
+        out = await library.resolve_group(sources)
+        assert out[0].origin is FontOrigin.SUBSTITUTE
+        assert out[1].origin is FontOrigin.EMBEDDED
+
+    async def test_une_famille_de_la_bibliotheque_se_resout_police_par_police(
+        self, storage: InMemoryObjectStorage
+    ) -> None:
+        library = FontLibrary(storage, _testa_catalogue(), shared_cache=False)
+        out = await library.resolve_group([_source(weight=700), _source(weight=400, italic=True)])
+        assert [r.origin for r in out] == [FontOrigin.LIBRARY, FontOrigin.LIBRARY]
+        assert [(r.weight, r.italic) for r in out] == [(700, False), (400, True)]
+        assert await library.resolve_group([]) == []

@@ -71,6 +71,7 @@ from karria.modules.documents.domain.errors import (
     TemplateNotFreeError,
     TemplateNotOwnedError,
 )
+from karria.modules.documents.domain.fonts import substituted_families
 from karria.modules.documents.domain.gate import DOCX_SCORE_TARGET, evaluate
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.letter import (
@@ -942,21 +943,24 @@ class IngestTemplateVersion:
         rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
         timings["render_pdf_s"] = round(time.monotonic() - t, 1)
         t = time.monotonic()
+        # Une substitution de police déclarée se juge dans la revue, pas dans la porte
+        # (plancher SSIM dédié) ; la police servie se juge sur le rapport (ADR-0036).
+        substituted = substituted_families(analysis.fonts_report)
         fidelity_pdf = await self._engine.measure(
-            source, rendered.data, fonts_report=analysis.fonts_report
+            source, rendered.data, substituted=substituted, fonts_report=analysis.fonts_report
         )
         timings["measure_s"] = round(time.monotonic() - t, 1)
         decision = evaluate(fidelity_pdf)
         failures = list(decision.failures)
         if analysis.unlabeled:
-            failures.append(f"lignes sans rôle : {', '.join(analysis.unlabeled)}")
+            failures.append(f"lignes non placées : {', '.join(analysis.unlabeled)}")
         t = time.monotonic()
         docx = await self._engine.render_docx(
             spec, view, assets=icons, photo=photo, fit=rendered.fit
         )
         docx_pdf = await self._engine.docx_to_pdf(docx)
         fidelity_docx = await self._engine.measure(
-            source, docx_pdf, fonts_report=analysis.fonts_report
+            source, docx_pdf, substituted=substituted, fonts_report=analysis.fonts_report
         )
         timings["docx_s"] = round(time.monotonic() - t, 1)
         previews = await self._engine.previews(rendered.data)
@@ -1010,6 +1014,7 @@ class IngestTemplateVersion:
             "unlabeled": analysis.unlabeled,
             "fit": rendered.fit.to_json(),
             "timings": timings,
+            "passes": analysis.passes,
             **(letter.report if letter else {}),
         }
         now = self._clock.now()

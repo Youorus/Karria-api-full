@@ -72,4 +72,4 @@ prouvée) ; les jetons push FCM bruts — tous les jetons de la sauvegarde du
 Les fichiers intermédiaires portent des adresses : ils ne se commitent pas
 et s'effacent après usage. Les sorties ne contiennent que des comptes.
 
-- `templates.py` — modèles de CV (ADR-0020) : `submit` (dépôt d'un PDF, `--inline` pour analyser sur place), `ingest`, `list` (versions, fidélité, verdict, polices).
+- `templates.py` — modèles de CV (ADR-0020, ADR-0037) : `submit` (dépôt d'un PDF, `--inline` pour analyser sur place), `ingest`, `list` (versions, fidélité, verdict, polices), `dump VERSION_ID DIR` (artefacts de revue : source, rendu, côte à côte, rapport avec les passes et les jetons, spécification, plan).

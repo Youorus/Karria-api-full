@@ -116,8 +116,16 @@ class TestIngestion:
         assert done.thumbnail_blurhash == "LKO2?U%2Tw=w"
         assert done.report["gate"] == {"passed": True, "failures": []}
         assert done.report["fidelity"]["docx"]["target"] == 0.80
-        assert done.report["substitutions"] == [{"family": "Avenir", "origin": "substitute"}]
+        assert done.report["substitutions"] == [
+            {"family": "Avenir", "origin": "substitute", "source": "Avenir-Regular"}
+        ]
         assert set(done.report["timings"]) == {"analyze_s", "render_pdf_s", "measure_s", "docx_s"}
+        assert done.report["passes"] == [{"pass": 1, "score": 0.95}]
+        # La substitution déclarée (Avenir) est transmise aux deux mesures.
+        measures = env.engine.called("measure")
+        assert [m["substituted"] for m in measures] == [frozenset({"avenir"})] * 2
+        # … et le rapport de polices aussi (la police servie se juge dessus, ADR-0036).
+        assert all(m["fonts_report"] == done.report["fonts"] for m in measures)
         prefix = version_prefix(version.template_id, 1)
         assert done.assets == {
             "icon_phone.png": f"{prefix}/assets/icon_phone.png",
@@ -199,7 +207,7 @@ class TestIngestion:
 
         assert done is not None
         assert done.status is VersionStatus.REVIEW
-        assert done.report["gate"]["failures"] == ["lignes sans rôle : l3, l7"]
+        assert done.report["gate"]["failures"] == ["lignes non placées : l3, l7"]
 
     async def test_un_pdf_illisible_fait_echouer_la_version_avec_la_raison(self, env: Env) -> None:
         version = await processing(env)

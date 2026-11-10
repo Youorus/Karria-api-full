@@ -6,6 +6,7 @@
     uv run python -m scripts.templates refresh-colors [--dry-run]
     uv run python -m scripts.templates render-sample NOM --out DOSSIER [--color '#1F4FA3' ...] [--any-status]
     uv run python -m scripts.templates plain-letter          # les aperçus de la lettre sobre (galerie)
+    uv run python -m scripts.templates dump VERSION_ID DIR   # artefacts de revue d'une version (images, spec, rapport)
 
 `submit` dépose le PDF (bucket `templates`) et crée la version ; l'analyse part
 dans la file (worker) ou, avec `--inline`, tourne dans ce processus — utile pour
@@ -32,6 +33,10 @@ la rend avec son contenu d'exemple et dépose ses aperçus (`plain-letter/v<n>/`
 du bucket `templates`) : c'est la page « Lettre sobre » que la galerie montre
 pour tout modèle sans lettre assortie. À lancer une fois par environnement, et
 à chaque changement de `PLAIN_LETTER_VERSION`. Gotenberg doit être joignable.
+
+`dump` écrit dans un dossier ce qu'une revue regarde : `source.png`, `rendu.png`,
+`cote-a-cote.png` (source | rendu), `report.json` (fidélité, passes, jetons, durées),
+`spec.json`, `labels.json` (plan compris, ADR-0037), `sample.json`.
 """
 
 from __future__ import annotations
@@ -54,12 +59,15 @@ from karria.modules.documents import (
 )
 from karria.modules.documents.api.dependencies import build_engine
 from karria.modules.documents.application import TemplateRepository, tint_icons
+from karria.modules.documents.application.use_cases import version_prefix
 from karria.modules.documents.domain import parse_hex_color, primary_color_of, recolor_spec
 from karria.modules.documents.domain.plain_letter import PLAIN_FAMILY
 from karria.modules.documents.domain.view import from_sample
 from karria.modules.documents.infrastructure import FontLibrary, TortoiseTemplateRepository
+from karria.modules.documents.infrastructure.pdf_reader import PdfDocument
 from karria.shared.config import Settings, get_settings
 from karria.shared.database import connect, disconnect
+from karria.shared.images import side_by_side
 from karria.shared.logging import configure_logging
 from karria.shared.queue import build_queue_app
 from karria.shared.storage import Bucket, ObjectStorage, build_object_storage
@@ -161,7 +169,53 @@ async def _render_sample(
     return 0
 
 
-async def _main(args: argparse.Namespace) -> int:
+async def _dump(
+    templates: TemplateRepository, storage: ObjectStorage, args: argparse.Namespace
+) -> int:
+    """Les artefacts de revue d'une version, dans `args.directory`."""
+    version = await templates.get_version(UUID(args.version_id))
+    if version is None:
+        print("version introuvable")
+        return 1
+    source = await storage.get(Bucket.TEMPLATES, version.source_key)
+    render_key = f"{version_prefix(version.template_id, version.version)}/sample_render.pdf"
+    rendered = (
+        await storage.get(Bucket.TEMPLATES, render_key)
+        if await storage.exists(Bucket.TEMPLATES, render_key)
+        else None
+    )
+    files: dict[str, bytes] = {}
+    source_png = await asyncio.to_thread(_png, source)
+    files["source.png"] = source_png
+    if rendered is not None:
+        render_png = await asyncio.to_thread(_png, rendered)
+        files["rendu.png"] = render_png
+        files["cote-a-cote.png"] = await asyncio.to_thread(side_by_side, source_png, render_png)
+    for name, data in (
+        ("report.json", version.report),
+        ("spec.json", version.spec),
+        ("labels.json", version.labels),
+        ("sample.json", version.sample),
+    ):
+        if data is not None:
+            files[name] = json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
+    await asyncio.to_thread(_write_all, Path(args.directory), files)
+    print(f"{version.status.value} v{version.version} → {args.directory}")
+    return 0
+
+
+def _write_all(directory: Path, files: dict[str, bytes]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, data in files.items():
+        (directory / name).write_bytes(data)
+
+
+def _png(pdf: bytes) -> bytes:
+    with PdfDocument(pdf) as doc:
+        return doc.render_png(0, dpi=100)
+
+
+async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911 - une sortie par commande
     settings = get_settings()
     configure_logging(settings.observability)
     await connect(TORTOISE_ORM)
@@ -185,6 +239,8 @@ async def _main(args: argparse.Namespace) -> int:
                     out=Path(args.out),
                     any_status=args.any_status,
                 )
+            if args.command == "dump":
+                return await _dump(templates, storage, args)
             if args.command == "ingest":
                 done = await build_ingest_template(settings, storage).execute(UUID(args.version_id))
                 print(f"{done.status.value if done else 'introuvable'}")
@@ -261,6 +317,9 @@ def main() -> None:
         "--any-status", action="store_true", help="la dernière version même non publiée"
     )
     sub.add_parser("plain-letter", help="rendre et déposer les aperçus de la lettre sobre")
+    dump = sub.add_parser("dump", help="artefacts de revue d'une version")
+    dump.add_argument("version_id")
+    dump.add_argument("directory")
     sys.exit(asyncio.run(_main(parser.parse_args())))
 
 

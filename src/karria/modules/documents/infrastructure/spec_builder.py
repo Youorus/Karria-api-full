@@ -34,9 +34,10 @@ from __future__ import annotations
 import itertools
 import re
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Final
 
+from karria.modules.documents.domain.fonts import family_match_key
 from karria.modules.documents.domain.headline import synthesize_headline_style
 from karria.modules.documents.infrastructure.fonts import MM_PER_PT, FontSet
 from karria.modules.documents.infrastructure.pdf_reader import PdfDocument, PdfPage
@@ -47,12 +48,80 @@ MM: Final = 72 / 25.4
 SPEC_VERSION: Final = 1
 ITEM_SECTIONS: Final = frozenset({"experiences", "educations", "projects", "references"})
 LIST_ROLES: Final = frozenset({"skill", "language", "interest"})
+LIST_KINDS: Final = frozenset({"skills", "languages", "interests"})
+#: Écart relatif de corps à partir duquel un élément de l'exemple garde le sien.
+SIZE_DEPARTURE: Final = 0.10
+#: Un tracé complexe au moins aussi grand (mm) se rend en image plutôt qu'en forme.
+RASTER_PATH_MM: Final = 8.0
+#: Une forme pleine plus basse que ceci et plus large que cela dans une liste est une
+#: barre de niveau (mm) ; une puce (1 mm) n'en est pas une.
+LEVEL_BAR_MAX_H_MM: Final = 3.0
+LEVEL_BAR_MIN_W_MM: Final = 5.0
+#: Les rôles dont l'exemple garde les retours à la ligne de la source (intitulés), pas les paragraphes.
+KEEP_BREAKS: Final = frozenset({"item_title", "item_subtitle"})
+#: Espacement des mots retenu d'un paragraphe justifié : ni le bruit de mesure, ni une aberration.
+WORD_SPACING_MIN_MM: Final = 0.1
+WORD_SPACING_MAX_MM: Final = 1.5
+#: Les coordonnées, dans l'en-tête, une rubrique Contact ou un élément (une référence).
+CONTACT_ROLES: Final = ("phone", "email", "address", "website")
+#: Préfixe des rubriques libres (« Réalisations », « Certifications »…), gardées
+#: avec leur titre : `other:<slug>` (ADR-0037).
+OTHER_PREFIX: Final = "other:"
+
+
+def overlaps(a: Json, b: Json) -> bool:
+    """Deux boîtes `x, y, w, h` (mm) qui se recouvrent."""
+    return bool(
+        a["x"] < b["x"] + b["w"]
+        and b["x"] < a["x"] + a["w"]
+        and a["y"] < b["y"] + b["h"]
+        and b["y"] < a["y"] + a["h"]
+    )
+
+
+def is_item_kind(kind: str) -> bool:
+    """Une rubrique dont les éléments se répètent (expériences, formations, rubrique libre)."""
+    return kind in ITEM_SECTIONS or kind.startswith(OTHER_PREFIX)
 
 
 def med(values: list[float] | list[float | None], default: float = 0.0) -> float:
     """Médiane des valeurs connues."""
     known = [v for v in values if v is not None]
     return float(statistics.median(known)) if known else default
+
+
+def majority_alignment(votes: list[str]) -> str:
+    """L'alignement d'un emplacement : celui de la majorité de ses paragraphes repliés, à gauche sinon."""
+    counted = Counter(v for v in votes if v != "left")
+    if not counted:
+        return "left"
+    value, count = counted.most_common(1)[0]
+    return value if count * 2 > len(votes) else "left"
+
+
+def same_style(a: Json, b: Json) -> bool:
+    """Deux styles mesurés qui se rendent pareil : même police, graisse, corps, couleur, capitales."""
+    return bool(
+        a["family"] == b["family"]
+        and a["weight"] == b["weight"]
+        and a["italic"] == b["italic"]
+        and abs(float(a["size_pt"]) - float(b["size_pt"])) < 0.3  # noqa: PLR2004
+        and a["color"] == b["color"]
+        and a["uppercase"] == b["uppercase"]
+    )
+
+
+def reference(values: list[float]) -> float:
+    """La valeur de référence d'une mesure répétée : la médiane, ou la **première** quand il n'y en a que deux.
+
+    Deux mesures n'ont pas de médiane : la moyenne mettrait les deux éléments
+    à côté de leur place (mesuré sur un modèle Canva dont le second élément
+    est décalé de 4 mm par rapport au premier). Le premier élément est la
+    référence du dessin ; au-delà de deux, la médiane écarte l'exception.
+    """
+    if len(values) == 2:  # noqa: PLR2004
+        return float(values[0])
+    return med(values)
 
 
 def collapse_spaced(text: str) -> str:
@@ -97,6 +166,8 @@ class SpecBuilder:
         labels: Json,
         fonts: FontSet,
         served: dict[str, tuple[str, int, bool]],
+        *,
+        substituted: frozenset[str] = frozenset(),
     ) -> None:
         """
         Args:
@@ -105,6 +176,8 @@ class SpecBuilder:
         """
         self.doc = doc
         self.page = page
+        #: Familles de la source servies par substitution (clés de `family_match_key`).
+        self.substituted = substituted
         self.fonts = fonts
         self.served = served
         self.meta = {
@@ -301,22 +374,52 @@ class SpecBuilder:
     def section_spec(  # noqa: PLR0912, PLR0915 - mesure d'un gabarit, emplacement par emplacement
         self, s: Json, col_x: float, prev_bottom: float, styles: dict[str, Json], sample: Json
     ) -> Json:
-        """Le gabarit d'une rubrique : titre, emplacements, puces, décor."""
+        """Le gabarit d'une rubrique : titre, emplacements, puces, décor, colonne latérale.
+
+        `s["title"]` peut être vide (rubrique sans titre : un profil, des
+        coordonnées sous la photo) ; `s["side_roles"]` nomme les rôles posés
+        dans une colonne latérale à gauche du contenu (frise chronologique) :
+        leurs lignes se mesurent à part (`side`), le reste comme avant.
+        """
         kind = s["kind"]
         title = s["title"]
-        self._col_right = max([ln.right for ln in s["lines"]] + [t.right for t in title])
-        styles.setdefault("section_title", self.style_of(title))
-        lines = sorted(s["lines"], key=lambda ln: (ln.y, ln.x))
-        title_bottom = title[-1].y + (styles["section_title"]["pitch_mm"] or title[-1].h)
+        side_roles = frozenset(s.get("side_roles") or ())
+        all_lines = sorted(s["lines"], key=lambda ln: (ln.y, ln.x))
+        lines = [ln for ln in all_lines if ln.role not in side_roles]
+        side_lines = [ln for ln in all_lines if ln.role in side_roles]
+        self._col_right = max([ln.right for ln in all_lines] + [t.right for t in title])
+        top = min([t.y for t in title] + [ln.y for ln in all_lines])
+        title_key: str | None = None
+        if title:
+            # Un style de titre partagé ; une rubrique dont le titre diffère
+            # (blanc sur une colonne sombre, foncé à côté) garde le sien.
+            own = self.style_of(title)
+            shared = styles.setdefault("section_title", own)
+            title_key = "section_title"
+            if not same_style(own, shared):
+                title_key = f"{kind}.section_title"
+                styles.setdefault(title_key, own)
+            title_bottom = title[-1].y + (styles[title_key]["pitch_mm"] or title[-1].h)
+        else:
+            title_bottom = top
+        # Les étiquettes fixes du modèle (« Phone », « Email : ») ne sont pas des
+        # données : elles se mesurent à part et s'attachent au champ qu'elles annoncent.
+        label_lines = [ln for ln in lines if ln.role == "label"]
+        lines = [ln for ln in lines if ln.role != "label"]
         markers = self.markers_for(lines)
         elements = self.elements(lines, markers)
-        bottom = max([title_bottom] + [e["bottom"] for e in elements])
+        labels = self.attach_labels(self.elements(label_lines, {}), elements) if label_lines else {}
+        side_elements = self.elements(side_lines, {}) if side_lines else []
+        bottom = max([title_bottom] + [e["bottom"] for e in elements + side_elements])
         s["bottom"] = bottom
+        s["elements"] = elements
         spec: Json = {
             "kind": kind,
             "title_sample": " ".join(t.text for t in title),
-            "margin_top_mm": round(title[0].y - prev_bottom, 2),
-            "title_dx_mm": round(title[0].x - col_x, 2),
+            "title_style": title_key,
+            "untitled": not title,
+            "margin_top_mm": round(top - prev_bottom, 2),
+            "title_dx_mm": round(title[0].x - col_x, 2) if title else 0.0,
             "title_w_mm": round(max(t.w for t in title) + 1.5, 2) if len(title) > 1 else None,
             # Un titre sur plusieurs lignes garde son interligne mesuré.
             "title_pitch_mm": round(med([b.y - a.y for a, b in itertools.pairwise(title)]), 3)
@@ -326,9 +429,17 @@ class SpecBuilder:
         }
         groups: dict[int, list[Json]] = defaultdict(list)
         for e in elements:
-            groups[e["item"] if kind in ITEM_SECTIONS else 0].append(e)
+            groups[e["item"] if is_item_kind(kind) else 0].append(e)
+        side_groups: dict[int, list[Json]] = defaultdict(list)
+        for e in side_elements:
+            side_groups[e["item"] if is_item_kind(kind) else 0].append(e)
+        # Les éléments principaux d'abord : une pastille centrée sur une ligne
+        # composée s'attache au champ du contenu, pas à celui de la colonne latérale.
+        all_groups: dict[int, list[Json]] = defaultdict(list)
+        for no in sorted(set(groups) | set(side_groups)):
+            all_groups[no] = groups.get(no, []) + side_groups.get(no, [])
         by_role: dict[str, list[Json]] = defaultdict(list)
-        for e in elements:
+        for e in elements + side_elements + [lb for lb, _ in labels.values()]:
             by_role[e["role"]].append(e)
         for role, es in by_role.items():
             skey = f"{kind}.{role}"
@@ -339,19 +450,60 @@ class SpecBuilder:
                 b.y - a.y for e in es for a, b in zip(e["lines"], e["lines"][1:], strict=False)
             ]
             st["pitch_mm"] = round(med(pitches), 3) if pitches else None
+            word_spacing = self.word_spacing(es, st)
+            if word_spacing is not None:
+                st["word_spacing_mm"] = word_spacing
             styles[skey] = st
         slots: dict[str, Json] = {}
         gaps_item: list[float] = []
         first_gap: list[float] = []
         previous_item_bottom: float | None = None
-        for item_no in sorted(groups):
-            elems = groups[item_no]
-            rows = self.rows(elems)
-            if previous_item_bottom is None:
-                first_gap.append(rows[0]["top"] - title_bottom)
+        previous_item_top: float | None = None
+        # Des éléments côte à côte (deux références en colonnes) : une grille
+        # d'éléments au pas mesuré ; chaque emplacement se mesure depuis la
+        # colonne de son élément, et deux voisins de rangée n'ont pas d'écart.
+        item_grid = self.item_grid(all_groups) if is_item_kind(kind) else {}
+        origins: dict[int, float] = item_grid.pop("origins", {})
+        spec.update(item_grid)
+        for item_no in sorted(all_groups):
+            origin_x = col_x + origins.get(item_no, 0.0)
+            rows = self.rows(groups[item_no]) if groups.get(item_no) else []
+            # Une liste en grille (deux entrées par ligne) : une entrée par rangée,
+            # le nombre de colonnes se mesure ensuite (`grid_spec`).
+            rows = (
+                [
+                    {"top": e["top"], "bottom": e["bottom"], "elems": [e]}
+                    for r in rows
+                    for e in r["elems"]
+                ]
+                if any(
+                    all(e["role"] in LIST_ROLES for e in r["elems"]) and len(r["elems"]) > 1
+                    for r in rows
+                )
+                else rows
+            )
+            all_rows = self.rows(all_groups[item_no])
+            item_top = rows[0]["top"] if rows else all_rows[0]["top"]
+            same_row = previous_item_top is not None and abs(item_top - previous_item_top) < 1.5  # noqa: PLR2004
+            if same_row:
+                pass
+            elif previous_item_bottom is None:
+                first_gap.append(item_top - title_bottom)
             else:
-                gaps_item.append(rows[0]["top"] - previous_item_bottom)
-            prev = rows[0]["top"]
+                gaps_item.append(item_top - previous_item_bottom)
+            for row in rows:
+                # Une étiquette au-dessus de la valeur : la rangée commence à l'étiquette.
+                label = labels.get(id(row["elems"][0]))
+                if label is not None and not label[1]:
+                    row["top"] = min(row["top"], label[0]["top"])
+            if rows and not same_row:
+                item_top = rows[0]["top"]
+                if previous_item_bottom is None:
+                    first_gap[-1] = item_top - title_bottom
+                else:
+                    gaps_item[-1] = item_top - previous_item_bottom
+            prev = item_top
+            prev_top = -1e9
             prev_role: str | None = None
             for row in rows:
                 key = "+".join(e["role"] for e in row["elems"])
@@ -367,13 +519,24 @@ class SpecBuilder:
                     },
                 )
                 if prev_role == key:
-                    slot["repeat"].append(row["top"] - prev)
+                    if row["top"] > prev_top + 0.5:  # pas la même rangée d'une grille
+                        slot["repeat"].append(row["top"] - prev)
                 elif prev_role is not None:
                     slot["margins"].append(row["top"] - prev)
-                slot["dx"].append(row["elems"][0]["x"] - col_x)
+                slot.setdefault("xs", []).append(row["elems"][0]["x"])
+                label = labels.get(id(row["elems"][0]))
+                if label is not None:
+                    slot.setdefault(
+                        "label", self.label_spec(label[0], row["elems"][0], label[1], origin_x)
+                    )
+                slot["dx"].append(
+                    (label[0]["x"] if label is not None and label[1] else row["elems"][0]["x"])
+                    - origin_x
+                )
                 if len(row["elems"]) > 1:
                     a, b = row["elems"][0], row["elems"][1]
                     slot["gaps"].append(b["x"] - a["right"])
+                    slot.setdefault("rights", []).append(b["right"])
                     sep = self.row_separator(a, b)
                     if sep:
                         slot["separator"] = sep
@@ -381,29 +544,257 @@ class SpecBuilder:
                     if len(e["lines"]) > 1:
                         slot["align"].append(self.alignment(e["lines"]))
                 prev = row["bottom"]
+                prev_top = row["top"]
                 prev_role = key
-            previous_item_bottom = prev
+            item_bottom = max(r["bottom"] for r in all_rows)
+            previous_item_bottom = (
+                max(previous_item_bottom, item_bottom)
+                if same_row and previous_item_bottom is not None
+                else item_bottom
+            )
+            previous_item_top = item_top
         spec["first_gap_mm"] = round(med(first_gap), 2)
-        spec["item_gap_mm"] = round(med(gaps_item, 0.0), 2)
+        # Deux éléments côte à côte (deux références en colonnes) donneraient un
+        # écart négatif : le gabarit les empile, à l'écart nul.
+        spec["item_gap_mm"] = round(max(med(gaps_item, 0.0), 0.0), 2)
         spec["slots"] = [
             {
                 "key": k,
                 "roles": v["roles"],
                 "margin_top_mm": round(med(v["margins"], 0.0), 2),
                 "repeat_margin_mm": round(med(v["repeat"], 0.0), 2) if v["repeat"] else None,
-                "dx_mm": round(med(v["dx"]), 2),
+                # Une grille : la première colonne ; sinon la référence des mesures.
+                "dx_mm": round(min(v["dx"]) if self.grid_spec(v) else reference(v["dx"]), 2),
                 "gap_mm": round(med(v["gaps"]), 2) if v["gaps"] else None,
-                "align": "justify" if v["align"].count("justify") * 2 > len(v["align"]) else "left",
+                "align": majority_alignment(v["align"]),
                 "separator": v.get("separator"),
+                "label": v.get("label"),
+                # Le second champ d'une ligne composée au fer à droite (dates à la
+                # marge) : mêmes droites, écarts qui varient.
+                "flush_right": bool(
+                    len(v.get("rights", [])) >= 2  # noqa: PLR2004
+                    and max(v["rights"]) - min(v["rights"]) < 1.0
+                    and max(v["gaps"]) - min(v["gaps"]) > 2.0  # noqa: PLR2004
+                ),
+                **self.grid_spec(v),
             }
             for k, v in slots.items()
         ]
         spec["slot_order"] = list(slots.keys())
+        spec["side"] = self.side_spec(side_groups, groups, col_x) if side_elements else None
         spec["marker"] = self.marker_spec(markers, lines)
         spec["icons"] = self.icons_for(lines) if kind == "contact" else {}
-        spec["decorations"] = self.anchored_decorations(s, groups, col_x)
-        self.fill_sample(kind, groups, sample)
+        left_bound = col_x - 8
+        if spec["side"] is not None:
+            left_bound = min(left_bound, col_x + spec["side"]["dx_mm"] - 3)
+        spec["decorations"] = self.anchored_decorations(s, all_groups, col_x, left_bound=left_bound)
+        if kind in LIST_KINDS:
+            # Les barres de niveau d'une liste (langues) sont celles des entrées
+            # de l'exemple : une personne a d'autres langues, d'autres niveaux.
+            for d in spec["decorations"]:
+                if (
+                    d["kind"] in ("rect", "curve")
+                    and d["h_mm"] <= LEVEL_BAR_MAX_H_MM
+                    and d["w_mm"] >= LEVEL_BAR_MIN_W_MM
+                ):
+                    d["sample_only"] = True
+        self.fill_sample(kind, all_groups, sample, styles)
         return spec
+
+    def word_spacing(self, elements: list[Json], st: Json) -> float | None:
+        """Le blanc ajouté à chaque espace d'un paragraphe justifié, lu sur sa dernière ligne.
+
+        La dernière ligne n'est pas justifiée : sa largeur, moins celle que la
+        police servie lui donne, répartie sur ses espaces, dit l'espacement des
+        mots du dessinateur (Canva : 0,5 mm sur un corps de 8 pt). Sans lui, le
+        navigateur remonte un mot que la source avait replié.
+        """
+        extras: list[float] = []
+        for e in elements:
+            lines = e["lines"]
+            if len(lines) < 2 or self.alignment(lines) != "justify":  # noqa: PLR2004
+                continue
+            if any(family_match_key(ln.raw.get("font") or "") in self.substituted for ln in lines):
+                # Une police substituée n'a pas les largeurs de la source : le
+                # blanc mesuré mêlerait l'espacement des mots et l'écart de chasse.
+                continue
+            last = lines[-1]
+            spaces = last.text.strip().count(" ")
+            if spaces < 3:  # noqa: PLR2004
+                continue
+            extras.append((last.w - self.fonts.width_mm(last.text, st)) / spaces)
+        if not extras:
+            return None
+        extra = med(extras)
+        return round(extra, 2) if WORD_SPACING_MIN_MM <= extra <= WORD_SPACING_MAX_MM else None
+
+    @staticmethod
+    def item_sizes(kind: str, elements: list[Json], styles: dict[str, Json]) -> dict[str, float]:
+        """Les corps d'un élément de l'exemple qui s'écartent de leur style (> 10 %).
+
+        Un modèle Canva dont la troisième expérience est en 5,5 pt quand les
+        autres sont en 7,9 pt : l'exemple se rend à son corps, le gabarit
+        d'une personne garde celui du style.
+        """
+        sizes: dict[str, float] = {}
+        by_role: dict[str, list[float]] = defaultdict(list)
+        for e in elements:
+            by_role[e["role"]].extend(float(ln.raw["size"]) for ln in e["lines"])
+        for role, values in by_role.items():
+            st = styles.get(f"{kind}.{role}")
+            if st is None:
+                continue
+            size = med(values)
+            if abs(size - float(st["size_pt"])) > SIZE_DEPARTURE * float(st["size_pt"]):
+                sizes[role] = round(size, 2)
+        return sizes
+
+    @staticmethod
+    def item_grid(groups: dict[int, list[Json]]) -> Json:
+        """Des éléments côte à côte : le nombre de colonnes, leur pas, l'origine de chaque élément.
+
+        Deux éléments d'une même rangée ont le même haut (à 1,5 mm) et des
+        gauches écartées d'au moins 10 mm. Rend `{}` sans rangée partagée.
+        """
+        tops = {no: min(e["top"] for e in es) for no, es in groups.items() if es}
+        lefts = {no: min(e["x"] for e in es) for no, es in groups.items() if es}
+        rows: list[list[int]] = []
+        for no in sorted(tops, key=lambda n: (tops[n], lefts[n])):
+            row = next((r for r in rows if abs(tops[r[0]] - tops[no]) < 1.5), None)  # noqa: PLR2004
+            if row is not None and lefts[no] - lefts[row[-1]] >= 10.0:  # noqa: PLR2004
+                row.append(no)
+            else:
+                rows.append([no])
+        columns = max((len(r) for r in rows), default=0)
+        if columns < 2:  # noqa: PLR2004
+            return {}
+        x0 = min(lefts.values())
+        pitches = [lefts[b] - lefts[a] for r in rows for a, b in itertools.pairwise(r)]
+        return {
+            "item_columns": columns,
+            "item_pitch_mm": round(med(pitches), 2),
+            "origins": {no: left - x0 for no, left in lefts.items()},
+        }
+
+    @staticmethod
+    def grid_spec(slot: Json) -> Json:
+        """Une liste en colonnes : le nombre de colonnes et leur pas, d'après les abscisses des entrées."""
+        if not slot["roles"] or slot["roles"][0] not in LIST_ROLES:
+            return {}
+        columns: list[float] = []
+        for x in sorted(slot.get("xs", [])):
+            if not columns or x - columns[-1] > 2.0:  # noqa: PLR2004
+                columns.append(x)
+        if len(columns) < 2:  # noqa: PLR2004
+            return {}
+        return {
+            "columns": len(columns),
+            "column_pitch_mm": round(med([b - a for a, b in itertools.pairwise(columns)]), 2),
+        }
+
+    @staticmethod
+    def attach_labels(
+        label_elements: list[Json], elements: list[Json]
+    ) -> dict[int, tuple[Json, bool]]:
+        """Chaque étiquette → le champ qu'elle annonce : sur sa ligne (en ligne) ou juste au-dessous.
+
+        Rend `{id(élément): (étiquette, en_ligne)}`.
+        """
+        out: dict[int, tuple[Json, bool]] = {}
+        for lb in label_elements:
+            below = [
+                e
+                for e in elements
+                if e["item"] == lb["item"] and e["top"] >= lb["top"] - 1.2 and id(e) not in out
+            ]
+            if not below:
+                continue
+            target = min(below, key=lambda e: (round(e["top"] - lb["top"], 1), e["x"]))
+            out[id(target)] = (lb, abs(target["top"] - lb["top"]) < 1.2)  # noqa: PLR2004
+        return out
+
+    @staticmethod
+    def label_spec(label: Json, target: Json, inline: bool, col_x: float) -> Json:
+        """L'étiquette d'un emplacement : son texte, en ligne (écart) ou au-dessus (pas)."""
+        text = " ".join(ln.text for ln in label["lines"])
+        if inline:
+            return {
+                "text": text,
+                "inline": True,
+                "gap_mm": round(target["x"] - label["right"], 2),
+                "dx_mm": round(label["x"] - col_x, 2),
+            }
+        return {
+            "text": text,
+            "inline": False,
+            "pitch_mm": round(target["top"] - label["top"], 2),
+            "dx_mm": round(label["x"] - col_x, 2),
+        }
+
+    def side_spec(
+        self, side_groups: dict[int, list[Json]], groups: dict[int, list[Json]], col_x: float
+    ) -> Json:
+        """La colonne latérale d'une frise : où elle est, son alignement, ses emplacements.
+
+        `dx_mm` est négatif (à gauche du contenu) ; `top_offset_mm` est l'écart
+        entre le haut de la première ligne latérale et celui de la première
+        ligne du contenu d'un même élément ; les marges entre emplacements se
+        mesurent comme celles du contenu.
+        """
+        all_side = [e for es in side_groups.values() for e in es]
+        x0 = min(e["x"] for e in all_side)
+        x1 = max(e["right"] for e in all_side)
+        rights = [e["right"] for e in all_side]
+        lefts = [e["x"] for e in all_side]
+        align = "left"
+        if max(rights) - min(rights) < 1.0 and max(lefts) - min(lefts) >= 1.0:
+            align = "right"
+        slots: dict[str, Json] = {}
+        offsets: list[float] = []
+        for no, es in side_groups.items():
+            rows = self.rows(es)
+            main = groups.get(no) or []
+            main_top = min(e["top"] for e in main) if main else rows[0]["top"]
+            offsets.append(rows[0]["top"] - main_top)
+            prev: float | None = None
+            prev_key: str | None = None
+            for row in rows:
+                key = "+".join(e["role"] for e in row["elems"])
+                slot = slots.setdefault(
+                    key,
+                    {
+                        "key": key,
+                        "roles": [e["role"] for e in row["elems"]],
+                        "margins": [],
+                        "repeat": [],
+                    },
+                )
+                if prev is not None and prev_key == key:
+                    slot["repeat"].append(row["top"] - prev)
+                elif prev is not None:
+                    slot["margins"].append(row["top"] - prev)
+                prev = row["bottom"]
+                prev_key = key
+        main_xs = [e["x"] for es in groups.values() for e in es]
+        return {
+            "dx_mm": round(x0 - col_x, 2),
+            "w_mm": round(x1 - x0 + 0.5, 2),
+            "align": align,
+            "top_offset_mm": round(med(offsets), 2),
+            # Où commence le contenu, depuis la colonne (le titre de la rubrique
+            # peut être plus à gauche que la colonne latérale).
+            "main_dx_mm": round((min(main_xs) if main_xs else x1 + 2.0) - col_x, 2),
+            "slots": [
+                {
+                    "key": v["key"],
+                    "roles": v["roles"],
+                    "margin_top_mm": round(med(v["margins"], 0.0), 2),
+                    "repeat_margin_mm": round(med(v["repeat"], 0.0), 2) if v["repeat"] else None,
+                }
+                for v in slots.values()
+            ],
+            "slot_order": list(slots),
+        }
 
     def row_separator(self, a: Json, b: Json) -> Json | None:
         """Un filet vertical entre deux champs d'une même ligne (« Entreprise | 2016 »)."""
@@ -424,8 +815,18 @@ class SpecBuilder:
         return None
 
     def alignment(self, lines: list[Line]) -> str:
-        """Justifié si les lignes non finales touchent toutes la même marge droite."""
+        """À droite ou centré si les lignes le partagent (gauches dispersées) ; justifié si
+        les lignes non finales touchent toutes la même marge droite ; à gauche sinon."""
         right = max(ln.right for ln in lines)
+        lefts = [ln.x for ln in lines]
+        if max(lefts) - min(lefts) >= 2.0:  # noqa: PLR2004
+            rights = [ln.right for ln in lines]
+            if max(rights) - min(rights) < 0.8:  # noqa: PLR2004
+                return "right"
+            centers = [ln.x + ln.w / 2 for ln in lines]
+            if max(centers) - min(centers) < 1.0:
+                return "center"
+            return "left"
         if len(lines) == 2:  # noqa: PLR2004
             return (
                 "justify"
@@ -462,17 +863,28 @@ class SpecBuilder:
             "color": d["fill"],
             "dx_mm": round(med([m["x"] - by_id[k].x for k, m in ms]), 2),
             "dy_mm": round(med([m["y"] + m["h"] / 2 - by_id[k].y for k, m in ms]), 2),
+            # Les rôles que la puce marque : une liste, ou la première ligne d'un
+            # élément (une pastille devant l'année d'une expérience).
+            "roles": sorted({by_id[k].role for k in markers}),
         }
 
     def elements(self, lines: list[Line], markers: dict[str, Json]) -> list[Json]:
         """Lignes consécutives d'un même rôle et d'un même élément → un élément (paragraphe, puce)."""
         out: list[Json] = []
         for ln in sorted(lines, key=lambda line: (line.item, line.y, line.x)):
+            # La suite d'un paragraphe partage sa marge gauche, ou sa marge
+            # droite (au fer à droite), ou son axe (centré).
             last = next(
                 (
                     e
                     for e in reversed(out)
-                    if e["item"] == ln.item and e["role"] == ln.role and abs(e["x"] - ln.x) < 1.5  # noqa: PLR2004
+                    if e["item"] == ln.item
+                    and e["role"] == ln.role
+                    and (
+                        abs(e["x"] - ln.x) < 1.5  # noqa: PLR2004
+                        or abs(e["lines"][-1].right - ln.right) < 1.5  # noqa: PLR2004
+                        or abs(e["lines"][-1].x + e["lines"][-1].w / 2 - (ln.x + ln.w / 2)) < 1.5  # noqa: PLR2004
+                    )
                 ),
                 None,
             )
@@ -480,7 +892,8 @@ class SpecBuilder:
                 last is not None
                 and 0 < ln.y - last["lines"][-1].y < ln.h * 2.0
                 and ln.id not in markers
-                and ln.role != "item_dates"
+                # Une date, une étiquette : jamais la suite de la précédente.
+                and ln.role not in ("item_dates", "label")
                 # Une liste sans puces (compétences, langues, intérêts) : une
                 # ligne = une entrée ; avec des puces, la ligne sans puce continue.
                 and not (ln.role in LIST_ROLES and not markers)
@@ -522,12 +935,26 @@ class SpecBuilder:
         return rows
 
     def anchored_decorations(  # noqa: PLR0912 - chaque forme est rangée selon ce qu'elle borde
-        self, s: Json, groups: dict[int, list[Json]], col_x: float
+        self,
+        s: Json,
+        groups: dict[int, list[Json]],
+        col_x: float,
+        *,
+        left_bound: float | None = None,
     ) -> list[Json]:
-        """Filets et formes de la rubrique : ancrés à l'élément qu'ils bordent, sinon à la rubrique."""
+        """Filets et formes de la rubrique : ancrés à l'élément qu'ils bordent, sinon à la rubrique.
+
+        `left_bound` : jusqu'où à gauche de la colonne une forme appartient
+        encore à la rubrique (la colonne latérale d'une frise l'élargit).
+        """
         out: list[Json] = []
-        top = s["title"][0].y
+        top = (
+            s["title"][0].y
+            if s["title"]
+            else min((e["top"] for es in groups.values() for e in es), default=s["top"])
+        )
         bottom = s["bottom"]
+        left = col_x - 8 if left_bound is None else left_bound
         items = [
             (
                 no,
@@ -546,8 +973,8 @@ class SpecBuilder:
             if i in self.used:
                 continue
             cx = d["x"] + d["w"] / 2
-            near_column = col_x - 8 <= cx <= col_x + 30 or col_x - 8 <= d["x"] <= col_x + 5
-            if not near_column and not any(col_x - 8 <= cx <= e[3] + 3 for e in items):
+            near_column = left <= cx <= col_x + 30 or left <= d["x"] <= col_x + 5
+            if not near_column and not any(left <= cx <= e[3] + 3 for e in items):
                 continue
             if not (top - 3 <= d["y"] and d["y"] + d["h"] <= bottom + 14):
                 continue
@@ -620,6 +1047,7 @@ class SpecBuilder:
                 and d["y"] < ln.bottom + 1
                 and d["y"] + d["h"] > ln.y - 1
                 and max(d["w"], d["h"]) < 8  # noqa: PLR2004
+                and min(d["w"], d["h"]) >= 0.5  # noqa: PLR2004 - un filet n'est pas un pictogramme
             ]
             if not near:
                 continue
@@ -738,7 +1166,8 @@ class SpecBuilder:
         styles["header.headline"] = style
         h = style["box_h_mm"]
         gap = max(2.0, 0.35 * name_style["box_h_mm"])
-        y = min(last["y_mm"] + name_style["box_h_mm"] + gap, first_top - h - 4)
+        under_name = last["y_mm"] + name_style["box_h_mm"] + gap
+        y = min(under_name, first_top - h - 4)
         x = last["x_mm"]
         out: Json = {
             "field": "headline",
@@ -747,6 +1176,11 @@ class SpecBuilder:
             "w_mm": None,
             "synthesized": True,
         }
+        if y < under_name - 1.0 and y < last["y_mm"] + name_style["box_h_mm"]:
+            # Pas de place entre le nom et la première bande (le profil suit le
+            # nom) : le poste visé ouvre le flux, et pousse la première bande.
+            out.update(flow=True, y_mm=round(first_top, 2), gap_mm=round(gap, 2))
+            return out
         center = last["x_mm"] + (last.get("w_mm") or 0) / 2
         if last.get("w_mm") and x > 20 and abs(center - self.pw / 2) < 4:  # noqa: PLR2004
             out.update(align="center", cx_mm=round(center, 2))
@@ -763,11 +1197,15 @@ class SpecBuilder:
         out["y_mm"] = round(y, 2)
         return out
 
-    def photo_spec(self) -> Json | None:
-        """Le cadre de la photo (détourage réel), sa forme et la position de l'image d'exemple."""
-        if not self.page.images:
-            return None
-        img = max(self.page.images, key=lambda i: i["w"] * i["h"])
+    def photo_spec(self, img: Json | None = None) -> Json | None:
+        """Le cadre de la photo (détourage réel), sa forme et la position de l'image d'exemple.
+
+        `img` : l'image qui est la photo ; à défaut la plus grande de la page.
+        """
+        if img is None:
+            if not self.page.images:
+                return None
+            img = max(self.page.images, key=lambda i: i["w"] * i["h"])
         frame = img.get("clip") or {k: img[k] for k in ("x", "y", "w", "h")}
         if frame["w"] > self.pw * 0.9:
             frame = {k: img[k] for k in ("x", "y", "w", "h")}
@@ -786,6 +1224,15 @@ class SpecBuilder:
             "h_mm": round(fh, 2),
             "shape": shape,
             "sample_object_position": f"{ox}% {oy}%",
+            # L'image d'exemple à son échelle réelle dans le cadre (Canva zoome
+            # une grande photo dans un petit cadre) ; la photo d'une personne,
+            # elle, couvre le cadre, centrée.
+            "sample_image": {
+                "x_mm": round(img["x"] - fx, 2),
+                "y_mm": round(img["y"] - fy, 2),
+                "w_mm": round(img["w"], 2),
+                "h_mm": round(img["h"], 2),
+            },
             "sample_file": "sample_photo.png",
         }
 
@@ -814,15 +1261,47 @@ class SpecBuilder:
                         anchor="band", band=b_i, dy_mm=round(d["y"] - b["bottom_sample"], 2)
                     )
                     break
+            self.rasterize_path(i, d, entry)
             out.append(entry)
         return out
 
+    def rasterize_path(self, index: int, d: Json, entry: Json) -> None:
+        """Un tracé complexe et grand (le cadre d'un QR code, une vague) se dessine en image.
+
+        Les moteurs ne tracent que rectangles, ronds et filets : un tracé carré
+        mais non rond devenait un disque plein (mesuré sur cv3). Rastérisé
+        depuis la source, à condition qu'aucun texte ne passe dessous (sinon
+        le texte y serait deux fois). S'il entoure une image (le QR code de
+        l'exemple), il ne vaut que pour l'exemple.
+        """
+        if d["kind"] != "curve" or max(d["w"], d["h"]) < RASTER_PATH_MM:
+            return
+        if self.doc.is_round((d["x"], d["y"], d["w"], d["h"])):
+            return
+        if any(overlaps(d, ln.raw) for ln in self.lines):
+            return
+        name = f"shape_{index}.png"
+        self.assets[name] = self.doc.render_png(dpi=300, box_mm=(d["x"], d["y"], d["w"], d["h"]))
+        entry["asset"] = name
+        if any(overlaps(d, im) for im in self.page.images):
+            entry["sample_only"] = True
+
     # ------------------------------------------------------------------ contenu d'exemple
-    def fill_sample(self, kind: str, groups: dict[int, list[Json]], sample: Json) -> None:
+    def fill_sample(  # noqa: PLR0912 - une branche par genre de rubrique
+        self,
+        kind: str,
+        groups: dict[int, list[Json]],
+        sample: Json,
+        styles: dict[str, Json] | None = None,
+    ) -> None:
         """Le contenu d'exemple de la rubrique, au format du CV."""
 
         def joined(e: Json) -> str:
-            return " ".join(ln.text for ln in e["lines"])
+            # Un intitulé écrit sur deux lignes (« Licence… » / « Université… »)
+            # garde son retour à la ligne : l'exemple le rend tel quel, quelle
+            # que soit la boîte ; un paragraphe se replie dans la sienne.
+            sep = "\n" if e["role"] in KEEP_BREAKS else " "
+            return sep.join(ln.text for ln in e["lines"])
 
         def text(es: list[Json], role: str) -> list[str]:
             return [joined(e) for e in es if e["role"] == role]
@@ -842,18 +1321,31 @@ class SpecBuilder:
             sample["summary"] = " ".join(
                 t for es in groups.values() for t in text(es, "summary") + text(es, "item_text")
             )
-        elif kind in ("experiences", "educations", "projects", "references"):
+        elif is_item_kind(kind):
             for no in sorted(groups):
                 es = groups[no]
-                item = {
+                item: Json = {
                     "title_raw": " ".join(text(es, "item_title")),
                     "subtitle_raw": " ".join(text(es, "item_subtitle")),
                     "dates_raw": " ".join(text(es, "item_dates")),
                     "location": " ".join(text(es, "item_location")) or None,
                     "bullets": text(es, "bullet"),
-                    "description": " ".join(text(es, "item_text")) or None,
+                    "description": " ".join(text(es, "item_text") + text(es, "other")) or None,
                 }
-                sample.setdefault(kind, []).append(item)
+                # Les coordonnées d'un élément (une référence : téléphone, courriel)
+                # restent dans l'exemple, à leur rôle.
+                extra = {r: " ".join(text(es, r)) for r in CONTACT_ROLES if text(es, r)}
+                if extra:
+                    item["extra"] = extra
+                sizes = self.item_sizes(kind, es, styles or {})
+                if sizes:
+                    item["sizes"] = sizes
+                if kind.startswith(OTHER_PREFIX):
+                    # Une rubrique libre garde son titre et ses éléments tels quels.
+                    others = sample.setdefault("others", {})
+                    others.setdefault(kind, {"title": "", "items": []})["items"].append(item)
+                else:
+                    sample.setdefault(kind, []).append(item)
         elif kind in ("skills", "languages", "interests"):
             role = {"skills": "skill", "languages": "language", "interests": "interest"}[kind]
             for es in groups.values():

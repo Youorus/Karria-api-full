@@ -23,6 +23,7 @@ from typing import Any, Final
 import numpy as np
 from numpy.typing import NDArray
 
+from karria.modules.documents.domain.fonts import family_match_key, substituted_families
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.infrastructure.pdf_reader import (
     PdfDocument,
@@ -89,9 +90,7 @@ def tolerant_ssim(a: Gray, b: Gray, tile: int = 64, radius: int = 3) -> float:
 
 
 def _family(font: str) -> str:
-    f = re.split(r"[-,_ ]", base_font_name(font))[0]
-    # LibreOffice nomme l'instance par défaut d'une police variable « <Famille>Roman ».
-    return re.sub(r"roman$", "", f.lower())
+    return family_match_key(base_font_name(font))
 
 
 def words(doc: PdfDocument, index: int = 0) -> list[dict[str, Any]]:
@@ -144,12 +143,19 @@ def structural(
     src: list[dict[str, Any]],
     ren: list[dict[str, Any]],
     font_map: dict[str, str] | None = None,
+    substituted: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Appariement des mots source ↔ rendu.
 
-    `font_map` : la famille servie pour chaque famille de la source (substitutions
-    déclarées) ; sans lui, un mot n'est « de la bonne police » que s'il porte la
-    même famille que dans la source.
+    Deux règles de concordance de police, qui coexistent (ADR-0036, ADR-0037) :
+
+    - `font_map` : la famille servie pour chaque famille de la source (substitutions
+      déclarées, `served_families`) ; un mot est « de la bonne police » s'il porte
+      la famille servie — sans lui, la même famille que dans la source ;
+    - `substituted` : les familles de la source (clé de `_family`) servies par une
+      autre famille, **déclarée** : un mot d'une telle famille compte comme
+      concordant — la substitution est jugée dans la revue (plancher SSIM dédié
+      dans la porte), pas ici. Une famille absente sans déclaration reste une faute.
     """
     by_text: dict[str, list[dict[str, Any]]] = {}
     for w in ren:
@@ -166,7 +172,7 @@ def structural(
         matched += 1
         dists.append(d)
         close += d <= 2.0  # noqa: PLR2004
-        font_ok += best["font"] == expected.get(w["font"], w["font"])
+        font_ok += best["font"] == expected.get(w["font"], w["font"]) or w["font"] in substituted
         size_ok += abs(best["size"] - w["size"]) <= 0.6  # noqa: PLR2004
         color_ok += best["color"] == w["color"]
     n = max(len(src), 1)
@@ -217,16 +223,19 @@ def measure(
     *,
     dpi: int = 72,
     font_map: dict[str, str] | None = None,
+    substituted: frozenset[str] = frozenset(),
 ) -> Fidelity:
     """Compare la première page d'un rendu à celle de la source.
 
     `font_map` (`served_families`) : les substitutions déclarées, pour que la
     concordance de police juge la famille servie ; sans lui, la famille source.
+    `substituted` : voir `structural` ; rapporté dans `extra` (la porte y lit son
+    plancher SSIM sous substitution).
     """
     with PdfDocument(source) as s, PdfDocument(render) as r:
         a = s.render_gray(0, dpi=dpi).astype(np.float64)
         b = r.render_gray(0, dpi=dpi).astype(np.float64)
-        st = structural(words(s), words(r), font_map)
+        st = structural(words(s), words(r), font_map, substituted)
         return Fidelity(
             ssim=ssim(a, b),
             ssim_tolerant=tolerant_ssim(a, b),
@@ -239,7 +248,8 @@ def measure(
             decoration=decoration_recall(visible_shapes(s), visible_shapes(r)),
             pages_source=s.page_count,
             pages_render=r.page_count,
+            extra={"substituted_families": sorted(substituted)} if substituted else {},
         )
 
 
-__all__ = ["hex_color", "measure", "served_families"]
+__all__ = ["hex_color", "measure", "served_families", "substituted_families"]

@@ -2,8 +2,8 @@
 
 Décisions : ADR-0020 (validée par Marc le 2026-10-24), ADR-0029 (rendu HTML ancré),
 ADR-0030 (lettre), ADR-0031 (envoi par e-mail), ADR-0036 (lettre appariée ou lettre
-sobre). Contrats : `karria_app/docs/contrat-api-modeles.md` et
-`docs/contrat-api-documents.md`.
+sobre), ADR-0037 (ingestion v2 : le plan de mise en page dessiné par le modèle de vision).
+Contrats : `karria_app/docs/contrat-api-modeles.md` et `docs/contrat-api-documents.md`.
 
 ## Ce qu'il possède
 
@@ -49,9 +49,14 @@ sobre). Contrats : `karria_app/docs/contrat-api-modeles.md` et
 ## La chaîne
 
 ```
-PDF du modèle ──► pdf_reader (pdfplumber + pypdfium2) ──► fonts (résolution)
-              ──► llm.VisionLineLabeler (rôle des lignes, tâche template_extract)
-              ──► spec_builder ──► spécification (JSON, version 1)
+PDF du modèle ──► analyzer.prepare : pdf_reader (pdfplumber + pypdfium2), fonts (résolution par famille)
+              ──► layout_planner.VisionLayoutPlanner (le PLAN : en-tête, bandes, colonnes, rubriques,
+                  éléments et rôles, colonne latérale, ancrage des décorations, fiche de galerie ;
+                  tâche template_extract)
+              ──► spec_assembler (plan + mesures ; spec_builder reste la couche de mesure)
+              ──► spécification (JSON, version 1)
+              ──► ingestion_loop : rendu de l'exemple ──► mesure ──► porte ; si elle échoue, UNE passe de
+                  correction (côte à côte + diagnostics ──► plan corrigé), la meilleure passe gardée
 spécification + CV ──► domain/view ──► html_renderer ──► Gotenberg (Chromium) ──► PDF
                                    └─► docx_renderer (python-docx, polices incorporées) ──► DOCX
 PDF / DOCX ──► ats_reader (comme un ATS) ──► domain/ats (score déterministe)
@@ -90,7 +95,24 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   que par le quota du compte.
 
 - **Porte de qualité** (`domain/gate.py`) : PDF ≥ 0,90 et planchers par
-  composante ; sinon la version reste `review`.
+  composante ; sinon la version reste `review`. Une substitution de police **déclarée**
+  (rapport de polices) n'est pas une faute de mesure : elle se juge dans la revue (ADR-0037 § 4).
+- **Ingestion v2** (ADR-0037) : le modèle de vision ne pose aucun millimètre ; il dit qui est
+  quoi et qui s'ancre à quoi. Une ligne qu'il ne place pas bloque la publication. Le plan est
+  gardé dans `labels["plan"]`, les passes (score, jetons, latence) dans `report["passes"]`.
+  Deux requêtes au plus par version. Ce que la spécification sait dire de plus qu'avant : une
+  rubrique sans titre (`untitled`), une rubrique libre (`other:<slug>`, titre gardé), une frise
+  à colonne latérale (`side`), un champ d'en-tête sur plusieurs lignes (`box_w_mm`, `pitch_mm`,
+  `sample_lines`) ou aligné à droite (`rx_mm`), un filet de bande (`bands[i]["decorations"]`)
+  ou de flux (`anchor: flow`), l'image d'exemple à son échelle (`photo.sample_image`), une
+  étiquette fixe devant ou au-dessus d'un champ (`slot["label"]`), un style de titre propre à
+  une rubrique (`title_style`), un paragraphe aligné à droite ou centré (`slot["align"]`),
+  des éléments côte à côte (`item_columns`, `item_pitch_mm`), l'espacement des mots d'un
+  justifié (`styles[k]["word_spacing_mm"]`), un poste visé qui ouvre le flux (`flow`), un
+  ornement propre à l'exemple (`sample_only` : barres de niveau, QR code), un tracé rastérisé
+  (`asset`), le corps propre d'un élément de l'exemple (`sizes`). Le code tranche là où le
+  plan se trompe de côté : coordonnées d'en-tête sous une rubrique Contact titrée, pied de
+  page en bande (ADR-0037 § 2, « ce que le lot a appris »).
 - **Polices** (`domain/fonts.py`, `infrastructure/fonts.py`) : incorporée si sa
   licence le permet et qu'elle couvre le français, sinon même famille libre,
   sinon remplaçante la plus proche (classe, hauteur d'x, capitales, chasse).
@@ -114,7 +136,9 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   ou `POST /api/v1/internal/templates` (jeton `DOCUMENTS__ADMIN_TOKEN`, fichiers `file` et `letter`).
 - Les aperçus de la lettre sobre (galerie) : `python -m scripts.templates plain-letter`,
   une fois par environnement et à chaque changement de `PLAIN_LETTER_VERSION`.
-- Revue : `python -m scripts.templates list` ou `GET /api/v1/internal/templates`.
+- Revue : `python -m scripts.templates list` ou `GET /api/v1/internal/templates` ;
+  `python -m scripts.templates dump VERSION_ID DIR` écrit source, rendu, côte à côte, rapport
+  (passes, jetons), spécification et plan.
 - Couleur de galerie : `python -m scripts.templates refresh-colors [--dry-run]` après un
   changement de sa définition ; `render-sample NOM --out DOSSIER --color '#1F4FA3'
   [--any-status]` pour voir l'exemple d'un modèle dans une couleur.

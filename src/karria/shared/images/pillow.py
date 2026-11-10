@@ -277,6 +277,45 @@ def image_size(payload: bytes) -> tuple[int, int]:
         return int(width), int(height)
 
 
+#: Hauteur maximale (pixels) d'un côte à côte : deux pages A4 à 150 dpi y
+#: tiennent ; au-delà, l'image est ramenée à cette hauteur (plus lisible pour
+#: un modèle de vision, et le canevas reste borné).
+MAX_SIDE_BY_SIDE_HEIGHT: Final = 1_800
+
+
+def side_by_side(left: bytes, right: bytes, *, gutter: int = 16) -> bytes:
+    """Deux images côte à côte (PNG), séparées d'une gouttière grise, à la même hauteur.
+
+    Les deux sont ramenées à une hauteur commune — celle de la première,
+    plafonnée à `MAX_SIDE_BY_SIDE_HEIGHT` — pour qu'une comparaison
+    « source | rendu » se lise d'un coup d'œil, par une personne ou un modèle.
+
+    Raises:
+        NotAnImageError: L'une des deux n'est pas une image.
+        ImageTooLargeError: L'une des deux a trop de pixels pour être décodée sans risque.
+    """
+    try:
+        with Image.open(BytesIO(left)) as a, Image.open(BytesIO(right)) as b:
+            for image in (a, b):
+                pixels = image.width * image.height
+                if pixels > MAX_PIXELS:
+                    raise ImageTooLargeError(pixels)
+            height = min(a.height, MAX_SIDE_BY_SIDE_HEIGHT)
+            panes = [
+                image.convert("RGB").resize(
+                    (max(1, round(image.width * height / max(image.height, 1))), height),
+                    Image.Resampling.LANCZOS,
+                )
+                for image in (a, b)
+            ]
+    except (UnidentifiedImageError, OSError, ValueError, EOFError) as exc:
+        raise NotAnImageError from exc
+    canvas = Image.new("RGB", (panes[0].width + gutter + panes[1].width, height), (160, 160, 160))
+    canvas.paste(panes[0], (0, 0))
+    canvas.paste(panes[1], (panes[0].width + gutter, 0))
+    return _encode_png(canvas)
+
+
 def crop_to_frame(
     payload: bytes,
     *,

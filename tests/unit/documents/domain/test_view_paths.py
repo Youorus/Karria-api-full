@@ -80,3 +80,51 @@ class TestExemple:
         assert header_path(view, "headline") is None
         for section in view["sections"]:
             assert item_path(section, 0, "item_title") is None
+
+    def test_les_rubriques_libres_et_sans_titre_de_l_exemple(self) -> None:
+        """Une rubrique « Réalisations » garde son titre ; une rubrique sans titre vaut un titre vide."""
+        spec = _spec()
+        sections = spec["bands"][0]["columns"][0]["sections"]
+        sections.append({"kind": "other:realisations", "title_sample": "RÉALISATIONS", "slots": []})
+        sections.append({"kind": "other:vide", "title_sample": "VIDE", "slots": []})
+        for s in sections:
+            if s["kind"] == "summary":
+                s["title_sample"] = ""
+                s["untitled"] = True
+        sample = make_sample()
+        sample["others"] = {
+            "other:realisations": {
+                "title": "RÉALISATIONS",
+                "items": [
+                    {
+                        "title_raw": "",
+                        "subtitle_raw": "",
+                        "dates_raw": "",
+                        "location": None,
+                        "bullets": ["Prix 2023"],
+                        "description": None,
+                    }
+                ],
+            },
+            "other:inconnue": {
+                "title": "X",
+                "items": [
+                    {
+                        "title_raw": "a",
+                        "subtitle_raw": "",
+                        "dates_raw": "",
+                        "location": None,
+                        "bullets": [],
+                        "description": None,
+                    }
+                ],
+            },
+            "other:vide": {"title": "VIDE", "items": []},
+        }
+        view = _by_kind(from_sample(spec, sample))
+        assert view["other:realisations"]["title"] == "RÉALISATIONS"
+        assert view["other:realisations"]["items"][0]["bullet"] == ["Prix 2023"]
+        assert view["other:realisations"]["items"][0]["item_title"] is None
+        assert "other:inconnue" not in view
+        assert "other:vide" not in view
+        assert view["summary"]["title"] == ""

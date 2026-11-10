@@ -162,6 +162,12 @@ class TestTraitsDeGalerie:
     def test_un_poste_vise_synthetise_est_declare_comme_champ_ajoute(self) -> None:
         elements = [{"role": "full_name"}, {"role": "headline", "synthesized": True}]
         assert gallery_traits(_spec(elements=elements))["fields_added"] == ["headline"]
+        elements = [
+            {"field": "full_name"},
+            {"field": "headline", "synthesized": True},
+            {"field": "website", "synthesized": True},
+        ]
+        assert gallery_traits(_spec(elements=elements))["fields_added"] == ["headline", "website"]
 
     def test_la_variante_ats_aide_seulement_si_des_titres_sont_espaces(self) -> None:
         assert ats_safe_helps(_spec({"t": _style(spacing=2.0)})) is True

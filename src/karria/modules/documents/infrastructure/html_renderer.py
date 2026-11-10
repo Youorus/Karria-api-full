@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import math
+import re
 from collections.abc import Callable
 from typing import Any, Final
 
@@ -57,11 +58,30 @@ FONT_STEPS: Final = (1, 0.96, 0.92, 0.88)
 FIT_SLACK: Final = 0.78
 #: Couleur du filet qui marque une coupure de page dans l'atelier.
 PAGE_BREAK_COLOR: Final = "#cbd5e1"
+#: Réductions de corps d'un champ d'en-tête trop long, avant le retour à la ligne.
+FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8)
+#: Un nom se réduit davantage : replié, il écraserait ce qui est sous lui.
+NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35)
+NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
 
 
 def identity_url(name: str) -> str:
     """Le résolveur par défaut : un fichier joint se référence par son nom."""
     return name
+
+
+_CLASS_UNSAFE: Final = re.compile(r"[^a-z0-9-]+")
+
+
+def css_class(key: str) -> str:
+    """Le nom de classe d'un style : `s-` puis des lettres, chiffres et tirets seulement.
+
+    Une clé de style vient de la spécification (`experiences.bullet`,
+    `other:realisations-cles.bullet`) : « . » et « : » ne sont pas des
+    caractères de classe (« : » ouvre une pseudo-classe), et rien de ce qui
+    vient d'un plan de modèle n'arrive tel quel dans le HTML.
+    """
+    return "s-" + _CLASS_UNSAFE.sub("-", key.lower()).strip("-")
 
 
 def anchor(path: str | None) -> str:
@@ -192,11 +212,22 @@ def style_key(styles: dict[str, Json], kind: str, role: str) -> str:
     return "section_title"
 
 
-def fit_text_css(fonts: FontSet, val: str, st: Json, avail: float) -> str:
+def fit_text_css(
+    fonts: FontSet,
+    val: str,
+    st: Json,
+    avail: float,
+    *,
+    steps: tuple[float, ...] = FIELD_SIZE_STEPS,
+    shrink_wrapped: bool = False,
+) -> str:
     """Texte trop long pour sa place : interlettrage resserré, puis corps réduit, puis retour à la ligne.
 
     Partagé par l'en-tête du CV et les blocs d'en-tête d'une lettre (ADR-0036) :
     décidé sans navigateur, avec les métriques réelles de la police servie.
+    `steps` : les corps essayés (un nom de CV descend jusqu'à 35 %, ADR-0037) ;
+    `shrink_wrapped` : replié, le texte garde le dernier corps essayé (le CV) plutôt
+    que le sien (la lettre).
     """
     if fonts.width_mm(val, st) <= avail:
         return ""
@@ -205,10 +236,11 @@ def fit_text_css(fonts: FontSet, val: str, st: Json, avail: float) -> str:
         if fonts.width_mm(val, st, ls_pt=ls * k) <= avail:
             return f";letter-spacing:{ls * k:.2f}pt"
     size = float(st["size_pt"])
-    for k in (0.95, 0.9, 0.85, 0.8):
+    for k in steps:
         if fonts.width_mm(val, st, size_pt=size * k, ls_pt=ls * 0.3) <= avail:
             return f";letter-spacing:{ls * 0.3:.2f}pt;font-size:{size * k:.2f}pt"
-    return f";letter-spacing:{ls * 0.3:.2f}pt;white-space:normal;width:{avail:.2f}mm"
+    shrunk = f"font-size:{size * steps[-1]:.2f}pt;" if shrink_wrapped else ""
+    return f";letter-spacing:{ls * 0.3:.2f}pt;{shrunk}white-space:normal;width:{avail:.2f}mm"
 
 
 def deco_css(d: Json, left: float, top: float, extra: str = "") -> str:
@@ -246,10 +278,14 @@ def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
         for s in c["sections"]
     }
     bands: list[Json] = [{"columns": [[] for _ in b["columns"]], "spec": b} for b in spec["bands"]]
+    # Des coordonnées déjà dans l'en-tête ne se répètent pas dans une rubrique empruntée.
+    header_contact = any(e["field"] in CONTACT_ROLES for e in spec["header"]["elements"])
     for sec in view["sections"]:
         if sec["kind"] in spec_secs:
             bi, ci, s = spec_secs[sec["kind"]]
             bands[bi]["columns"][ci].append((s, sec, False))
+            continue
+        if sec["kind"] == "contact" and header_contact:
             continue
         for sib in SIBLINGS.get(sec["kind"], []):
             if sib not in spec_secs:
@@ -308,22 +344,30 @@ def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
 def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: FontSet) -> float:
     """Hauteur estimée d'une rubrique (mm), sans navigateur."""
     kind = sec["kind"]
-    tst = styles["section_title"]
+    tst = styles[s.get("title_style") or "section_title"]
     title_lines = max(1, -(-fonts.width_mm(sec["title"], tst) // (s.get("title_w_mm") or col_w)))
-    h = s["margin_top_mm"] + lh(tst) * title_lines
+    h = s["margin_top_mm"] + (0.0 if s.get("untitled") else lh(tst) * title_lines)
+    label_st = styles.get(f"{kind}.label")
     slots = {sl["key"]: sl for sl in s["slots"]}
+    side = s.get("side")
+    side_slots = [(sl, side["w_mm"]) for sl in side["slots"]] if side else []
+    box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
     for i, item in enumerate(sec["items"]):
         h += s["first_gap_mm"] if i == 0 else max(s["item_gap_mm"], 1.0)
-        for key in s["slot_order"]:
-            sl = slots[key]
+        rows = [(slots[key], box_w - slots[key]["dx_mm"]) for key in s["slot_order"]]
+        # La colonne latérale d'une frise est comptée en plus : une estimation
+        # haute, qui garde la page estimée du bon côté.
+        for sl, width in rows + side_slots:
             for role in sl["roles"]:
                 val = item.get(role)
                 vals = val if isinstance(val, list) else ([val] if val else [])
                 st = styles[style_key(styles, kind, role)]
-                width = col_w - sl["dx_mm"]
                 for v in vals:
                     lines = max(1, -(-fonts.width_mm(v, st) // max(width, 10)))
                     h += sl["margin_top_mm"] + lh(st) * lines
+                    label = sl.get("label")
+                    if label and not label["inline"] and label_st is not None:
+                        h += lh(label_st)
                 if len(sl["roles"]) > 1:
                     break
     return float(h)
@@ -337,7 +381,15 @@ def extra_contact_slots(s: Json, sec: Json) -> tuple[dict[str, Json], list[str]]
         last = slots[order[-1]]
         for role in ("phone", "email", "address", "website"):
             if role not in slots and any(it.get(role) for it in sec["items"]):
-                slots[role] = {**last, "key": role, "roles": [role], "repeat_margin_mm": None}
+                # Sans étiquette : celle du dernier emplacement (« Address ») ne vaut pas
+                # pour le site.
+                slots[role] = {
+                    **last,
+                    "key": role,
+                    "roles": [role],
+                    "repeat_margin_mm": None,
+                    "label": None,
+                }
                 order.append(role)
     return slots, order
 
@@ -374,11 +426,13 @@ class HtmlRenderer:
         """Une classe CSS par style de la spécification."""
         f = "" if name.startswith("header.") else "*var(--f)"
         return (
-            f".s-{name.replace('.', '-')}{{font-family:'{st['family']}','{self.main_family}',sans-serif;"
+            f".{css_class(name)}{{font-family:'{st['family']}','{self.main_family}',sans-serif;"
             f"font-weight:{st['weight']};font-style:{'italic' if st['italic'] else 'normal'};"
             f"font-size:calc({st['size_pt']}pt{f});color:{st['color']};"
             f"letter-spacing:{st['letter_spacing_pt']}pt;line-height:calc({lh(st):.3f}mm{f});"
-            f"text-transform:{'uppercase' if st['uppercase'] else 'none'}}}"
+            f"text-transform:{'uppercase' if st['uppercase'] else 'none'}"
+            + (f";word-spacing:{st['word_spacing_mm']}mm" if st.get("word_spacing_mm") else "")
+            + "}"
         )
 
     def font_faces(self) -> str:
@@ -403,9 +457,12 @@ class HtmlRenderer:
         path: str | None = None,
     ) -> str:
         """Un bloc de texte positionné (ouvert : l'appelant ajoute puces et ornements puis ferme)."""
+        # L'exemple du modèle garde les retours à la ligne de la source (un
+        # intitulé sur deux lignes) ; le texte d'une personne n'en a pas.
+        breaks = ";white-space:pre-line" if "\n" in value and self.view.get("sample") else ""
         return (
-            f'<div class="t s-{key.replace(".", "-")}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
-            f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}">{esc(value)}'
+            f'<div class="t {esc(css_class(key))}"{self.anchor(path)} style="margin-top:calc({margin:.2f}mm*var(--k));'
+            f'margin-left:{dx:.2f}mm;width:{width:.2f}mm;text-align:{align};position:relative{extra}{breaks}">{esc(value)}'
         )
 
     def anchor(self, path: str | None) -> str:
@@ -413,15 +470,36 @@ class HtmlRenderer:
         return anchor(path) if self.anchored else ""
 
     def section(  # noqa: PLR0912, PLR0915 - le gabarit d'une rubrique, dans l'ordre du modèle
-        self, s: Json, sec: Json, col_w: float
+        self, s: Json, sec: Json, col_w: float, *, reserve_mm: float = 0.0
     ) -> str:
-        """Une rubrique : titre, éléments, puces, ornements ancrés."""
+        """Une rubrique : titre, éléments, puces, ornements ancrés.
+
+        `reserve_mm` : la place que l'en-tête occupe au-dessus de la rubrique
+        dans sa colonne (des coordonnées en absolu) ; l'ajustement ne resserre
+        pas la marge sous cette réserve.
+        """
         kind = sec["kind"]
-        tst = self.styles["section_title"]
-        margin = s["margin_top_mm"] - half(tst)
-        tw = s.get("title_w_mm") or col_w
-        out = [f'<section style="position:relative;margin-top:calc({margin:.2f}mm*var(--k))">']
-        nowrap = "" if s.get("title_w_mm") else ";white-space:nowrap"
+        tst = self.styles[s.get("title_style") or "section_title"]
+        untitled = bool(s.get("untitled"))
+        # Sans titre (un profil, des coordonnées sous la photo) : la rubrique
+        # commence à sa première ligne, sans demi-blanc de titre à reprendre.
+        lead = 0.0 if untitled else half(tst)
+        margin = s["margin_top_mm"] - lead
+        top_css = f"calc({margin:.2f}mm*var(--k))"
+        if reserve_mm > 0:
+            top_css = f"max({top_css},{reserve_mm - lead:.2f}mm)"
+        # La boîte mesurée d'un titre sur deux lignes vaut pour l'exemple ; le
+        # titre d'une personne (« Expériences professionnelles ») prend la colonne.
+        tw = (s.get("title_w_mm") if self.view.get("sample") else None) or col_w
+        out = [f'<section style="position:relative;margin-top:{top_css}">']
+        # Le titre d'une personne (« Centres d'intérêt » interlettré) se replie
+        # dans sa colonne ; celui de l'exemple tient sur sa ligne mesurée.
+        nowrap = "" if s.get("title_w_mm") or not self.view.get("sample") else ";white-space:nowrap"
+        if not self.view.get("sample") and not s.get("title_w_mm"):
+            # Un titre trop large pour sa colonne (« Compétences » interlettré en 17 pt
+            # dans 38 mm) resserre son interlettrage, puis son corps, et ne se coupe
+            # jamais au milieu d'un mot.
+            nowrap += ";overflow-wrap:normal" + self.fit_header_text(sec["title"], tst, tw)
         if s.get("title_pitch_mm"):
             # Interligne mesuré du titre sur plusieurs lignes. Le demi-blanc qu'il
             # ajoute au-dessus de la première ligne est repris par un décalage
@@ -429,22 +507,49 @@ class HtmlRenderer:
             # la première ligne et la suite de la rubrique restent à leur place.
             extra_lead = (s["title_pitch_mm"] - lh(tst)) / 2
             nowrap += f";line-height:{s['title_pitch_mm']:.3f}mm;top:{-extra_lead:.2f}mm;margin-bottom:{-2 * extra_lead:.2f}mm"
-        out.append(
-            self.text(
-                "section_title", sec["title"], margin=0, dx=s["title_dx_mm"], width=tw, extra=nowrap
+        if not untitled:
+            out.append(
+                self.text(
+                    s.get("title_style") or "section_title",
+                    sec["title"],
+                    margin=0,
+                    dx=s["title_dx_mm"],
+                    width=tw,
+                    extra=nowrap,
+                )
+                + "</div>"
             )
-            + "</div>"
-        )
-        prev_half = half(tst)
+        prev_half = 0.0 if untitled else half(tst)
+        side = s.get("side")
+        # La boîte de texte de la rubrique, si ses paragraphes repliés l'ont dite.
+        box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
         slots, order = extra_contact_slots(s, sec)
+        # Des éléments côte à côte (deux références) : une grille au pas mesuré,
+        # chaque élément dans sa colonne, les rangées à l'écart des éléments.
+        grid_items = int(s.get("item_columns") or 0)
+        item_box = min(box_w, float(s["item_pitch_mm"])) if grid_items else box_w
+        if grid_items:
+            # Le conteneur tient `item_columns` éléments au pas mesuré ; le dernier
+            # peut dépasser la colonne de quelques millimètres (comme la source).
+            grid_w = max(col_w, float(s["item_pitch_mm"]) * grid_items)
+            out.append(
+                f'<div style="display:flex;flex-wrap:wrap;align-items:flex-start;width:{grid_w:.2f}mm">'
+            )
+        row_prev_half = 0.0
         for i, item in enumerate(sec["items"]):
-            gap = s["first_gap_mm"] if i == 0 else s["item_gap_mm"]
+            gap = s["first_gap_mm"] if i < max(1, grid_items) else s["item_gap_mm"]
             if i and kind in LIST_KINDS and gap < 1.0:
                 gap = s["first_gap_mm"]  # deux catégories de liste : l'écart titre → liste
             rows: list[tuple[Json, list[tuple[str, str, str | None]], float]] = []
+            emitted: set[str] = set()
             for key in order:
                 sl = slots[key]
                 roles = sl["roles"]
+                # Un rôle déjà posé par un emplacement composé (« Poste | 2016 »)
+                # ne se répète pas par son emplacement seul (un élément sans dates).
+                if all(r in emitted for r in roles):
+                    continue
+                emitted.update(r for r in roles if item.get(r))
                 if len(roles) == 1:
                     val = item.get(roles[0])
                     vals = val if isinstance(val, list) else ([val] if val else [])
@@ -472,13 +577,26 @@ class HtmlRenderer:
             if not rows:
                 continue
             first_st = self.styles[style_key(self.styles, kind, rows[0][1][0][0])]
-            item_margin = gap - prev_half - half(first_st)
+            if not grid_items or i % grid_items == 0:
+                row_prev_half = prev_half
+            item_margin = gap - row_prev_half - half(first_st)
+            # Avec une colonne latérale (frise), l'élément est une rangée : la
+            # colonne latérale, une gouttière, le contenu ; sa hauteur est celle
+            # du plus haut des deux, comme dans la source.
+            origin = side["dx_mm"] if side else 0.0
+            # Le contenu commence à `main_dx_mm` de la colonne (le titre de la
+            # rubrique peut être plus à gauche que la colonne latérale).
+            main_dx = float(side.get("main_dx_mm", 0.0)) if side else 0.0
+            flex = (
+                f"display:flex;align-items:flex-start;margin-left:{origin:.2f}mm;" if side else ""
+            )
+            cell = f"flex:none;width:{s['item_pitch_mm']:.2f}mm;" if grid_items else ""
             out.append(
-                f'<div class="item" style="position:relative;margin-top:calc({item_margin:.2f}mm*var(--k))">'
+                f'<div class="item" style="position:relative;{flex}{cell}margin-top:calc({item_margin:.2f}mm*var(--k))">'
             )
             last_item = i == len(sec["items"]) - 1
             for d in s["decorations"]:
-                if d["anchor"] != "item" or d.get("attach") == "row":
+                if d["anchor"] != "item" or d.get("attach") == "row" or not self.shown(d):
                     continue
                 inset = d.get("bottom_inset_mm", 0.0)
                 if d.get("connector") and last_item:
@@ -488,18 +606,104 @@ class HtmlRenderer:
                     inset = d["last_bottom_inset_mm"]
                 extra = f"height:auto;bottom:{inset:.2f}mm;" if d.get("stretch") else ""
                 out.append(
-                    f'<div style="{deco_css(d, d["dx_mm"], d["dy_mm"] + half(first_st), extra)}"></div>'
+                    f'<div style="{deco_css(d, d["dx_mm"] - origin, d["dy_mm"] + half(first_st), extra)}"></div>'
                 )
-            row_decor = {d["ref_role"]: d for d in s["decorations"] if d.get("attach") == "row"}
+            # Toutes les formes posées sur une même ligne, dans l'ordre de peinture
+            # de la source (un rond sombre puis son cœur blanc font un anneau).
+            row_decor: dict[str, list[Json]] = {}
+            for d in s["decorations"]:
+                if d.get("attach") == "row":
+                    row_decor.setdefault(d["ref_role"], []).append(d)
             done_roles: set[str] = set()
+            if side:
+                out.append(
+                    self.side_block(
+                        sec,
+                        i,
+                        item,
+                        side=side,
+                        first_st=first_st,
+                        row_decor=row_decor,
+                        done=done_roles,
+                    )
+                )
+                out.append(
+                    f'<div style="flex:none;width:{main_dx - origin - side["w_mm"]:.2f}mm"></div>'
+                    '<div class="main" style="flex:1 1 0;min-width:0;position:relative">'
+                )
             last_half = half(first_st)
+            grid_open: Json | None = None
+            grid_count = 0
             for r_i, (sl, vals, m) in enumerate(rows):
                 key0 = style_key(self.styles, kind, vals[0][0])
                 st0 = self.styles[key0]
                 margin_row = 0.0 if r_i == 0 else m - last_half - half(st0)
-                width = col_w - sl["dx_mm"]
-                if len(vals) == 1:
+                width = item_box - sl["dx_mm"]
+                if side:
+                    # Les emplacements se mesurent depuis la colonne ; le bloc de
+                    # contenu commence à `main_dx_mm` : on lui retire ce décalage.
+                    sl = {**sl, "dx_mm": sl["dx_mm"] - main_dx}  # noqa: PLW2901
+                if grid_open is not None and grid_open is not sl:
+                    out.append("</div>")
+                    grid_open = None
+                if sl.get("columns") and len(vals) == 1:
+                    # Une liste en colonnes : les entrées se rangent côte à côte, au
+                    # pas mesuré, et passent à la ligne quand la colonne est pleine.
                     role, v, path = vals[0]
+                    if grid_open is None:
+                        # Le conteneur tient `columns` entrées au pas mesuré ; la
+                        # dernière peut dépasser la colonne de quelques millimètres.
+                        grid_w = max(width, sl["column_pitch_mm"] * sl["columns"])
+                        out.append(
+                            f'<div style="display:flex;flex-wrap:wrap;margin-left:{sl["dx_mm"]:.2f}mm;'
+                            f'width:{grid_w:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
+                        )
+                        grid_open = sl
+                        grid_count = 0
+                        margin_row = 0.0
+                    elif grid_count % int(sl["columns"]):
+                        # Une entrée de la même rangée : pas de marge (la rangée en a une).
+                        margin_row = 0.0
+                    grid_count += 1
+                    out.append(
+                        self.text(
+                            key0,
+                            v,
+                            margin=margin_row,
+                            dx=0.0,
+                            width=sl["column_pitch_mm"],
+                            align=sl["align"],
+                            extra=";flex:none",
+                            path=path,
+                        )
+                        + self.marker(s, role, st0)
+                        + "</div>"
+                    )
+                    last_half = half(st0)
+                    continue
+                if len(vals) == 1 and sl.get("label"):
+                    role, v, path = vals[0]
+                    out.append(
+                        self.labelled_row(
+                            kind, sl, role, v, path, margin=margin_row, width=width, st0=st0
+                        )
+                        + self.marker(s, role, st0)
+                        + self.icon(s, kind, role, st0)
+                        + self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
+                        + "</div>"
+                    )
+                elif len(vals) == 1:
+                    role, v, path = vals[0]
+                    extra = ";white-space:nowrap" if role == "item_dates" else ""
+                    size = (item.get("sizes") or {}).get(role)
+                    if size and self.view.get("sample"):
+                        # L'exemple garde le corps propre de cet élément (un modèle
+                        # dont une expérience est écrite plus petit que les autres).
+                        extra += f";font-size:{float(size)}pt"
+                    if role in CONTACT_ROLES and not self.view.get("sample"):
+                        # Une coordonnée d'une personne (un long courriel) se
+                        # réduit avant de se couper au milieu d'un mot.
+                        extra = self.fit_header_text(v, st0, width)
                     out.append(
                         self.text(
                             key0,
@@ -508,27 +712,35 @@ class HtmlRenderer:
                             dx=sl["dx_mm"],
                             width=width,
                             align=sl["align"],
-                            extra=";white-space:nowrap" if role == "item_dates" else "",
+                            extra=extra,
                             path=path,
                         )
                         + self.marker(s, role, st0)
                         + self.icon(s, kind, role, st0)
-                        + self.row_ornament(row_decor, done_roles, role, sl)
+                        + self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
                         + "</div>"
                     )
                 else:
                     # Une pastille de frise peut marquer un champ d'une ligne
                     # composée (« Poste | 2016 ») : elle se pose dans cette ligne.
                     ornament = "".join(
-                        self.row_ornament(row_decor, done_roles, role, sl) for role, _, _ in vals
+                        self.row_ornament(row_decor, done_roles, role, sl["dx_mm"])
+                        for role, _, _ in vals
                     )
                     row = self.joined_row(kind, sl, vals, margin=margin_row, width=width, st0=st0)
-                    out.append(row[: -len("</div>")] + ornament + "</div>")
+                    marker = self.marker(s, vals[0][0], st0)
+                    out.append(row[: -len("</div>")] + marker + ornament + "</div>")
                 last_half = half(st0)
+            if grid_open is not None:
+                out.append("</div>")
+            if side:
+                out.append("</div>")
             out.append("</div>")
             prev_half = last_half
+        if grid_items:
+            out.append("</div>")
         for d in s["decorations"]:
-            if d["anchor"] == "section":
+            if d["anchor"] == "section" and self.shown(d):
                 # Un filet étiré ne déborde pas de plus de 2 mm sur la rubrique suivante.
                 extra = (
                     f"height:auto;bottom:{max(d['bottom_inset_mm'], -2.0):.2f}mm;"
@@ -546,10 +758,23 @@ class HtmlRenderer:
         )
         return "".join(out)
 
+    def page_shape(self, d: Json) -> str:
+        """Un ornement fixe de la page : une forme, ou l'image d'un tracé rastérisé."""
+        if d.get("asset"):
+            return (
+                f'<img src="{esc(self.url(d["asset"]))}" alt="" style="position:absolute;'
+                f'left:{d["x_mm"]}mm;top:{d["y_mm"]}mm;width:{d["w_mm"]}mm;height:{d["h_mm"]}mm">'
+            )
+        return f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>'
+
+    def shown(self, d: Json) -> bool:
+        """Un ornement propre à l'exemple (barre de niveau d'une langue) ne se dessine que pour lui."""
+        return not d.get("sample_only") or bool(self.view.get("sample"))
+
     def marker(self, s: Json, role: str, st: Json) -> str:
         """La puce d'une ligne de liste."""
         mk = s.get("marker")
-        if role not in ROLE_MARKER or not mk:
+        if not mk or role not in (mk.get("roles") or ROLE_MARKER):
             return ""
         top = mk["dy_mm"] - mk["size_mm"] / 2 + half(st)
         radius = "50%" if mk["shape"] == "circle" else "0"
@@ -569,17 +794,136 @@ class HtmlRenderer:
         )
 
     @staticmethod
-    def row_ornament(row_decor: dict[str, Json], done: set[str], role: str, sl: Json) -> str:
-        """Une pastille de frise centrée sur la ligne qu'elle marque."""
+    def row_ornament(
+        row_decor: dict[str, list[Json]], done: set[str], role: str, origin: float
+    ) -> str:
+        """Les pastilles de frise centrées sur la ligne qu'elles marquent.
+
+        `origin` : l'abscisse (depuis la colonne) du bloc de texte qui les porte.
+        """
         if role not in row_decor or role in done:
             return ""
-        d = row_decor[role]
         done.add(role)
-        shift = d["h_mm"] / 2 - d["center_offset_mm"]
-        return (
-            '<div style="'
-            + deco_css(d, d["dx_mm"] - sl["dx_mm"], 0, f"top:calc(50% - {shift:.2f}mm);")
-            + '"></div>'
+        out = []
+        for d in row_decor[role]:
+            shift = d["h_mm"] / 2 - d["center_offset_mm"]
+            out.append(
+                '<div style="'
+                + deco_css(d, d["dx_mm"] - origin, 0, f"top:calc(50% - {shift:.2f}mm);")
+                + '"></div>'
+            )
+        return "".join(out)
+
+    def side_block(
+        self,
+        sec: Json,
+        index: int,
+        item: Json,
+        *,
+        side: Json,
+        first_st: Json,
+        row_decor: dict[str, list[Json]],
+        done: set[str],
+    ) -> str:
+        """La colonne latérale d'un élément de frise (entreprise, dates), empilée et alignée."""
+        kind = sec["kind"]
+        rows: list[tuple[str, str, str | None, float]] = []
+        for sl in side["slots"]:
+            for role in sl["roles"]:
+                val = item.get(role)
+                vals = val if isinstance(val, list) else ([val] if val else [])
+                repeat = sl.get("repeat_margin_mm")
+                rows.extend(
+                    (
+                        role,
+                        v,
+                        item_path(sec, index, role, j),
+                        sl["margin_top_mm"] if j == 0 or repeat is None else repeat,
+                    )
+                    for j, v in enumerate(vals)
+                )
+        if not rows:
+            return f'<div class="side" style="flex:none;width:{side["w_mm"]:.2f}mm"></div>'
+        st0 = self.styles[style_key(self.styles, kind, rows[0][0])]
+        top = side["top_offset_mm"] + half(first_st) - half(st0)
+        out = [
+            f'<div class="side" style="flex:none;width:{side["w_mm"]:.2f}mm;margin-top:{top:.2f}mm;'
+            f'text-align:{side["align"]}">'
+        ]
+        last_half = half(st0)
+        for r_i, (role, v, path, m) in enumerate(rows):
+            key = style_key(self.styles, kind, role)
+            st = self.styles[key]
+            margin_row = 0.0 if r_i == 0 else m - last_half - half(st)
+            out.append(
+                self.text(
+                    key,
+                    v,
+                    margin=margin_row,
+                    dx=0.0,
+                    width=side["w_mm"],
+                    align=side["align"],
+                    path=path,
+                )
+                + self.row_ornament(row_decor, done, role, side["dx_mm"])
+                + "</div>"
+            )
+            last_half = half(st)
+        out.append("</div>")
+        return "".join(out)
+
+    def labelled_row(
+        self,
+        kind: str,
+        sl: Json,
+        role: str,
+        value: str,
+        path: str | None,
+        *,
+        margin: float,
+        width: float,
+        st0: Json,
+    ) -> str:
+        """Un champ annoncé par une étiquette fixe du modèle : au-dessus (deux lignes) ou devant (une ligne).
+
+        Le bloc rendu reste ouvert, comme `text` : l'appelant y ajoute puce,
+        pictogramme et ornement, puis le ferme.
+        """
+        label = sl["label"]
+        label_key = style_key(self.styles, kind, "label")
+        label_st = self.styles[label_key]
+        if label["inline"]:
+            gap = f'<span style="display:inline-block;width:{label["gap_mm"]:.2f}mm"></span>'
+            return (
+                f'<div class="t" style="margin-top:calc({margin:.2f}mm*var(--k));margin-left:{sl["dx_mm"]:.2f}mm;'
+                f"width:{width:.2f}mm;display:flex;align-items:baseline;"
+                f'line-height:{lh(st0):.3f}mm;position:relative">'
+                f'<span class="{esc(css_class(label_key))}">{esc(label["text"])}</span>{gap}'
+                f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}"{self.anchor(path)}>{esc(value)}</span>'
+            )
+        # Au-dessus : l'étiquette à la marge mesurée, la valeur au pas mesuré sous elle.
+        # Le pas est mesuré de haut en haut : la boîte de l'étiquette s'en retire
+        # (la valeur se posait à son pas **sous** l'étiquette, 4 mm trop bas).
+        above = (
+            self.text(
+                label_key,
+                label["text"],
+                margin=margin + half(st0) - half(label_st),
+                dx=label["dx_mm"],
+                width=width,
+            )
+            + "</div>"
+        )
+        value_margin = label["pitch_mm"] - float(label_st["box_h_mm"]) - half(label_st) - half(st0)
+        return above + self.text(
+            style_key(self.styles, kind, role),
+            value,
+            margin=value_margin,
+            dx=sl["dx_mm"],
+            width=width,
+            align=sl["align"],
+            extra=";white-space:nowrap" if role == "item_dates" else "",
+            path=path,
         )
 
     def joined_row(
@@ -595,9 +939,12 @@ class HtmlRenderer:
         """Plusieurs champs sur une ligne (« Entreprise | 2016 »), séparés comme dans le modèle."""
         gapx = sl["gap_mm"] or 3.0
         sep = sl.get("separator")
+        flush = bool(sl.get("flush_right")) and len(vals) == 2  # noqa: PLR2004
         parts = []
         for n, (role, v, path) in enumerate(vals):
-            if n:
+            if n and flush:
+                parts.append('<span style="flex:1 1 auto;min-width:3mm"></span>')
+            elif n:
                 if sep:
                     parts.append(
                         f'<span style="display:inline-block;align-self:flex-start;margin:{sep["dy_mm"] + half(st0):.2f}mm '
@@ -607,7 +954,7 @@ class HtmlRenderer:
                 else:
                     parts.append(f'<span style="display:inline-block;width:{gapx:.2f}mm"></span>')
             parts.append(
-                f'<span class="s-{style_key(self.styles, kind, role).replace(".", "-")}"{self.anchor(path)}>{esc(v)}</span>'
+                f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}"{self.anchor(path)}>{esc(v)}</span>'
             )
         return (
             f'<div class="t" style="margin-top:calc({margin:.2f}mm*var(--k));margin-left:{sl["dx_mm"]:.2f}mm;'
@@ -615,43 +962,220 @@ class HtmlRenderer:
             f'line-height:{lh(st0):.3f}mm;position:relative">{"".join(parts)}</div>'
         )
 
+    def tight_contact(self, elements: list[Json]) -> dict[str, float]:
+        """Les coordonnées de l'en-tête resserrées quand la ligne de plus d'une personne
+        (le site, synthétisé) entrerait dans la rubrique qui commence sous elles.
+
+        Rend `{champ: y_mm}` ; vide quand tout tient (toujours pour l'exemple,
+        qui n'a pas de site).
+        """
+        contact = sorted(
+            (
+                e
+                for e in elements
+                if e["field"] in CONTACT_ROLES and self.view["header"].get(e["field"])
+            ),
+            key=lambda e: e["y_mm"],
+        )
+        if len(contact) < 2 or not any(e.get("synthesized") for e in contact):  # noqa: PLR2004
+            return {}
+        last = contact[-1]
+        box = lh(self.styles[last["style"]])
+        limit = self.column_top_under(float(last["x_mm"])) - 1.5
+        if last["y_mm"] + box <= limit:
+            return {}
+        top = float(contact[0]["y_mm"])
+        pitch = max(box, (limit - box - top) / (len(contact) - 1))
+        return {e["field"]: round(top + i * pitch, 2) for i, e in enumerate(contact)}
+
+    def header_reserve(self, column: Json, band_top: float) -> float:
+        """La hauteur que les textes de l'en-tête occupent au-dessus d'une colonne de la
+        première bande, depuis le haut de la bande : la marge de sa première rubrique ne
+        descend pas en dessous, même resserrée par l'ajustement (mesuré : les
+        coordonnées d'une personne, une ligne de plus que l'exemple, sous le titre
+        « Expériences » remonté de 40 %)."""
+        tight = self.tight_contact(self.spec["header"]["elements"])
+        sections = column.get("sections") or []
+        section_top = band_top + (float(sections[0]["margin_top_mm"]) if sections else 0.0)
+        bottom = 0.0
+        for e in self.spec["header"]["elements"]:
+            if not self.view["header"].get(e["field"]) or e.get("flow"):
+                continue
+            if not column["x_mm"] - 2 <= float(e["x_mm"]) <= column["x_mm"] + column["w_mm"]:
+                continue
+            y = tight.get(e["field"], float(e["y_mm"]))
+            # Seuls comptent les textes qui occupent l'écart entre le haut de la
+            # bande et la rubrique : pas un pied de page (plus bas), pas une
+            # coordonnée sur la ligne du titre (cv10), pas ce qui finit au-dessus.
+            if y >= section_top - 2.0:
+                continue
+            low = y + lh(self.styles[e["style"]])
+            if low <= band_top:
+                continue
+            bottom = max(bottom, low)
+        return max(0.0, bottom + 1.5 - band_top) if bottom else 0.0
+
+    def band_floor(self, index: int) -> float:
+        """La hauteur minimale d'une bande : ce que l'en-tête occupe encore à côté d'elle.
+
+        Un profil plus court que l'exemple remontait la bande suivante dans le poste
+        visé posé en absolu (cv2) : la bande garde au moins la hauteur que l'en-tête
+        exige, l'ajustement n'y touche pas.
+        """
+        band = self.spec["bands"][index]
+        top = float(band["y_sample"])
+        bottom = 0.0
+        for e in self.spec["header"]["elements"]:
+            if not self.view["header"].get(e["field"]) or e.get("flow"):
+                continue
+            y = float(e["y_mm"])
+            if y < top - 1.0 and y + lh(self.styles[e["style"]]) <= top:
+                continue
+            if index + 1 < len(self.spec["bands"]) and y >= float(
+                self.spec["bands"][index + 1]["y_sample"]
+            ):
+                continue  # un pied de page, plus bas que la bande suivante
+            bottom = max(bottom, y + lh(self.styles[e["style"]]))
+        if not bottom:
+            return 0.0
+        return max(0.0, bottom + 1.5 - top - float(band.get("gap_after_mm", 0.0)))
+
+    def column_top_under(self, x: float) -> float:
+        """Le haut mesuré de la première rubrique de la colonne de la première bande à cette abscisse."""
+        band = self.spec["bands"][0]
+        for c in band["columns"]:
+            if c["x_mm"] - 2 <= x <= c["x_mm"] + c["w_mm"] and c["sections"]:
+                return float(band["y_sample"]) + float(c["sections"][0]["margin_top_mm"])
+        return float(self.spec["first_band_top_mm"])
+
     def header_limit(self, e: Json, st: Json) -> float:
-        """Place disponible pour un élément d'en-tête : jusqu'à la photo, au voisin ou à la marge."""
+        """Place disponible pour un élément d'en-tête : jusqu'à la photo, au voisin ou à la marge.
+
+        Un voisin est un élément **sur la même ligne** (les boîtes se recouvrent
+        d'au moins la moitié de la plus petite : un nom en grand corps et un
+        téléphone sur sa ligne de base, oui ; deux coordonnées empilées, non) ;
+        un élément aligné à droite s'étend vers la gauche, un élément centré des
+        deux côtés.
+        """
         h = self.spec["header"]
         p_box = h.get("photo") if self.photo else None
         pw = self.spec["page"]["width_mm"]
         margin = min(c["x_mm"] for b in self.spec["bands"] for c in b["columns"])
-        limit = pw - margin
-        if (
-            p_box
-            and e["y_mm"] < p_box["y_mm"] + p_box["h_mm"]
-            and e["y_mm"] + st["box_h_mm"] > p_box["y_mm"]
-            and e["x_mm"] < p_box["x_mm"]
-        ):
-            limit = p_box["x_mm"] - 4.0
+        left_bound, right_bound = margin, pw - margin
+        box = float(st["box_h_mm"])
+        if p_box and e["y_mm"] < p_box["y_mm"] + p_box["h_mm"] and e["y_mm"] + box > p_box["y_mm"]:
+            if e["x_mm"] < p_box["x_mm"]:
+                right_bound = min(right_bound, p_box["x_mm"] - 4.0)
+            else:
+                left_bound = max(left_bound, p_box["x_mm"] + p_box["w_mm"] + 4.0)
         for other in h["elements"]:
-            if (
-                other is not e
-                and other["x_mm"] > e["x_mm"] + 5
-                and abs(other["y_mm"] - e["y_mm"]) < st["box_h_mm"] + 2
-            ) and self.view["header"].get(other["field"]):
-                limit = min(limit, other["x_mm"] - 4.0)
-        return float(limit - e["x_mm"])
+            if other is e or not self.view["header"].get(other["field"]):
+                continue
+            other_box = float(self.styles[other["style"]]["box_h_mm"])
+            overlap = min(e["y_mm"] + box, other["y_mm"] + other_box) - max(
+                e["y_mm"], other["y_mm"]
+            )
+            if overlap < 0.5 * min(box, other_box):
+                continue
+            if other["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, other["x_mm"] - 4.0)
+            elif other["x_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, other["x_mm"] + other.get("w_mm", 0.0) + 4.0)
+        left_bound, right_bound = self.rule_bounds(e, box, left_bound, right_bound)
+        left_bound, right_bound = self.column_bounds(e, box, left_bound, right_bound)
+        if e.get("align") == "right":
+            return float(e["rx_mm"] - left_bound)
+        if e.get("align") == "center":
+            return float(2 * min(e["cx_mm"] - left_bound, right_bound - e["cx_mm"]))
+        return float(right_bound - e["x_mm"])
 
-    def fit_header_text(self, val: str, st: Json, avail: float) -> str:
-        """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne."""
-        return fit_text_css(self.fonts, val, st, avail)
+    def column_bounds(
+        self, e: Json, box: float, left_bound: float, right_bound: float
+    ) -> tuple[float, float]:
+        """Une colonne de la première bande à la hauteur de l'élément (le profil à droite
+        d'un nom en grand corps, cv2) borne aussi."""
+        band = self.spec["bands"][0]
+        for c in band["columns"]:
+            if not (band["y_sample"] <= e["y_mm"] + box and band["bottom_sample"] >= e["y_mm"]):
+                continue
+            if c["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, c["x_mm"] - 4.0)
+            elif c["x_mm"] + c["w_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, c["x_mm"] + c["w_mm"] + 4.0)
+        return left_bound, right_bound
+
+    def rule_bounds(
+        self, e: Json, box: float, left_bound: float, right_bound: float
+    ) -> tuple[float, float]:
+        """Un filet vertical (d'en-tête ou de page) à la hauteur de l'élément borne aussi :
+        un poste visé au fer à droite ne le traverse pas."""
+        for d in [*self.spec["header"]["decorations"], *self.spec["page_decorations"]]:
+            if d["kind"] != "vline":
+                continue
+            top = float(
+                d["y_mm"]
+                if "y_mm" in d
+                else self.spec["first_band_top_mm"] + float(d.get("dy_mm", 0.0))
+            )
+            if not (top <= e["y_mm"] + box and top + float(d["h_mm"]) >= e["y_mm"]):
+                continue
+            if d["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, d["x_mm"] - 2.0)
+            elif d["x_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, d["x_mm"] + 2.0)
+        return left_bound, right_bound
+
+    def fit_header_text(self, val: str, st: Json, avail: float, *, name: bool = False) -> str:
+        """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne.
+
+        Un **nom** se réduit jusqu'à 35 % de son corps avant de se replier :
+        replié, il descendrait sur le poste visé et les coordonnées, posés en
+        absolu sous lui (mesuré avec « Moreau-Lefebvre » en 48 pt).
+        """
+        return fit_text_css(
+            self.fonts,
+            val,
+            st,
+            avail,
+            steps=NAME_SIZE_STEPS if name else FIELD_SIZE_STEPS,
+            shrink_wrapped=True,
+        )
 
     def header(self) -> str:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""
         h = self.spec["header"]
         out = [f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>' for d in h["decorations"]]
+        pw = float(self.spec["page"]["width_mm"])
+        tight = self.tight_contact(h["elements"])
         for e in h["elements"]:
             val = self.view["header"].get(e["field"], "")
-            if not val:
+            if not val or e.get("flow"):
                 continue
+            if e["field"] in tight:
+                e = {**e, "y_mm": tight[e["field"]]}  # noqa: PLW2901
             st = self.styles[e["style"]]
-            fit_css = self.fit_header_text(val, st, self.header_limit(e, st))
+            cls = f'class="{esc(css_class(e["style"]))}"'
+            if self.view.get("sample") and e.get("sample_lines"):
+                # L'exemple du modèle : chaque ligne d'un champ écrit sur
+                # plusieurs lignes reprend sa place exacte dans la source.
+                out.extend(
+                    f'<div {cls} style="position:absolute;left:{sl["x_mm"]}mm;'
+                    f'top:{sl["y_mm"] - half(st):.2f}mm;white-space:nowrap">{esc(sl["text"])}</div>'
+                    for sl in e["sample_lines"]
+                )
+                continue
+            box = e.get("box_w_mm")
+            if box and not self.view.get("sample"):
+                # Le CV d'une personne replie dans toute la place disponible,
+                # pas dans la boîte de la ligne la plus longue de l'exemple.
+                box = max(float(box), self.header_limit(e, st))
+            fit_css = (
+                ""
+                if box
+                else self.fit_header_text(
+                    val, st, self.header_limit(e, st), name=e["field"] in NAME_FIELDS
+                )
+            )
             icon = ""
             if e.get("icon"):
                 ic = e["icon"]
@@ -659,21 +1183,42 @@ class HtmlRenderer:
                     f'<img src="{esc(self.url(ic["file"]))}" alt="" style="position:absolute;left:{ic["dx_mm"]:.2f}mm;'
                     f'top:{ic["dy_mm"] + half(st):.2f}mm;width:{ic["w_mm"]}mm;height:{ic["h_mm"]}mm">'
                 )
+            align = e.get("align") or "left"
             left = f"left:{e['x_mm']}mm"
-            if e.get("align") == "center":
-                left = f"left:{e['cx_mm']}mm;transform:translateX(-50%)"
+            if align == "center":
+                left = (
+                    f"left:{e['cx_mm'] - box / 2:.2f}mm"
+                    if box
+                    else f"left:{e['cx_mm']}mm;transform:translateX(-50%)"
+                )
+            elif align == "right":
+                left = f"right:{pw - e['rx_mm']:.2f}mm"
+            wrap = (
+                f";width:{box:.2f}mm;white-space:normal;line-height:{e['pitch_mm']:.3f}mm;text-align:{align}"
+                if box
+                else ";white-space:nowrap"
+            )
             out.append(
-                f'<div class="s-{e["style"].replace(".", "-")}"{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
-                f'top:{e["y_mm"] - half(st):.2f}mm;white-space:nowrap{fit_css}">{esc(val)}{icon}</div>'
+                f'<div {cls}{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
+                f'top:{e["y_mm"] - half(st):.2f}mm{wrap}{fit_css}">{esc(val)}{icon}</div>'
             )
         p = h.get("photo")
         if p and self.photo:
             radius = {"circle": "50%", "rounded": "8%"}.get(p["shape"], "0")
-            pos = p["sample_object_position"] if self.view.get("sample") else "50% 30%"
+            sample = p.get("sample_image") if self.view.get("sample") else None
+            if sample:
+                # L'exemple du modèle : l'image à son échelle et à son décalage réels.
+                image = (
+                    f"position:absolute;left:{sample['x_mm']}mm;top:{sample['y_mm']}mm;"
+                    f"width:{sample['w_mm']}mm;height:{sample['h_mm']}mm"
+                )
+            else:
+                pos = p["sample_object_position"] if self.view.get("sample") else "50% 30%"
+                image = f"width:100%;height:100%;object-fit:cover;object-position:{pos}"
             out.append(
                 f'<div style="position:absolute;left:{p["x_mm"]}mm;top:{p["y_mm"]}mm;width:{p["w_mm"]}mm;'
                 f'height:{p["h_mm"]}mm;border-radius:{radius};overflow:hidden">'
-                f'<img src="{esc(self.url(self.photo))}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:{pos}"></div>'
+                f'<img src="{esc(self.url(self.photo))}" alt="" style="{image}"></div>'
             )
         return "".join(out)
 
@@ -685,7 +1230,11 @@ class HtmlRenderer:
             f"@page{{size:{page['width_mm']}mm {page['height_mm']}mm;margin:0}}",
             "html,body{margin:0;padding:0}*{box-sizing:border-box}.t{white-space:normal;overflow-wrap:anywhere}",
             ":root{--k:1;--f:1}",
-            f".page{{position:relative;width:{page['width_mm']}mm;height:{page['height_mm']}mm;overflow:hidden;background:{page['background']}}}",
+            # Ni ligatures ni alternances contextuelles : Chromium écrit un glyphe
+            # substitué (le trait d'union d'Inter entre deux chiffres) sous un code
+            # privé, et un ATS lit « 123456 » sans trait d'union (mesuré le 2026-11-06).
+            f".page{{position:relative;width:{page['width_mm']}mm;height:{page['height_mm']}mm;overflow:hidden;background:{page['background']};"
+            'font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0,"clig" 0}',
             "section,.item{display:block}",
             *(self.css_style(k, v) for k, v in self.styles.items()),
         ]
@@ -697,14 +1246,26 @@ class HtmlRenderer:
             prev_right = 0.0
             for ci, col in enumerate(band["columns"]):
                 cspec = band["spec"]["columns"][ci]
-                inner = "".join(self.section(s, sec, cspec["w_mm"]) for s, sec, _ in col)
+                reserve = (
+                    self.header_reserve(cspec, float(band["spec"]["y_sample"])) if bi == 0 else 0.0
+                )
+                inner = "".join(
+                    self.section(s, sec, cspec["w_mm"], reserve_mm=reserve if i == 0 else 0.0)
+                    for i, (s, sec, _) in enumerate(col)
+                )
                 cols.append(
                     f'<div class="col" style="margin-left:{cspec["x_mm"] - prev_right:.2f}mm;width:{cspec["w_mm"]:.2f}mm;flex:none">{inner}</div>'
                 )
                 prev_right = cspec["x_mm"] + cspec["w_mm"]
             margin = 0.0 if bi == 0 else self.spec["bands"][bi - 1].get("gap_after_mm", 8.0)
+            # Un filet qui court le long de la bande (la ligne d'une frise) s'étire avec elle.
+            band_decor = "".join(
+                f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"], self.stretch_css(d))}"></div>'
+                for d in band["spec"].get("decorations", [])
+            )
+            floor = f"min-height:{self.band_floor(bi):.2f}mm;" if bi == 0 else ""
             bands_html.append(
-                f'<div class="band" style="display:flex;align-items:flex-start;margin-top:calc({margin:.2f}mm*var(--k))">{"".join(cols)}</div>'
+                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;{floor}margin-top:calc({margin:.2f}mm*var(--k))">{band_decor}{"".join(cols)}</div>'
             )
             bands_html.extend(
                 f'<div style="position:relative;height:0"><div style="{deco_css(d, d["x_mm"], d["dy_mm"])}"></div></div>'
@@ -712,23 +1273,59 @@ class HtmlRenderer:
                 if d.get("anchor") == "band" and d["band"] == bi
             )
         statics = "".join(
-            f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>'
+            self.page_shape(d)
             for d in self.spec["page_decorations"]
-            if d.get("anchor") == "page"
+            if d.get("anchor") == "page" and self.shown(d)
         )
         tst = self.styles["section_title"]
-        first_margin = (
-            self.spec["bands"][0]["columns"][0]["sections"][0]["margin_top_mm"]
-            if self.spec["bands"][0]["columns"][0]["sections"]
-            else 0.0
+        # Le haut du flux : la première bande commence à sa rubrique la plus
+        # haute, quelle que soit sa colonne (les autres gardent leur écart mesuré).
+        first_margin = min(
+            (
+                c["sections"][0]["margin_top_mm"]
+                for c in self.spec["bands"][0]["columns"]
+                if c["sections"]
+            ),
+            default=0.0,
         )
         top = self.spec["first_band_top_mm"] - half(tst) - (first_margin - half(tst))
+        # Un filet qui court le long de tout le contenu s'étire avec lui.
+        shift = self.spec["first_band_top_mm"] - top
+        flows = "".join(
+            f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"] + shift, self.stretch_css(d))}"></div>'
+            for d in self.spec["page_decorations"]
+            if d.get("anchor") == "flow"
+        )
         fit = fit_script(self.spec, live=self.anchored)
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
-            f"{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
+            f"{flows}{self.flow_headline()}{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
         )
+
+    def flow_headline(self) -> str:
+        """Le poste visé d'une personne quand le modèle ne lui laisse pas de place sous le nom :
+        il ouvre le flux et pousse la première bande (rien pour l'exemple, qui n'en a pas)."""
+        e = next((e for e in self.spec["header"]["elements"] if e.get("flow")), None)
+        if e is None:
+            return ""
+        val = self.view["header"].get(e["field"], "")
+        if not val:
+            return ""
+        pw = float(self.spec["page"]["width_mm"])
+        gap = float(e.get("gap_mm") or 2.0)
+        return (
+            f'<div class="t {esc(css_class(e["style"]))}"{self.anchor(header_path(self.view, e["field"]))} '
+            f'style="position:relative;margin-left:{e["x_mm"]}mm;width:{pw - float(e["x_mm"]) - 8:.2f}mm;'
+            f'margin-bottom:{gap:.2f}mm">{esc(val)}</div>'
+        )
+
+    @staticmethod
+    def stretch_css(d: Json) -> str:
+        """Le CSS qui étire un ornement jusqu'au bas de son conteneur, au retrait mesuré."""
+        if not d.get("stretch"):
+            return ""
+        return f"height:auto;bottom:{d.get('bottom_inset_mm', 0.0):.2f}mm;"
 
 
 def parse_fit(title: str) -> tuple[float, float, int]:
