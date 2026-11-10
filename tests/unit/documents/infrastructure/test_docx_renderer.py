@@ -570,4 +570,4 @@ def test_une_etiquette_au_dessus_pose_la_valeur_au_pas_mesure_en_docx(
     after = docx[label_pos:]
     m = re.search(r'<w:spacing [^>]*w:before="(\d+)"', after[after.index("</w:p>") :])
     assert m is not None
-    assert int(m.group(1)) < 120  # noqa: PLR2004
+    assert int(m.group(1)) < 120
