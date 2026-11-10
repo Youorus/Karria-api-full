@@ -244,6 +244,7 @@ class TestPlacement:
         slots, order = extra_contact_slots(contact, sec)
         assert order == ["email", "address", "phone", "website"]
         assert slots["phone"]["repeat_margin_mm"] is None
+        assert slots["website"]["label"] is None  # pas l'étiquette « Address » du dernier
         assert extra_contact_slots(contact, {"kind": "skills", "items": []})[1] == [
             "email",
             "address",

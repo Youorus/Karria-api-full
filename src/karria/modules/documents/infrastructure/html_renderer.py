@@ -350,7 +350,15 @@ def extra_contact_slots(s: Json, sec: Json) -> tuple[dict[str, Json], list[str]]
         last = slots[order[-1]]
         for role in ("phone", "email", "address", "website"):
             if role not in slots and any(it.get(role) for it in sec["items"]):
-                slots[role] = {**last, "key": role, "roles": [role], "repeat_margin_mm": None}
+                # Sans étiquette : celle du dernier emplacement (« Address ») ne vaut pas
+                # pour le site.
+                slots[role] = {
+                    **last,
+                    "key": role,
+                    "roles": [role],
+                    "repeat_margin_mm": None,
+                    "label": None,
+                }
                 order.append(role)
     return slots, order
 
@@ -456,6 +464,11 @@ class HtmlRenderer:
         # Le titre d'une personne (« Centres d'intérêt » interlettré) se replie
         # dans sa colonne ; celui de l'exemple tient sur sa ligne mesurée.
         nowrap = "" if s.get("title_w_mm") or not self.view.get("sample") else ";white-space:nowrap"
+        if not self.view.get("sample") and not s.get("title_w_mm"):
+            # Un titre trop large pour sa colonne (« Compétences » interlettré en 17 pt
+            # dans 38 mm) resserre son interlettrage, puis son corps, et ne se coupe
+            # jamais au milieu d'un mot.
+            nowrap += ";overflow-wrap:normal" + self.fit_header_text(sec["title"], tst, tw)
         if s.get("title_pitch_mm"):
             # Interligne mesuré du titre sur plusieurs lignes. Le demi-blanc qu'il
             # ajoute au-dessus de la première ligne est repris par un décalage
@@ -971,6 +984,31 @@ class HtmlRenderer:
             bottom = max(bottom, low)
         return max(0.0, bottom + 1.5 - band_top) if bottom else 0.0
 
+    def band_floor(self, index: int) -> float:
+        """La hauteur minimale d'une bande : ce que l'en-tête occupe encore à côté d'elle.
+
+        Un profil plus court que l'exemple remontait la bande suivante dans le poste
+        visé posé en absolu (cv2) : la bande garde au moins la hauteur que l'en-tête
+        exige, l'ajustement n'y touche pas.
+        """
+        band = self.spec["bands"][index]
+        top = float(band["y_sample"])
+        bottom = 0.0
+        for e in self.spec["header"]["elements"]:
+            if not self.view["header"].get(e["field"]) or e.get("flow"):
+                continue
+            y = float(e["y_mm"])
+            if y < top - 1.0 and y + lh(self.styles[e["style"]]) <= top:
+                continue
+            if index + 1 < len(self.spec["bands"]) and y >= float(
+                self.spec["bands"][index + 1]["y_sample"]
+            ):
+                continue  # un pied de page, plus bas que la bande suivante
+            bottom = max(bottom, y + lh(self.styles[e["style"]]))
+        if not bottom:
+            return 0.0
+        return max(0.0, bottom + 1.5 - top - float(band.get("gap_after_mm", 0.0)))
+
     def column_top_under(self, x: float) -> float:
         """Le haut mesuré de la première rubrique de la colonne de la première bande à cette abscisse."""
         band = self.spec["bands"][0]
@@ -1013,6 +1051,16 @@ class HtmlRenderer:
             elif other["x_mm"] < e["x_mm"] - 5:
                 left_bound = max(left_bound, other["x_mm"] + other.get("w_mm", 0.0) + 4.0)
         left_bound, right_bound = self.rule_bounds(e, box, left_bound, right_bound)
+        # Une colonne de la première bande à la hauteur de l'élément (le profil à
+        # droite d'un nom en grand corps, cv2) borne aussi.
+        band = self.spec["bands"][0]
+        for c in band["columns"]:
+            if not (band["y_sample"] <= e["y_mm"] + box and band["bottom_sample"] >= e["y_mm"]):
+                continue
+            if c["x_mm"] > e["x_mm"] + 5:
+                right_bound = min(right_bound, c["x_mm"] - 4.0)
+            elif c["x_mm"] + c["w_mm"] < e["x_mm"] - 5:
+                left_bound = max(left_bound, c["x_mm"] + c["w_mm"] + 4.0)
         if e.get("align") == "right":
             return float(e["rx_mm"] - left_bound)
         if e.get("align") == "center":
@@ -1186,8 +1234,9 @@ class HtmlRenderer:
                 f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"], self.stretch_css(d))}"></div>'
                 for d in band["spec"].get("decorations", [])
             )
+            floor = f"min-height:{self.band_floor(bi):.2f}mm;" if bi == 0 else ""
             bands_html.append(
-                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;margin-top:calc({margin:.2f}mm*var(--k))">{band_decor}{"".join(cols)}</div>'
+                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;{floor}margin-top:calc({margin:.2f}mm*var(--k))">{band_decor}{"".join(cols)}</div>'
             )
             bands_html.extend(
                 f'<div style="position:relative;height:0"><div style="{deco_css(d, d["x_mm"], d["dy_mm"])}"></div></div>'

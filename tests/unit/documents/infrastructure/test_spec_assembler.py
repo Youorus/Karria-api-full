@@ -1249,3 +1249,29 @@ def test_des_coordonnees_a_cote_du_titre_contact_restent_dans_lentete() -> None:
     spec, _, _ = _assemble(lines, plan)
     assert {"phone", "email"} <= {e["field"] for e in spec["header"]["elements"]}
     assert sections(spec)["contact"]["slots"] == []
+
+
+def test_le_bas_du_contenu_ignore_un_pied_de_page(built: tuple) -> None:
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+    lines = [
+        raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+        raw_line("L2", "COMPETENCES", 20, 50, size=11, caps=True),
+        raw_line("L3", "Python", 20, 57),
+        raw_line("L4", "0612", 20, 280, w=12),
+    ]
+    plan = _mini_plan(
+        [
+            {
+                "ref": "S1",
+                "kind": "skills",
+                "title_lines": ["L2"],
+                "items": [{"lines": [{"line": "L3", "role": "skill"}]}],
+                "side_roles": [],
+            }
+        ],
+        [{"line": "L1", "field": "full_name"}, {"line": "L4", "field": "phone"}],
+    )
+    spec, _, _ = _assemble(lines, plan)
+    assert spec["content_bottom_mm"] < 100.0
+    assert built[0]["content_bottom_mm"] > 0

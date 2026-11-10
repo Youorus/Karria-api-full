@@ -312,7 +312,12 @@ class SpecAssembler(SpecBuilder):
             if i + 1 < len(spec_bands):
                 spec_band["gap_after_mm"] = round(spec_bands[i + 1]["y_sample"] - bottom, 2)
         first_top = spec_bands[0]["y_sample"]
-        content_bottom = max(ln.bottom for ln in self.lines)
+        # Le bas du flux : ses rubriques, pas un pied de page posé en absolu dans
+        # l'en-tête (cv5 : le contenu d'une personne descendait sur les coordonnées).
+        content_bottom = max(
+            [ln.bottom for ln in self.lines if self.owner.get(ln.id) != "header"]
+            or [ln.bottom for ln in self.lines]
+        )
         header = self.header_from_plan(first_top, styles, sample, anchors)
         page_decor = self.band_and_flow_decorations(spec_bands, anchors, first_top, content_bottom)
         page_decor.extend(self.page_decorations(spec_bands))
