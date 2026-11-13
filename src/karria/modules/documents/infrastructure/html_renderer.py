@@ -103,6 +103,7 @@ def fit_script(spec: Json, *, live: bool) -> str:
     le répète pour l'app (ADR-0029).
     """
     ph = float(spec["page"]["height_mm"])
+    top_mm = float(spec.get("first_band_top_mm", 12.0))
     k_steps = ",".join(str(k) for k in SPACING_STEPS)
     f_steps = ",".join(str(f) for f in FONT_STEPS)
     guides = (
@@ -127,9 +128,27 @@ def fit_script(spec: Json, *, live: bool) -> str:
         "for(var j=1;j<F.length&&!ok;j++){f=F[j];r.style.setProperty('--f',f);ok=b()<=lim}"
         # Rien ne tient sur une page : les pages suivantes sont assumées, à
         # l'espacement et au corps naturels, plutôt qu'un CV comprimé **et**
-        # débordant. La feuille prend n hauteurs de page : Chromium coupe là.
+        # débordant — et la seconde page est **propre** (Marc, 13/11) : aucun
+        # élément ni titre coupé par la pliure, un haut de page à la marge de
+        # la première, les ornements pleine hauteur prolongés. La feuille prend
+        # n hauteurs de page : Chromium coupe là.
         "if(!ok){k=1;f=1;r.style.setProperty('--k',1);r.style.setProperty('--f',1);"
-        f"n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*{ph})+'mm';{guides}}}"
+        f"var top={top_mm}*mm,pt=p.getBoundingClientRect().top;"
+        # Un élément (item, ou titre hors item) qui chevauche une pliure descend
+        # sous elle, à la marge haute ; un titre collé à la pliure suit son premier item.
+        "function sh(e){var q=e.getBoundingClientRect();return{t:q.top-pt,b:q.bottom-pt}}"
+        "function push(e,y){var q=sh(e);e.style.marginTop=(parseFloat(getComputedStyle(e).marginTop)||0)+(y-q.t)+'px'}"
+        "document.querySelectorAll('.col').forEach(function(c){"
+        "var els=Array.prototype.filter.call(c.querySelectorAll('.item,.t'),function(e){return e.classList.contains('item')||!e.closest('.item')});"
+        "for(var i=0;i<els.length;i++){var e=els[i],q=sh(e);if(q.b-q.t>ph*0.8)continue;"
+        "var g=Math.floor(q.t/ph),cut=(g+1)*ph;if(q.b>cut){"
+        "var prev=els[i-1];if(prev&&!prev.classList.contains('item')&&!prev.closest('.item')&&sh(prev).b>cut-12*mm){push(prev,cut+top);i--;continue}"
+        "push(e,cut+top)}}});"
+        "n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*ph)+'mm';"
+        # Les ornements qui couvraient toute la première page couvrent toutes les pages.
+        "Array.prototype.forEach.call(p.children,function(e){if(e.classList.contains('band')||e.classList.contains('pb'))return;"
+        "var q=e.getBoundingClientRect();if(q.height>=ph*0.85&&getComputedStyle(e).position==='absolute'){e.style.height=(n*ph)+'mm'}});"
+        f"{guides}}}"
         "document.title='fit k='+k+' f='+f+' pages='+n;"
         "window.karriaFit={k:k,f:f,pages:n};window.fitDone=true});</script>"
     )
