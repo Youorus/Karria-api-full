@@ -642,6 +642,10 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 22 h — `latest_version` dans `GET /app/release`
+
+- `APP_RELEASE__IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` (« 1.2.0 ») : le numéro lisible rendu par la route, montré par l'écran bloquant de l'app. Procédure de sortie : poser `LATEST_BUILD`, `LATEST_VERSION`, `STORE_URL` (et `MINIMUM_BUILD` si on veut) dans l'env Dokploy de l'API **et** `/root/karria-api.env`, puis redéployer. Tout à 0 aujourd'hui.
+
 ## 2026-11-13, 21 h — les neuf créations Karria v5 en prod, validées par Marc
 
 - Miroir **tout ou rien** : si une bande ne peut pas s'inverser (colonne latérale, une seule colonne), rien ne s'inverse — un en-tête inversé posait la photo sur le texte (Frise Pharmacie v5). Frise Pharmacie publiée en **v6 sans miroir**, ressemblance 0,77 acceptée à la main (`--max-ssim 0.78`, inscrit dans le rapport) : polices Manrope + Mulish, vert forêt, portrait généré. Les huit autres en v5 (graines 1..9). Marc : « c'est déjà très bien, j'aime beaucoup ».
