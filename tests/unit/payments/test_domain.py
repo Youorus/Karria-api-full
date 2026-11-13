@@ -9,6 +9,7 @@ import pytest
 
 from karria.modules.payments.domain import (
     AD_FREE_PLAN,
+    AD_FREE_YEARLY_PLAN,
     COFFEE_TIERS,
     GRACE_PERIOD,
     BillingAccount,
@@ -79,7 +80,16 @@ class TestPrix:
         priced = price(CheckoutOrder(ProductKind.AD_FREE))
         assert priced.mode == "subscription"
         assert priced.amount_cents == 499
-        assert priced.metadata == {"kind": "ad_free"}
+        assert priced.metadata == {"kind": "ad_free", "plan": "monthly"}
+
+    def test_l_annuel_vaut_dix_mois_soit_deux_offerts(self) -> None:
+        priced = price(CheckoutOrder(ProductKind.AD_FREE, plan="yearly"))
+        assert priced.spec is AD_FREE_YEARLY_PLAN
+        assert priced.mode == "subscription"
+        assert priced.amount_cents == 4990 == AD_FREE_PLAN.amount_cents * 10
+        assert AD_FREE_YEARLY_PLAN.interval == "year"
+        assert AD_FREE_YEARLY_PLAN.lookup_key == "karria_ad_free_yearly"
+        assert priced.metadata == {"kind": "ad_free", "plan": "yearly"}
 
     def test_les_cafes_portent_leur_nombre(self) -> None:
         priced = price(CheckoutOrder(ProductKind.COFFEE, coffee_count=3))

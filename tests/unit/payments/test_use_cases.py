@@ -185,6 +185,7 @@ class TestOpenCheckout:
             "user_id": str(env.user),
             "amount_cents": "499",
             "kind": "ad_free",
+            "plan": "monthly",
         }
         assert request.success_url == (
             f"{RETURN_PAGE}?to=karria%3A%2F%2Fpaiement%2Fretour&status=success"

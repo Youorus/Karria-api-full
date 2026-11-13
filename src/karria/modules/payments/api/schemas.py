@@ -36,8 +36,9 @@ class PriceRead(BaseModel):
     label: str
     amount_cents: int
     currency: str
-    interval: Literal["month"] | None = Field(
-        default=None, description="`month` pour l'abonnement ; absent pour un paiement unique."
+    interval: Literal["month", "year"] | None = Field(
+        default=None,
+        description="`month` ou `year` pour l'abonnement ; absent pour un paiement unique.",
     )
 
     @classmethod
@@ -70,6 +71,9 @@ class CatalogResponse(BaseModel):
 
     currency: str
     ad_free: PriceRead = Field(description="« Karria sans pub », par mois, sans engagement.")
+    ad_free_yearly: PriceRead = Field(
+        description="« Karria sans pub », par an : deux mois offerts sur douze, sans engagement."
+    )
     coffees: list[CoffeeRead]
     templates: list[TemplateOfferRead]
     enabled: EnabledRead
@@ -79,6 +83,7 @@ class CatalogResponse(BaseModel):
         return cls(
             currency=cat.currency,
             ad_free=PriceRead.from_spec(cat.ad_free),
+            ad_free_yearly=PriceRead.from_spec(cat.ad_free_yearly),
             coffees=[
                 CoffeeRead(count=count, **PriceRead.from_spec(spec).model_dump())
                 for count, spec in cat.coffees
@@ -109,6 +114,10 @@ class CreateCheckoutSessionRequest(BaseModel):
         default=1, ge=1, le=10, description="Nombre de cafés : 1, 2, 3 ou 5 (`coffee`)."
     )
     template_id: UUID | None = Field(default=None, description="Le modèle à acheter (`template`).")
+    plan: Literal["monthly", "yearly"] = Field(
+        default="monthly",
+        description="La formule sans pub (`ad_free`) : `monthly` (défaut) ou `yearly`.",
+    )
     return_url: str | None = Field(
         default=None,
         max_length=2_048,
@@ -124,6 +133,7 @@ class CreateCheckoutSessionRequest(BaseModel):
             kind=ProductKind(self.payment_type),
             coffee_count=self.coffee_count,
             template_id=self.template_id,
+            plan=self.plan,
         )
 
 

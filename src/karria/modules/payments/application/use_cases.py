@@ -618,7 +618,8 @@ class HandleWebhook:
         thanks = (
             ThankYou.for_subscription(
                 updated.user_id,
-                amount_cents=AD_FREE_PLAN.amount_cents,
+                # Le montant réellement prélevé : 4,99 € ou 49,90 €.
+                amount_cents=remote.amount_cents or AD_FREE_PLAN.amount_cents,
                 currency=AD_FREE_PLAN.currency,
             )
             if updated.activated_from(account)

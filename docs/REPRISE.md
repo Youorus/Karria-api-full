@@ -642,6 +642,13 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13 — formule annuelle « sans pub » et CV de démonstration
+
+- `payments` : `AD_FREE_YEARLY_PLAN` (49,90 € / an, `karria_ad_free_yearly`, deux mois offerts sur douze), `plan` (`monthly` | `yearly`) dans `POST /payments/checkout-session`, `ad_free_yearly` dans `GET /payments/catalog`. Le prix Stripe se crée tout seul au premier achat (lookup_key).
+- Le merci d'abonnement prend le montant réel de la période (`ProviderSubscription.amount_cents`).
+- Prod : l'image de l'API avait perdu son tag sur le serveur, re-taguée `karria-api-ujqvaj:latest` le 13/11.
+- CV complet de démonstration écrit sur les deux comptes de Marc (gmail 83dfd8c0… et Apple 0a5ec797…, le compte réellement utilisé) ; sauvegarde de l'ancien CV Apple dans `/root/cv-backups/`.
+
 ## Où on en est
 
 Nouvelle API de Karria, « très similaire à la V1, écrite parfaitement ».

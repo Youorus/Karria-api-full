@@ -6,6 +6,8 @@ nulle part ici.
 
 from karria.modules.payments.domain.catalog import (
     AD_FREE_PLAN,
+    AD_FREE_PLANS,
+    AD_FREE_YEARLY_PLAN,
     COFFEE_TIERS,
     CURRENCY,
     Catalog,
@@ -52,6 +54,8 @@ from karria.modules.payments.domain.subscription import (
 
 __all__ = [
     "AD_FREE_PLAN",
+    "AD_FREE_PLANS",
+    "AD_FREE_YEARLY_PLAN",
     "ALLOWED_RETURN_HOSTS",
     "APP_SCHEME",
     "COFFEE_TIERS",

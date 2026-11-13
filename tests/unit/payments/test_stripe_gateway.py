@@ -498,6 +498,21 @@ class TestSubscriptionTranslation:
         assert remote.cancel_scheduled is True
         assert remote.ends_at == datetime.fromtimestamp(1_800_000_000, tz=UTC)
         assert remote.user_id is None
+        assert remote.amount_cents is None
+
+    def test_le_montant_de_la_periode_est_relu_sur_l_element(self) -> None:
+        remote = translate_subscription(
+            {
+                "id": "sub_1",
+                "customer": "cus_1",
+                "status": "active",
+                "items": {
+                    "data": [{"current_period_end": 1_800_000_000, "price": {"unit_amount": 4990}}]
+                },
+                "metadata": {},
+            }
+        )
+        assert remote.amount_cents == 4990
 
     def test_une_date_de_fin_prime(self) -> None:
         remote = translate_subscription(

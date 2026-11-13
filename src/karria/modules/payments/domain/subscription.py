@@ -73,6 +73,8 @@ class ProviderSubscription:
     cancel_scheduled: bool
     ends_at: datetime | None
     user_id: UUID | None = None
+    #: Le montant d'une période, tel que Stripe le prélève (mensuel ou annuel).
+    amount_cents: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

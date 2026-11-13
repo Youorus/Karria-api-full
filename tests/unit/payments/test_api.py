@@ -113,6 +113,8 @@ class TestCatalogue:
             "currency": "eur",
             "interval": "month",
         }
+        assert body["ad_free_yearly"]["amount_cents"] == 4990
+        assert body["ad_free_yearly"]["interval"] == "year"
         assert [c["count"] for c in body["coffees"]] == [1, 2, 3, 5]
         assert body["coffees"][3]["amount_cents"] == 1299
         assert body["templates"] == [
@@ -173,6 +175,25 @@ class TestCheckoutSession:
         assert response.status_code == 201
         assert response.json()["mode"] == "subscription"
         assert "to=karria%3A%2F%2Fpaiement%2Fretour" in h.gateway.opened[0].cancel_url
+
+    async def test_ouvre_l_abonnement_annuel_quand_on_le_choisit(self) -> None:
+        h = Harness(FakeGateway())
+        assert h.gateway is not None
+        response = await h.http.post(
+            "/api/v1/payments/checkout-session",
+            json={"payment_type": "ad_free", "plan": "yearly"},
+        )
+        assert response.status_code == 201
+        assert response.json()["amount_cents"] == 4990
+        assert "karria_ad_free_yearly" in h.gateway.prices
+
+    async def test_une_formule_inconnue_fait_422(self) -> None:
+        h = Harness(FakeGateway())
+        response = await h.http.post(
+            "/api/v1/payments/checkout-session",
+            json={"payment_type": "ad_free", "plan": "weekly"},
+        )
+        assert response.status_code == 422
 
     async def test_un_palier_de_cafes_inconnu_fait_422(self) -> None:
         h = Harness(FakeGateway())

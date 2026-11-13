@@ -7,7 +7,8 @@ Contrat
   prix est retrouvé par sa `lookup_key` et créé s'il manque ; Marc ne saisit
   rien à la main, et un prix changé ici produit un nouveau prix Stripe au
   premier achat (la clé est transférée).
-- Trois produits : « Karria sans pub » (4,99 € par mois, sans engagement),
+- Trois produits : « Karria sans pub » (4,99 € par mois, ou 49,90 € par an
+  — deux mois offerts sur douze —, sans engagement),
   les cafés (1, 2, 3 ou 5, à prix fixes), et les modèles de CV Premium —
   dont le prix vient de `documents`, par le port `TemplateStore`.
 - Les montants sont des **entiers de centimes**. Jamais de flottant : deux
@@ -32,6 +33,8 @@ CURRENCY: Final = "eur"
 
 type CheckoutMode = Literal["payment", "subscription"]
 
+type AdFreePlan = Literal["monthly", "yearly"]
+
 
 class ProductKind(StrEnum):
     """Ce qu'on peut payer."""
@@ -49,13 +52,14 @@ class PriceSpec:
         lookup_key: La clé stable par laquelle le prix est retrouvé chez le
             prestataire. Elle ne change pas quand le montant change : la clé
             est transférée au nouveau prix.
-        interval: `month` pour un abonnement, `None` pour un paiement unique.
+        interval: `month` ou `year` pour un abonnement, `None` pour un
+            paiement unique.
     """
 
     lookup_key: str
     product_name: str
     amount_cents: int
-    interval: Literal["month"] | None = None
+    interval: Literal["month", "year"] | None = None
     currency: str = CURRENCY
 
     @property
@@ -75,6 +79,21 @@ AD_FREE_PLAN: Final = PriceSpec(
 
 #: Les paliers de cafés : nombre de tasses → prix. Pas de montant libre : un
 #: champ libre invite les fautes de frappe et les montants dérisoires.
+#: L'annuel : dix mois au prix du mensuel, soit deux mois offerts sur douze
+#: (12 × 4,99 € = 59,88 € ; 49,90 € fait 9,98 € de moins). Une ancre qui
+#: rend le mensuel lisible, et un engagement plus long pour qui le veut.
+AD_FREE_YEARLY_PLAN: Final = PriceSpec(
+    lookup_key="karria_ad_free_yearly",
+    product_name="Karria sans pub (annuel)",
+    amount_cents=4990,
+    interval="year",
+)
+
+AD_FREE_PLANS: Final[dict[str, PriceSpec]] = {
+    "monthly": AD_FREE_PLAN,
+    "yearly": AD_FREE_YEARLY_PLAN,
+}
+
 COFFEE_TIERS: Final[dict[int, int]] = {1: 299, 2: 499, 3: 799, 5: 1299}
 
 
@@ -120,6 +139,7 @@ class CheckoutOrder:
     kind: ProductKind
     coffee_count: int = 1
     template_id: UUID | None = None
+    plan: AdFreePlan = "monthly"
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +170,12 @@ def price(order: CheckoutOrder, *, offer: PremiumOffer | None = None) -> PricedO
         TemplateOfferNotFoundError: Un modèle qui n'est pas en vente.
     """
     if order.kind is ProductKind.AD_FREE:
-        return PricedOrder(order.kind, AD_FREE_PLAN, "subscription", {"kind": order.kind.value})
+        return PricedOrder(
+            order.kind,
+            AD_FREE_PLANS[order.plan],
+            "subscription",
+            {"kind": order.kind.value, "plan": order.plan},
+        )
     if order.kind is ProductKind.COFFEE:
         spec = coffee_price(order.coffee_count)
         return PricedOrder(
@@ -178,6 +203,7 @@ class Catalog:
     ad_free: PriceSpec
     coffees: tuple[tuple[int, PriceSpec], ...]
     templates: tuple[PremiumOffer, ...]
+    ad_free_yearly: PriceSpec = AD_FREE_YEARLY_PLAN
     currency: str = CURRENCY
 
 

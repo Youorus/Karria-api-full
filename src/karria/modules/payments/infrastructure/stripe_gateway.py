@@ -215,7 +215,13 @@ def translate_subscription(subscription: Any) -> ProviderSubscription:
         cancel_scheduled=cancel_scheduled,
         ends_at=ended_at or cancel_at or (period_end if cancel_scheduled else None),
         user_id=_uuid(_field(metadata, "user_id")),
+        amount_cents=_amount(_field(_field(item, "price"), "unit_amount")),
     )
+
+
+def _amount(value: Any) -> int | None:
+    """Un montant en centimes, ou `None` s'il manque."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _mapping(raw: Any) -> dict[str, Any]:
