@@ -139,12 +139,13 @@ class TestDerivation:
         assert a["styles"]["body"]["family"] != b["styles"]["body"]["family"]
 
 
-def test_pas_de_miroir_quand_une_rubrique_a_une_colonne_laterale() -> None:
+def test_une_bande_a_colonne_laterale_garde_sa_place_mais_l_en_tete_s_inverse() -> None:
     spec = copy.deepcopy(SPEC)
-    spec["bands"][0]["columns"][0]["sections"][0]["side"] = "left"
+    spec["bands"][0]["columns"][0]["sections"][0]["side"] = {"w_mm": 20.0, "dx_mm": -30.0}
     derived, report = derive_spec(spec, seed=0)
-    assert report.mirrored is False
-    assert derived["bands"][0]["columns"][0]["x_mm"] == 10.0
+    assert report.mirrored is True
+    assert [c["x_mm"] for c in derived["bands"][0]["columns"]] == [10.0, 80.0]
+    assert derived["header"]["photo"]["x_mm"] == 150.0
 
 
 def test_les_choix_evitent_la_source() -> None:

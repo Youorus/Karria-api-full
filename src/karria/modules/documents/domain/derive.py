@@ -72,6 +72,8 @@ MIN_HUE_DISTANCE_DEG: Final = 60.0
 #: Au-delà de cette ressemblance (SSIM tolérant) au rendu de la source, la
 #: dérivation n'est pas une création distincte : on la refuse.
 MAX_SSIM_TO_SOURCE: Final = 0.68
+#: Une bande d'une seule colonne n'a rien à inverser.
+MIN_COLUMNS_TO_MIRROR: Final = 2
 NAME_ROLES: Final[frozenset[str]] = frozenset(
     {"header.first_name", "header.last_name", "header.name"}
 )
@@ -177,26 +179,31 @@ def _mirror_box(box: Json, width: float) -> None:
             line["x_mm"] = round(line["x_mm"] + delta, 2)
 
 
-def _has_side_column(spec: Json) -> bool:
-    """Vrai si une rubrique range ses dates ou ses puces dans une colonne latérale."""
-    return any(
-        section.get("side")
-        for band in spec.get("bands") or []
-        for column in band.get("columns") or []
-        for section in column.get("sections") or []
+def _band_mirrors(band: Json) -> bool:
+    """Une bande s'inverse si elle a au moins deux colonnes et aucune colonne latérale.
+
+    Une colonne pleine largeur n'a rien à inverser ; une rubrique dont les
+    dates ou les puces vivent à gauche du texte (`side`) sortirait de la page
+    une fois collée au bord (Frise Pharmacie, 13/11). Ces bandes gardent leur
+    place ; l'en-tête, la photo et les ornements de page s'inversent quand même.
+    """
+    columns = band.get("columns") or []
+    if len(columns) < MIN_COLUMNS_TO_MIRROR:
+        return False
+    return not any(
+        section.get("side") for column in columns for section in column.get("sections") or []
     )
 
 
 def _mirror(spec: Json) -> bool:
-    """Inverse la composition en miroir ; faux si la page n'a pas de largeur.
+    """Inverse la composition en miroir ; faux si rien ne s'est inversé.
 
-    Pas de miroir quand une rubrique a une colonne latérale (dates, puces à
-    gauche du texte) : elle déborderait de la page une fois la colonne
-    collée au bord gauche (Frise Pharmacie, 13/11). La création se distingue
-    alors par ses polices, sa couleur et sa photo.
+    Chaque bande décide pour elle (`_band_mirrors`) ; l'en-tête, la photo et
+    les ornements de page s'inversent toujours, pour que la création change de
+    côté même quand le corps garde ses colonnes latérales.
     """
     width = float((spec.get("page") or {}).get("width_mm") or 0)
-    if width <= 0 or _has_side_column(spec):
+    if width <= 0:
         return False
     header = spec.get("header") or {}
     for element in header.get("elements") or []:
@@ -208,6 +215,8 @@ def _mirror(spec: Json) -> bool:
     for deco in spec.get("page_decorations") or []:
         _mirror_box(deco, width)
     for band in spec.get("bands") or []:
+        if not _band_mirrors(band):
+            continue
         for deco in band.get("decorations") or []:
             _mirror_box(deco, width)
         columns = band.get("columns") or []
