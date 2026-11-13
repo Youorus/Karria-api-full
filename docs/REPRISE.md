@@ -642,6 +642,12 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, fin d'après-midi — INCIDENT worker réparé, paliers, aperçus
+
+- **Incident** : depuis le 10/11, l'env Dokploy du worker (`wEJP2eb298j-fVCoPBp_x`) ne contenait que les trois variables `LLM__*` (mon écriture directe en base avait remplacé l'env complet, stocké chiffré `enc:v1:…`). Le worker redémarrait en boucle sans `DB__URL` : **aucun job** (explications ATS, envois d'e-mail, logos, index des offres) pendant trois jours ; 6 170 jobs `todo` accumulés. Réparé le 13/11 ~15 h 45 : env complet (plain, depuis `/root/karria-api.env`, y compris `LLM__TASKS__TEMPLATE_EXTRACT`) posé dans `application.env` **et** `docker service update --env-add` ; service monté à **3 réplicas** pour drainer — **à redescendre à 1** (`docker service scale karria-worker-y9xkmo=1`) une fois la file vide. Leçon : ne jamais remplacer `application.env` par un fragment ; l'env de l'API en base est chiffré, celui du worker est désormais en clair (Dokploy l'accepte).
+- Envoi d'e-mail testé de bout en bout par script (`SendDocuments` depuis un conteneur ponctuel, dernier export de Marc → mtakoumba@gmail.com, envoi `886dfbd9…`) : en file tant que le worker drainait. Gabarit `documents_sent` vu (`scripts.mail_preview`) : sobre, logo + « préparés avec Karria », pied karria.fr — conforme à la demande.
+- `condense_cv` : palier 3 (une mission, 8 compétences, 3 langues/intérêts, à-propos court). Les exports de Marc sur Galerie Monochrome dépassaient encore après le palier 2 (`documents.export_overflows`). Le trait de coupure de l'atelier porte « Page 2 ».
+
 ## 2026-11-13, soir — un CV sur une page, aperçus des exports
 
 - `domain/condense.py` : `condense_cv(cv, level)` resserre la **vue** par paliers (1 : ≤ 3 missions, détail formations/projets replié, ≤ 2 projets ; 2 : ≤ 2 missions, ≤ 10 compétences, ≤ 4 langues et centres d'intérêt, à-propos ramené à ses premières phrases) ; jamais d'expérience ni de formation retirée. `ExportCv._on_one_page` l'applique quand `fit.pages > 1` ; si rien ne suffit, le CV entier garde ses pages. `Fit.condensed` (JSON `fit.condensed`) dit ce qui a été replié ; l'app le montre.
