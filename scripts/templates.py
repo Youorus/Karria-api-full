@@ -52,6 +52,7 @@ from uuid import UUID
 from karria.bootstrap.orm import TORTOISE_ORM
 from karria.modules.documents import (
     ProcrastinateTemplateJobs,
+    build_derive_template,
     build_ingest_template,
     build_publish_plain_letter,
     build_refresh_template_colors,
@@ -61,6 +62,7 @@ from karria.modules.documents.api.dependencies import build_engine
 from karria.modules.documents.application import TemplateRepository, tint_icons
 from karria.modules.documents.application.use_cases import version_prefix
 from karria.modules.documents.domain import parse_hex_color, primary_color_of, recolor_spec
+from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.domain.plain_letter import PLAIN_FAMILY
 from karria.modules.documents.domain.view import from_sample
 from karria.modules.documents.infrastructure import FontLibrary, TortoiseTemplateRepository
@@ -215,7 +217,7 @@ def _png(pdf: bytes) -> bytes:
         return doc.render_png(0, dpi=100)
 
 
-async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911 - une sortie par commande
+async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912 - une sortie par commande
     settings = get_settings()
     configure_logging(settings.observability)
     await connect(TORTOISE_ORM)
@@ -241,6 +243,29 @@ async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911 - une sortie 
                 )
             if args.command == "dump":
                 return await _dump(templates, storage, args)
+            if args.command == "derive":
+                derive = build_derive_template(settings, storage)
+                names = (
+                    [t.name for t in await templates.list_all() if t.published_version_id]
+                    if args.all
+                    else [args.name]
+                )
+                for name in names:
+                    try:
+                        version, report = await derive.execute(
+                            name, seed=args.seed, dry_run=args.dry_run
+                        )
+                    except TemplateIngestionError as exc:
+                        print(f"{name}: REFUSÉ — {exc.details.get('detail') or exc}")
+                        continue
+                    d = report["derivation"]
+                    print(
+                        f"{name}: v{version.version} {'(essai à blanc)' if args.dry_run else 'publiée'} — "
+                        f"ressemblance {report['distance']['ssim_tolerant']:.2f}, "
+                        f"polices {d['fonts']['display']} + {d['fonts']['body']}, "
+                        f"couleur {d['primary']}, miroir {d['mirrored']}"
+                    )
+                return 0
             if args.command == "ingest":
                 done = await build_ingest_template(settings, storage).execute(UUID(args.version_id))
                 print(f"{done.status.value if done else 'introuvable'}")
@@ -297,6 +322,13 @@ def main() -> None:
         "--inline", action="store_true", help="analyser dans ce processus, sans le worker"
     )
     submit.add_argument("--letter", help="le PDF de la lettre assortie (ADR-0036)")
+    derive = sub.add_parser(
+        "derive", help="publier une création Karria dérivée de la version publiée d'un modèle"
+    )
+    derive.add_argument("name", nargs="?", help="nom technique du modèle (slug)")
+    derive.add_argument("--all", action="store_true", help="tous les modèles publiés")
+    derive.add_argument("--seed", type=int, default=1, help="graine de la dérivation")
+    derive.add_argument("--dry-run", action="store_true", help="mesurer sans publier")
     ingest = sub.add_parser("ingest", help="analyser une version en attente")
     ingest.add_argument("version_id")
     sub.add_parser("list", help="modèles et versions")

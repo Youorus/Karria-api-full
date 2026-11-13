@@ -92,6 +92,15 @@ class KarriaDocumentEngine:
                 files.append(found)
         return FontSet(files)
 
+    async def ensure_fonts(self, spec: dict[str, Any]) -> list[str]:
+        """Télécharge les familles manquantes d'une spécification dérivée ; rend celles servies."""
+        served: list[str] = []
+        for ref in spec.get("fonts", []):
+            record = await self._library.family(str(ref["family"]), download=True)
+            if record is not None and record.family not in served:
+                served.append(record.family)
+        return served
+
     async def analyze(self, pdf: bytes) -> Analysis:
         """L'analyse d'un PDF de modèle : la boucle bornée plan → rendu → mesure (ADR-0037)."""
         loop = IngestionLoop(

@@ -641,6 +641,11 @@ class FakeEngine:
     fidelity_letter: Fidelity = field(default_factory=good_fidelity)
     calls: list[tuple[str, Any]] = field(default_factory=list)
 
+    async def ensure_fonts(self, spec: dict[str, Any]) -> list[str]:
+        families = [str(f["family"]) for f in spec.get("fonts", [])]
+        self.calls.append(("ensure_fonts", families))
+        return families
+
     async def analyze(self, pdf: bytes) -> Analysis:
         self.calls.append(("analyze", pdf))
         if self.analyze_error is not None:

@@ -67,6 +67,9 @@ PRIMARIES: Final[tuple[str, ...]] = (
 )
 
 MIN_HUE_DISTANCE_DEG: Final = 60.0
+#: Au-delà de cette ressemblance (SSIM tolérant) au rendu de la source, la
+#: dérivation n'est pas une création distincte : on la refuse.
+MAX_SSIM_TO_SOURCE: Final = 0.60
 DISPLAY_ROLES: Final[frozenset[str]] = frozenset(
     {"header.first_name", "header.last_name", "header.name", "section_title"}
 )

@@ -25,6 +25,7 @@ from karria.modules.documents.application import (
     CvSource,
     DeleteGeneratedCv,
     DeliverDocuments,
+    DeriveTemplateVersion,
     DocumentEngine,
     DocumentMailer,
     ExplainAts,
@@ -449,6 +450,13 @@ def get_explainer(llm: LanguageModelDep) -> AtsExplainer:
 def build_ingest_template(settings: Settings, storage: ObjectStorage) -> IngestTemplateVersion:
     """L'ingestion d'une version, pour le travail `documents.ingest_template` et la commande."""
     return IngestTemplateVersion(
+        get_template_repository(), build_engine(settings, storage), storage, get_clock()
+    )
+
+
+def build_derive_template(settings: Settings, storage: ObjectStorage) -> DeriveTemplateVersion:
+    """La dérivation d'un modèle en création Karria, pour `scripts/templates.py derive`."""
+    return DeriveTemplateVersion(
         get_template_repository(), build_engine(settings, storage), storage, get_clock()
     )
 

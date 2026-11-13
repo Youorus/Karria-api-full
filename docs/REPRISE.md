@@ -642,6 +642,11 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 19 h — commande `derive` : créations Karria publiées comme nouvelles versions
+
+- `DeriveTemplateVersion` (+ `build_derive_template`, `scripts.templates derive NAME|--all --seed N [--dry-run]`) : dérive la version publiée, range les polices manquantes (`engine.ensure_fonts`, téléchargement), rend l'exemple avec les pictogrammes teintés, **porte inversée** (ressemblance SSIM tolérant ≤ 0,60 à la source, aucune police commune), publie une **nouvelle version du même modèle** (ids inchangés), étiquette « création Karria », rapport `derivation` + `distance`. La lettre appariée n'est pas dérivée (lettre sobre servie).
+- Rejouable : relancer `derive` crée une nouvelle version ; l'ancienne version transcrite reste en base (ses fichiers aussi) — à purger plus tard si Marc veut effacer toute trace des transcriptions.
+
 ## 2026-11-13, 18 h — dérivation : des modèles qui appartiennent à Karria
 
 - Question de Marc : les modèles viennent d'un fournisseur (Canva) ; une transcription fidèle reste l'expression du fournisseur. `domain/derive.py` : `derive_spec(spec, seed, source_sha256)` produit une création distincte et tracée — composition en miroir, photo rect/rond, couple de polices libres sans famille commune avec la source, couleur principale à > 60° de teinte, titres (capitales/espacement) inversés, filets épaissis ; `source.derivation` + `meta.origin = karria`. Tests `test_derive.py`.

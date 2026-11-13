@@ -56,6 +56,7 @@ from karria.modules.documents.application.ports import (
     UserTemplateRepository,
 )
 from karria.modules.documents.domain.ats import analyse
+from karria.modules.documents.domain.derive import MAX_SSIM_TO_SOURCE, derive_spec
 from karria.modules.documents.domain.errors import (
     AccountEmailUnknownError,
     CvMissingError,
@@ -883,6 +884,176 @@ class SubmitTemplate:
             letter=letter is not None,
         )
         return version
+
+
+class DeriveTemplateVersion:
+    """Publie, comme nouvelle version d'un modèle, une création Karria dérivée de la version publiée.
+
+    La dérivation (`derive_spec`) change la composition, les polices, la
+    couleur, les titres et les ornements ; la version garde son identifiant
+    de modèle (les dossiers et les choix des personnes ne cassent pas). La
+    **porte est inversée** : on mesure la ressemblance du rendu dérivé au PDF
+    source et l'on refuse au-delà de `MAX_SSIM_TO_SOURCE`, ou si une police
+    de la source est reprise. La lettre appariée de la source n'est pas
+    dérivée : la version sert la lettre sobre.
+    """
+
+    def __init__(
+        self,
+        templates: TemplateRepository,
+        engine: DocumentEngine,
+        storage: ObjectStorage,
+        clock: Clock,
+    ) -> None:
+        self._templates, self._engine, self._storage, self._clock = (
+            templates,
+            engine,
+            storage,
+            clock,
+        )
+
+    async def execute(
+        self, name: str, *, seed: int = 1, dry_run: bool = False
+    ) -> tuple[TemplateVersion, dict[str, Any]]:
+        """Rend la version dérivée (non enregistrée si `dry_run`) et son compte rendu.
+
+        Raises:
+            TemplateNotFoundError: Modèle inconnu ou sans version publiée.
+            TemplateIngestionError: Version sans exemple, polices introuvables, ou
+                dérivation trop proche de sa source.
+        """
+        template = await self._templates.get_by_name(slugify(name))
+        if template is None or template.published_version_id is None:
+            raise TemplateNotFoundError()
+        source_version = await self._templates.get_version(template.published_version_id)
+        if source_version is None or not source_version.spec or not source_version.sample:
+            raise TemplateIngestionError("la version publiée n'a ni spécification ni exemple")
+        source_pdf = await self._storage.get(Bucket.TEMPLATES, source_version.source_key)
+        spec, derivation = derive_spec(
+            source_version.spec, seed=seed, source_sha256=hashlib.sha256(source_pdf).hexdigest()
+        )
+        if derivation.shares_a_font:
+            raise TemplateIngestionError("la dérivation reprend une police de la source")
+        served = await self._engine.ensure_fonts(spec)
+        missing = sorted({str(f["family"]) for f in spec["fonts"] if f["family"] not in served})
+        if missing:
+            raise TemplateIngestionError(f"polices introuvables : {', '.join(missing)}")
+
+        # Les ressources de la source (pictogrammes, photo d'exemple), teintées à la nouvelle couleur.
+        assets: dict[str, bytes] = {}
+        for asset_name, key in source_version.assets.items():
+            assets[asset_name] = await self._storage.get(Bucket.TEMPLATES, key)
+        icons = {k: v for k, v in assets.items() if not k.startswith("sample_")}
+        icons = await asyncio.to_thread(tint_icons, icons, source_version.spec, derivation.primary)
+        photo_name = (spec["header"].get("photo") or {}).get("sample_file")
+        photo = assets.get(photo_name) if photo_name else None
+        view = from_sample(spec, source_version.sample)
+        rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
+        distance = await self._engine.measure(source_pdf, rendered.data)
+        if distance.ssim_tolerant > MAX_SSIM_TO_SOURCE:
+            raise TemplateIngestionError(
+                f"dérivation trop proche de la source (ressemblance {distance.ssim_tolerant:.2f} > "
+                f"{MAX_SSIM_TO_SOURCE:.2f})"
+            )
+        report = {
+            "derivation": derivation.to_json(),
+            "derived_from": {
+                "version": source_version.version,
+                "version_id": str(source_version.id),
+            },
+            "distance": {
+                "ssim": distance.ssim,
+                "ssim_tolerant": distance.ssim_tolerant,
+                "max_ssim": MAX_SSIM_TO_SOURCE,
+                **distance.to_json(),
+            },
+            "fit": rendered.fit.to_json(),
+            "fonts": [
+                {"source": f["family"], "served": f["family"], "origin": "karria"}
+                for f in spec["fonts"]
+            ],
+            "gate": {"passed": True, "failures": []},
+        }
+        number = await self._templates.next_version_number(template.id)
+        prefix = version_prefix(template.id, number)
+        now = self._clock.now()
+        version = TemplateVersion(
+            id=uuid4(),
+            template_id=template.id,
+            version=number,
+            status=VersionStatus.PUBLISHED,
+            source_key=f"{prefix}/source.pdf",
+            created_at=now,
+            spec=spec,
+            sample=source_version.sample,
+            labels=source_version.labels,
+            report=report,
+            fonts=tuple(dict(f) for f in spec["fonts"]),
+            published_at=now,
+        )
+        if dry_run:
+            return version, report
+        previews = await self._engine.previews(rendered.data)
+        keys = {
+            "thumbnail_key": f"{prefix}/preview/vignette.webp",
+            "preview_key": f"{prefix}/preview/apercu.png",
+            "full_key": f"{prefix}/preview/apercu_pleine_page.png",
+        }
+        await self._storage.put(
+            Bucket.TEMPLATES, version.source_key, rendered.data, content_type=PDF
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES,
+            keys["thumbnail_key"],
+            previews.thumbnail_webp,
+            content_type="image/webp",
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["preview_key"], previews.preview_png, content_type="image/png"
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["full_key"], previews.full_png, content_type="image/png"
+        )
+        asset_keys: dict[str, str] = {}
+        for asset_name, data in {**assets, **icons}.items():
+            key = f"{prefix}/assets/{asset_name}"
+            await self._storage.put(Bucket.TEMPLATES, key, data, content_type="image/png")
+            asset_keys[asset_name] = key
+        done = replace(
+            version,
+            assets=asset_keys,
+            thumbnail_blurhash=previews.blurhash,
+            thumbnail_key=keys["thumbnail_key"],
+            preview_key=keys["preview_key"],
+            full_key=keys["full_key"],
+        )
+        await self._templates.save_version(done)
+        traits = gallery_traits(spec)
+        tags = tuple(template.tags) + (
+            ("création Karria",) if "création Karria" not in template.tags else ()
+        )
+        updated = replace(
+            template,
+            tags=tags,
+            primary_color=traits["primary_color"],
+            font_family=traits["font_family"],
+            has_photo=traits["has_photo"],
+            columns=traits["columns"],
+            published_version_id=done.id,
+            published_version=done.version,
+            updated_at=now,
+        )
+        await self._templates.save(updated)
+        logger.info(
+            "documents.template_derived",
+            template=template.name,
+            version=number,
+            seed=seed,
+            ssim=distance.ssim_tolerant,
+            fonts=[derivation.display_font, derivation.body_font],
+            primary=derivation.primary,
+        )
+        return done, report
 
 
 class IngestTemplateVersion:

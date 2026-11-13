@@ -31,6 +31,7 @@ arrive **en données** (forme de `GET /cv/me`) ; `letter=` rend une lettre
 
 from karria.modules.documents.api import router
 from karria.modules.documents.api.dependencies import (
+    build_derive_template,
     build_forget_user,
     build_ingest_template,
     build_publish_plain_letter,
@@ -73,6 +74,7 @@ __all__ = [
     "RenderDocument",
     "RenderedDocument",
     "TemplateShop",
+    "build_derive_template",
     "build_forget_user",
     "build_ingest_template",
     "build_publish_plain_letter",
