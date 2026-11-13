@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -62,9 +63,12 @@ class TestHistorique:
 
 class TestSuppression:
     async def test_la_suppression_efface_l_export_et_ses_deux_fichiers(self, env: Env) -> None:
-        generated = make_generated(env.user, pdf_key="g/cv.pdf", docx_key="g/cv.docx")
+        generated = replace(
+            make_generated(env.user, pdf_key="g/cv.pdf", docx_key="g/cv.docx"),
+            preview_keys=("g/apercu-1.png",),
+        )
         await env.generated.add(generated)
-        await stored(env, "g/cv.pdf", "g/cv.docx")
+        await stored(env, "g/cv.pdf", "g/cv.docx", "g/apercu-1.png")
 
         await DeleteGeneratedCv(env.generated, env.storage).execute(env.user, generated.id)
 

@@ -294,6 +294,15 @@ class FitRead(BaseModel):
     spacing: float
     font_scale: float
     pages: int
+    condensed: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Ce que l'export a replié pour tenir sur une page, par nature "
+            "(`missions`, `skills`, `languages`, `interests`, `projects`, "
+            "`projects_detail`, `educations_detail`, `summary`) ; vide sinon. "
+            "Tout reste dans le CV de la personne."
+        ),
+    )
 
 
 class PreviewPage(BaseModel):
@@ -583,6 +592,10 @@ class GeneratedCvRead(BaseModel):
     created_at: datetime
     pdf_url: str | None
     docx_url: str | None
+    preview_urls: list[str] = Field(
+        default_factory=list,
+        description="Les pages du document en image (PNG), signées, dans l'ordre.",
+    )
     fit: FitRead
     ats: dict[str, Any]
 
@@ -619,6 +632,10 @@ class GeneratedCvRead(BaseModel):
             created_at=generated.created_at,
             pdf_url=await sign(generated.pdf_key, "pdf"),
             docx_url=await sign(generated.docx_key, "docx"),
+            preview_urls=[
+                await storage.presigned_get_url(Bucket.DOCUMENTS, key)
+                for key in generated.preview_keys
+            ],
             fit=FitRead(**generated.fit.to_json()),
             ats=ats,
         )

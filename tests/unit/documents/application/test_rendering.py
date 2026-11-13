@@ -426,3 +426,86 @@ class TestCouleurPrincipaleDeLExport:
         assert env.engine.called("render_pdf")[0]["spec"]["page_decorations"][0]["stroke"] == (
             "#2E7D32"
         )
+
+
+class TestUneSeulePage:
+    """Un CV qui déborde est resserré par paliers ; sinon il garde ses pages."""
+
+    async def test_un_cv_qui_deborde_est_resserre_jusqu_a_tenir(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(
+            env.user,
+            data={
+                **CV_DATA,
+                "experiences": [
+                    {
+                        "position": "Lead",
+                        "company": "A",
+                        "missions": ["m1", "m2", "m3", "m4", "m5"],
+                    }
+                ],
+            },
+        )
+        # Première passe : deux pages ; palier 1 : une page.
+        env.engine.fits = [Fit(pages=2), Fit(pages=1, spacing=0.8)]
+
+        generated = await env.export().execute(
+            env.user, template_id=template.id, formats=["pdf"], ats_safe=False, offer_id=None
+        )
+
+        assert generated.fit.pages == 1
+        assert generated.fit.condensed == {"missions": 2}
+        rendus = env.engine.called("render_pdf")
+        assert len(rendus) == 2
+        # La vue resserrée est celle qui a été rendue, lue par l'ATS et aperçue.
+        derniere = rendus[-1]["view"]
+        experiences = next(s for s in derniere["sections"] if s["kind"] == "experiences")
+        assert len(experiences["items"][0]["bullet"]) == 3
+
+    async def test_un_cv_que_rien_ne_fait_tenir_garde_ses_pages_entieres(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(
+            env.user,
+            data={
+                **CV_DATA,
+                "experiences": [
+                    {"position": "Lead", "company": "A", "missions": ["m1", "m2", "m3", "m4"]}
+                ],
+            },
+        )
+        env.engine.fits = [Fit(pages=3), Fit(pages=2), Fit(pages=2)]
+
+        generated = await env.export().execute(
+            env.user, template_id=template.id, formats=["pdf"], ats_safe=False, offer_id=None
+        )
+
+        # Trois rendus (entier, palier 1, palier 2) ; le CV entier est gardé, sur ses pages.
+        assert len(env.engine.called("render_pdf")) == 3
+        assert generated.fit.pages == 3
+        assert generated.fit.condensed == {}
+
+    async def test_un_cv_qui_tient_n_est_pas_touche(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+
+        generated = await env.export().execute(
+            env.user, template_id=template.id, formats=["pdf"], ats_safe=False, offer_id=None
+        )
+
+        assert len(env.engine.called("render_pdf")) == 1
+        assert generated.fit.condensed == {}
+
+
+class TestApercusDeLExport:
+    async def test_chaque_page_est_rendue_en_image_et_rangee_avec_l_export(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+        env.engine.pages = 2
+
+        generated = await env.export().execute(
+            env.user, template_id=template.id, formats=["pdf"], ats_safe=False, offer_id=None
+        )
+
+        prefix = f"generated-cvs/{env.user}/{generated.id}"
+        assert generated.preview_keys == (f"{prefix}/apercu-1.png", f"{prefix}/apercu-2.png")
+        assert (Bucket.DOCUMENTS, f"{prefix}/apercu-2.png") in env.storage.objects

@@ -123,6 +123,9 @@ class GeneratedCvModel(BaseDBModel):
     offer_id: UUID | None = fields.UUIDField(null=True)
     pdf_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
     docx_key = fields.CharField(max_length=KEY_MAX_LENGTH, null=True)
+    preview_keys: list[str] = fields.JSONField(
+        default=list, description="Les pages rendues en image, dans l'ordre."
+    )
     fit: dict[str, Any] = fields.JSONField(default=dict)
     ats: dict[str, Any] = fields.JSONField(default=dict)
     ats_docx: dict[str, Any] | None = fields.JSONField(null=True)

@@ -283,7 +283,7 @@ class TestApercu:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["fit"] == {"spacing": 0.95, "font_scale": 1.0, "pages": 1}
+        assert body["fit"] == {"spacing": 0.95, "font_scale": 1.0, "pages": 1, "condensed": {}}
         [page] = body["pages"]
         assert page["width"] == 1240
         assert page["height"] == 1754
@@ -435,7 +435,9 @@ class TestExports:
         assert body["ats"]["explanation_status"] == "pending"
         assert set(body["ats"]["docx"]) == {"score", "level", "format", "checks"}
         assert fakes.jobs.explanations == [UUID(body["id"])]
-        assert sum(1 for b, _ in storage.objects if b is Bucket.DOCUMENTS) == 2
+        # Le PDF, le Word, et la page en image.
+        assert sum(1 for b, _ in storage.objects if b is Bucket.DOCUMENTS) == 3
+        assert len(body["preview_urls"]) == 1
 
     async def test_l_export_pdf_seul_n_a_ni_docx_ni_score_docx(
         self, client: AsyncClient, fakes: Fakes, me: Principal
@@ -535,7 +537,12 @@ class TestExports:
             "format": "docx",
             "checks": [],
         }
-        assert one.json()["fit"] == {"spacing": 1.0, "font_scale": 1.0, "pages": 1}
+        assert one.json()["fit"] == {
+            "spacing": 1.0,
+            "font_scale": 1.0,
+            "pages": 1,
+            "condensed": {},
+        }
 
     async def test_une_limite_hors_bornes_est_refusee(
         self, client: AsyncClient, fakes: Fakes, me: Principal

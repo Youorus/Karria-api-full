@@ -624,6 +624,9 @@ class FakeEngine:
     analyze_error: Exception | None = None
     render_error: Exception | None = None
     fit: Fit = field(default_factory=lambda: Fit(spacing=0.95, font_scale=1.0, pages=1))
+    #: Une mise en page par rendu, dans l'ordre, pour jouer un CV qui déborde
+    #: puis tient ; vide : `fit` à chaque fois.
+    fits: list[Fit] = field(default_factory=list)
     fidelity_pdf: Fidelity = field(default_factory=good_fidelity)
     fidelity_docx: Fidelity = field(default_factory=good_fidelity)
     texts: dict[str, str] = field(default_factory=lambda: {"pdf": CLEAN_TEXT, "docx": CLEAN_TEXT})
@@ -673,9 +676,10 @@ class FakeEngine:
         )
         if self.render_error is not None:
             raise self.render_error
+        fit = self.fits.pop(0) if self.fits else self.fit
         if view.get("kind") == "letter":
-            return RenderedPdf(data=PDF_LETTER_BYTES, fit=self.fit)
-        return RenderedPdf(data=PDF_SAFE_BYTES if variant else PDF_BYTES, fit=self.fit)
+            return RenderedPdf(data=PDF_LETTER_BYTES, fit=fit)
+        return RenderedPdf(data=PDF_SAFE_BYTES if variant else PDF_BYTES, fit=fit)
 
     async def render_docx(
         self,

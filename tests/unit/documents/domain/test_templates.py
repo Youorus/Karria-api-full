@@ -196,7 +196,12 @@ class TestEntites:
         assert version.fonts == ()
 
     def test_la_mise_en_page_par_defaut_tient_sur_une_page_sans_reduction(self) -> None:
-        assert Fit().to_json() == {"spacing": 1.0, "font_scale": 1.0, "pages": 1}
+        assert Fit().to_json() == {
+            "spacing": 1.0,
+            "font_scale": 1.0,
+            "pages": 1,
+            "condensed": {},
+        }
 
     def test_un_export_neuf_attend_son_explication(self) -> None:
         cv = GeneratedCv(

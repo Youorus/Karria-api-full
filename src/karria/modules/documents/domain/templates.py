@@ -178,10 +178,18 @@ class Fit:
     spacing: float = 1.0
     font_scale: float = 1.0
     pages: int = 1
+    #: Ce que l'export a replié pour tenir sur une page (`condense_cv`) :
+    #: `{"missions": 3, "skills": 2, …}` ; vide quand rien n'a été resserré.
+    condensed: dict[str, int] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         """Forme du contrat."""
-        return {"spacing": self.spacing, "font_scale": self.font_scale, "pages": self.pages}
+        return {
+            "spacing": self.spacing,
+            "font_scale": self.font_scale,
+            "pages": self.pages,
+            "condensed": dict(self.condensed),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +206,9 @@ class GeneratedCv:
     created_at: datetime
     pdf_key: str | None = None
     docx_key: str | None = None
+    #: Les pages rendues en image (`apercu-1.png`, …), dans l'ordre : ce que
+    #: l'application montre avant d'ouvrir le PDF.
+    preview_keys: tuple[str, ...] = ()
     fit: Fit = field(default_factory=Fit)
     ats: dict[str, Any] = field(default_factory=dict)
     ats_docx: dict[str, Any] | None = None

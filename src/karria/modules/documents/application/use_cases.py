@@ -50,11 +50,13 @@ from karria.modules.documents.application.ports import (
     LogoFetcher,
     OriginThrottle,
     RenderedHtml,
+    RenderedPdf,
     SendRepository,
     TemplateJobs,
     TemplateRepository,
     UserTemplateRepository,
 )
+from karria.modules.documents.domain import CONDENSE_LEVELS, condense_cv
 from karria.modules.documents.domain.ats import analyse
 from karria.modules.documents.domain.errors import (
     AccountEmailUnknownError,
@@ -573,11 +575,12 @@ class ExportCv:
             user_id, template_id, ats_safe=safe, cv=cv, primary_color=primary_color
         )
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
+        view, rendered, fit = await self._on_one_page(
+            spec, view, rendered, cv=snapshot.data, assets=assets, photo=photo
+        )
         docx = None
         if "docx" in wanted:
-            docx = await self._engine.render_docx(
-                spec, view, assets=assets, photo=photo, fit=rendered.fit
-            )
+            docx = await self._engine.render_docx(spec, view, assets=assets, photo=photo, fit=fit)
         columns = max((len(b["columns"]) for b in spec["bands"]), default=1)
         # La lecture « comme un ATS » (pdfminer) coûte des centaines de ms de CPU : hors boucle.
         report_pdf = analyse(
@@ -619,6 +622,13 @@ class ExportCv:
         if docx is not None:
             docx_key = f"{prefix}/cv.docx"
             await self._storage.put(Bucket.DOCUMENTS, docx_key, docx, content_type=DOCX)
+        preview_keys: list[str] = []
+        for n, (png, _width, _height) in enumerate(
+            await self._engine.page_images(rendered.data), 1
+        ):
+            key = f"{prefix}/apercu-{n}.png"
+            await self._storage.put(Bucket.DOCUMENTS, key, png, content_type="image/png")
+            preview_keys.append(key)
         ident = snapshot.data.get("identity") or {}
         generated = GeneratedCv(
             id=generated_id,
@@ -631,7 +641,8 @@ class ExportCv:
             created_at=self._clock.now(),
             pdf_key=pdf_key,
             docx_key=docx_key,
-            fit=rendered.fit,
+            preview_keys=tuple(preview_keys),
+            fit=fit,
             ats=main.to_json(suggest_ats_safe=suggest),
             ats_docx=report_docx.to_json(suggest_ats_safe=suggest) if report_docx else None,
             explanation=None,
@@ -661,6 +672,37 @@ class ExportCv:
             ms=round((time.monotonic() - started) * 1000),
         )
         return generated
+
+    async def _on_one_page(
+        self,
+        spec: dict[str, Any],
+        view: dict[str, Any],
+        rendered: RenderedPdf,
+        *,
+        cv: dict[str, Any],
+        assets: dict[str, bytes],
+        photo: bytes | None,
+    ) -> tuple[dict[str, Any], RenderedPdf, Fit]:
+        """Resserre la vue par paliers tant que le CV déborde d'une page (`condense_cv`).
+
+        Si aucun palier ne suffit, le CV entier est gardé, sur ses pages : on
+        ne rend pas un CV comprimé **et** débordant. Ce qui a été replié est
+        inscrit dans `Fit.condensed`.
+        """
+        if rendered.fit.pages <= 1:
+            return view, rendered, rendered.fit
+        first_view, first_rendered = view, rendered
+        for level in CONDENSE_LEVELS:
+            tight, notes = condense_cv(cv, level)
+            if not notes:
+                break
+            view = from_cv(spec, tight)
+            rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
+            if rendered.fit.pages <= 1:
+                logger.info("documents.export_condensed", level=level, condensed=notes)
+                return view, rendered, replace(rendered.fit, condensed=notes)
+        logger.info("documents.export_overflows", pages=first_rendered.fit.pages)
+        return first_view, first_rendered, first_rendered.fit
 
     async def _variant_helps(
         self,
@@ -733,7 +775,7 @@ class DeleteGeneratedCv:
 
     async def execute(self, user_id: UUID, generated_id: UUID) -> None:
         found = await GetGeneratedCv(self._generated).execute(user_id, generated_id)
-        for key in (found.pdf_key, found.docx_key):
+        for key in (found.pdf_key, found.docx_key, *found.preview_keys):
             if key:
                 await self._storage.delete(Bucket.DOCUMENTS, key)
         await self._generated.delete(generated_id)
@@ -771,7 +813,7 @@ class ForgetUser:
     async def execute(self, user_id: UUID) -> int:
         exports = await self._generated.of_user(user_id)
         for export in exports:
-            for key in (export.pdf_key, export.docx_key):
+            for key in (export.pdf_key, export.docx_key, *export.preview_keys):
                 if key:
                     await self._storage.delete(Bucket.DOCUMENTS, key)
         await self._generated.forget(user_id)
