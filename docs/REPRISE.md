@@ -642,6 +642,13 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 17 h — incident du script en direct, seconde page vérifiée
+
+- **Incident** 15 h 55 → 17 h : une accolade en trop dans la variante `live` du `fit_script` (étiquette « Page 2 ») cassait le script dans l'atelier : pas de `karriaFit`, feuille d'une page, Marc ne voyait pas la seconde page. Corrigé (`12310c4`) + test d'équilibre des accolades/parenthèses. Règle : après toute retouche du script, charger le HTML en direct (`scratchpad/page2/html_local.py` + `node -e "new Function(...)"`) avant de pousser.
+- Seconde page : le premier élément de chaque colonne d'une page suivante descend aussi à 16 mm (vérifié : 16,0 mm sur les deux colonnes).
+- Notifications d'offres (question de Marc) : règles `offers/domain/alerts.py` — seulement les offres de qualité « haute », pas deux alertes en moins de 2 h, 4 par jour au plus ; et **aucune** entre le 10 et le 13/11 à cause du worker à l'arrêt. Ses tickets push : 4/jour jusqu'au 9/11, 1 le 10/11, 0 les 11-12/11, reprise le 13/11.
+- Couleur : `documents_selections.primary_color` de Marc remis à NULL ; l'app n'écrit plus la couleur dans le choix de modèle.
+
 ## 2026-11-13, soir — seconde page propre
 
 - `fit_script` : quand rien ne tient sur une page, chaque `.item` (ou titre hors item) qui chevauche une pliure descend sous elle à 16 mm du bord, un titre collé à la pliure suit son premier item, les ornements absolus pleine page sont prolongés sur n pages, n recompté. Vérifié en local (scratchpad `page2/render_local.py`, Galerie Monochrome + CV de Marc : 2 pages, page 2 propre). Attention aux unités dans ce script : `ph` est en **px** côté JS, la hauteur de page en mm est le littéral Python.

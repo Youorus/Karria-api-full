@@ -143,7 +143,8 @@ def fit_script(spec: Json, *, live: bool) -> str:
         "document.querySelectorAll('.col').forEach(function(c){"
         "var els=Array.prototype.filter.call(c.querySelectorAll('.item,.t'),function(e){return e.classList.contains('item')||!e.closest('.item')});"
         "for(var i=0;i<els.length;i++){var e=els[i],q=sh(e);if(q.b-q.t>ph*0.8)continue;"
-        "var g=Math.floor(q.t/ph),cut=(g+1)*ph;if(q.b>cut){"
+        # … et le premier élément d'une page suivante descend aussi à la marge haute.
+        "var g=Math.floor(q.t/ph),cut=(g+1)*ph;if(g>0&&q.t<g*ph+top-0.5){push(e,g*ph+top);continue}if(q.b>cut){"
         "var prev=els[i-1];if(prev&&!prev.classList.contains('item')&&!prev.closest('.item')&&sh(prev).b>cut-12*mm){push(prev,cut+top);i--;continue}"
         "push(e,cut+top)}}});"
         f"n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*{ph})+'mm';"
