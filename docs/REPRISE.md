@@ -642,6 +642,12 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 19 h 15 — les neuf modèles régénérés en créations Karria (PROD)
+
+- `derive` lancé en prod, graine distincte par modèle : sacha-dubois (Playfair Display + Lato, caramel, 0,52), romain-dupont (Josefin Sans + Work Sans, violet, 0,54 — graine 3, la 2 refusée à 0,61), cv2 (0,43), cv5 (Oswald + Karla, brique, 0,55), cv6 (DM Sans + Lora, sarcelle, 0,56), cv8 (Montserrat + Nunito Sans, ocre, 0,59), cv9 (Raleway + Open Sans, bleu, 0,56), meridian (Red Hat Display + Source Sans 3, 0,57), minimalist (Playfair + Lato, 0,59). Toutes en **v2 publiée**, étiquette « création Karria », v1 transcrites gardées en base.
+- À corriger ensuite (vu sur les aperçus de galerie) : sacha-dubois v2 — l'intitulé de l'en-tête chevauche « À propos » après le miroir ; romain-dupont v2 — puces décalées à gauche. Pistes : ne pas inverser l'ancrage des éléments d'en-tête qui débordent de leur colonne ; garder les marqueurs du côté du texte. La lettre appariée de sacha-dubois n'est plus servie (lettre sobre).
+- Mémo : `marketing`/`cv3` restent en revue (pas dérivés).
+
 ## 2026-11-13, 19 h — commande `derive` : créations Karria publiées comme nouvelles versions
 
 - `DeriveTemplateVersion` (+ `build_derive_template`, `scripts.templates derive NAME|--all --seed N [--dry-run]`) : dérive la version publiée, range les polices manquantes (`engine.ensure_fonts`, téléchargement), rend l'exemple avec les pictogrammes teintés, **porte inversée** (ressemblance SSIM tolérant ≤ 0,60 à la source, aucune police commune), publie une **nouvelle version du même modèle** (ids inchangés), étiquette « création Karria », rapport `derivation` + `distance`. La lettre appariée n'est pas dérivée (lettre sobre servie).
