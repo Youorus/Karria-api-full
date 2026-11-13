@@ -447,8 +447,11 @@ class TestEnTete:
         st = spec["styles"]["header.full_name"]
         text = "MOREAU-LEFEBVRE"
         natural = fonts.width_mm(text, st)
-        field = renderer.fit_header_text(text, st, natural * 0.6)
-        assert "white-space:normal" in field  # un champ ordinaire se replie sous 80 %
+        field = renderer.fit_header_text(text, st, natural * 0.5)
+        assert "white-space:normal" in field  # un champ ordinaire se replie sous 60 %
+        # À 65 % de place, il se réduit encore au lieu de se replier (13/11 : un
+        # poste visé replié recouvrait le paragraphe).
+        assert "white-space:normal" not in renderer.fit_header_text(text, st, natural * 0.65)
         name = renderer.fit_header_text(text, st, natural * 0.6, name=True)
         assert "white-space:normal" not in name
         assert ";font-size:" in name

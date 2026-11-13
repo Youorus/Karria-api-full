@@ -59,7 +59,9 @@ FIT_SLACK: Final = 0.78
 #: Couleur du filet qui marque une coupure de page dans l'atelier.
 PAGE_BREAK_COLOR: Final = "#cbd5e1"
 #: Réductions de corps d'un champ d'en-tête trop long, avant le retour à la ligne.
-FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8)
+#: Un champ d'en-tête (poste visé, coordonnées) descend jusqu'à 60 % avant de se
+#: replier : replié, il écraserait le paragraphe ou la bande posés sous lui.
+FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6)
 #: Un nom se réduit davantage : replié, il écraserait ce qui est sous lui.
 NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35)
 NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
@@ -125,6 +127,13 @@ def fit_script(spec: Json, *, live: bool) -> str:
         f"var lim={page_limit_mm(spec):.2f}*mm,ph={ph}*mm;"
         "function b(){var t=p.getBoundingClientRect().top,m=0;document.querySelectorAll('.t').forEach("
         "function(e){m=Math.max(m,e.getBoundingClientRect().bottom-t)});return m}"
+        # L'en-tête (textes en absolu) peut dépasser la hauteur mesurée sur
+        # l'exemple : un poste visé long replié sur deux lignes. La première
+        # bande descend alors d'autant, au lieu de se laisser recouvrir.
+        "var hb=0,pt0=p.getBoundingClientRect().top;document.querySelectorAll('[class^=\"s-header\"]').forEach("
+        "function(e){if(getComputedStyle(e).position==='absolute'){hb=Math.max(hb,e.getBoundingClientRect().bottom-pt0)}});"
+        "var b0=document.querySelector('.band');if(b0){var bt=b0.getBoundingClientRect().top-pt0,gap=1.5*mm;"
+        "if(hb+gap>bt){b0.style.marginTop=(hb+gap-bt)+'px'}}"
         f"var K=[{k_steps}],F=[{f_steps}],k=1,f=1,ok=false,n=1;"
         "for(var i=0;i<K.length&&!ok;i++){k=K[i];r.style.setProperty('--k',k);ok=b()<=lim}"
         "for(var j=1;j<F.length&&!ok;j++){f=F[j];r.style.setProperty('--f',f);ok=b()<=lim}"

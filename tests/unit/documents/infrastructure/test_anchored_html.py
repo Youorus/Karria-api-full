@@ -147,6 +147,10 @@ class TestPages:
         printed = fit_script(spec, live=False)
         assert "window.karriaFit=" in live
         assert "border-top:2px dashed" in live
+        # L'en-tête qui déborde pousse la première bande, dans les deux variantes.
+        for script in (live, printed):
+            assert "s-header" in script
+            assert "b0.style.marginTop" in script
         # Un script à accolades déséquilibrées ne s'exécute pas : l'atelier
         # perdrait le nombre de pages et la seconde page (incident du 13/11).
         for script in (live, printed):
