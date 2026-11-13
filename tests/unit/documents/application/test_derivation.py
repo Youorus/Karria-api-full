@@ -74,6 +74,21 @@ class TestDerivation:
         assert env.storage.objects == before
         assert env.templates.templates[template.id].published_version == 1  # type: ignore[attr-defined]
 
+    async def test_derive_toujours_de_la_transcription_pas_d_une_derivation(self, env: Env) -> None:
+        template, _ = await published(env)
+        env.engine.fidelity_pdf = replace(good_fidelity(), ssim_tolerant=0.3)
+        first, _ = await derive(env).execute("meridian", seed=1)
+        assert env.templates.templates[template.id].published_version == 2  # type: ignore[attr-defined]
+
+        second, report = await derive(env).execute("meridian", seed=2)
+
+        # La v3 part de la v1 transcrite (miroir simple), pas de la v2 dérivée.
+        assert report["derived_from"]["version"] == 1
+        assert second.spec is not None
+        assert second.spec["source"]["derivation"]["seed"] == 2
+        assert first.spec is not None
+        assert first.spec["source"]["derivation"]["seed"] == 1
+
     async def test_un_modele_inconnu_ou_non_publie_est_introuvable(self, env: Env) -> None:
         with pytest.raises(TemplateNotFoundError):
             await derive(env).execute("absent")

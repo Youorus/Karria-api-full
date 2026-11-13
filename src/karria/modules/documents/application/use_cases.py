@@ -888,6 +888,16 @@ class SubmitTemplate:
         return version
 
 
+def transcribed_version(versions: list[TemplateVersion]) -> TemplateVersion | None:
+    """La dernière version transcrite d'un PDF (spécification et exemple, sans dérivation)."""
+    candidates = [
+        v
+        for v in versions
+        if v.spec and v.sample and not (v.spec.get("source") or {}).get("derivation")
+    ]
+    return max(candidates, key=lambda v: v.version, default=None)
+
+
 class DeriveTemplateVersion:
     """Publie, comme nouvelle version d'un modèle, une création Karria dérivée de la version publiée.
 
@@ -929,9 +939,12 @@ class DeriveTemplateVersion:
         template = await self._templates.get_by_name(slugify(name))
         if template is None or template.published_version_id is None:
             raise TemplateNotFoundError()
-        source_version = await self._templates.get_version(template.published_version_id)
-        if source_version is None or not source_version.spec or not source_version.sample:
-            raise TemplateIngestionError("la version publiée n'a ni spécification ni exemple")
+        # On dérive toujours de la **transcription** (la dernière version qui n'est
+        # pas elle-même une dérivation), jamais d'une dérivation : sinon le miroir
+        # s'annule et la distance se mesure à un rendu de Karria, pas à la source.
+        source_version = transcribed_version(await self._templates.versions_of(template.id))
+        if source_version is None:
+            raise TemplateIngestionError("aucune version transcrite avec spécification et exemple")
         source_pdf = await self._storage.get(Bucket.TEMPLATES, source_version.source_key)
         spec, derivation = derive_spec(
             source_version.spec, seed=seed, source_sha256=hashlib.sha256(source_pdf).hexdigest()
