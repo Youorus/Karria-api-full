@@ -642,6 +642,12 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 18 h — dérivation : des modèles qui appartiennent à Karria
+
+- Question de Marc : les modèles viennent d'un fournisseur (Canva) ; une transcription fidèle reste l'expression du fournisseur. `domain/derive.py` : `derive_spec(spec, seed, source_sha256)` produit une création distincte et tracée — composition en miroir, photo rect/rond, couple de polices libres sans famille commune avec la source, couleur principale à > 60° de teinte, titres (capitales/espacement) inversés, filets épaissis ; `source.derivation` + `meta.origin = karria`. Tests `test_derive.py`.
+- Démonstration locale (scratchpad `ingestion/derive_local.py`) sur « CV Français Simple Moderne Bleu » (Canva) : transcription fidèle score 0,66 (forme courbe de la bande non reproduite), dérivée seed 0 : SSIM 0,41 vs source (contre 0,70 pour la fidèle), polices Red Hat Display + Source Sans 3, caramel, bande à droite.
+- Non fait, à décider avec Marc : la commande `scripts.templates derive VERSION --seed` qui crée un modèle publié depuis une dérivation (porte inversée : distance ≥ seuil, aucune police commune, trace), et le libellé « Création Karria » en galerie. Le droit reste à confirmer (licence Canva : pas de revente de modèles ; une dérivation distincte réduit le risque, ne le supprime pas).
+
 ## 2026-11-13, 17 h 30 — plus de resserrement silencieux à l'export
 
 - Marc : « ce que j'ai finalisé n'est pas ce que j'obtiens ». `ExportCv` ne resserre plus la vue quand le CV déborde : `condense.py` et ses tests supprimés, `Fit.condensed` reste au contrat (toujours vide). Tenir sur une page se décide dans l'atelier ; deux pages sont propres.

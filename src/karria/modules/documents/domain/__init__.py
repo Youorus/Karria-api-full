@@ -1,6 +1,7 @@
 """Domaine du module `documents` : modèles, versions, exports, porte de qualité, score ATS, polices."""
 
 from karria.modules.documents.domain.ats import AtsReport, Check, ExtractedDocument, analyse
+from karria.modules.documents.domain.derive import Derivation, derive_spec
 from karria.modules.documents.domain.errors import (
     AccountEmailUnknownError,
     CvMissingError,
@@ -68,6 +69,7 @@ __all__ = [
     "AtsReport",
     "Check",
     "CvMissingError",
+    "Derivation",
     "DocumentFileMissingError",
     "DocumentKind",
     "DocumentSend",
@@ -97,6 +99,7 @@ __all__ = [
     "TemplateVersion",
     "VersionStatus",
     "analyse",
+    "derive_spec",
     "ensure_quota",
     "evaluate",
     "from_letter",
