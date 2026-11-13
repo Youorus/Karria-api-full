@@ -926,7 +926,7 @@ class DeriveTemplateVersion:
         )
         self._portraits = portraits
 
-    async def execute(
+    async def execute(  # noqa: PLR0915 - la dérivation se lit d'un trait, étape par étape
         self, name: str, *, seed: int = 1, dry_run: bool = False
     ) -> tuple[TemplateVersion, dict[str, Any]]:
         """Rend la version dérivée (non enregistrée si `dry_run`) et son compte rendu.
@@ -943,11 +943,12 @@ class DeriveTemplateVersion:
         # pas elle-même une dérivation), jamais d'une dérivation : sinon le miroir
         # s'annule et la distance se mesure à un rendu de Karria, pas à la source.
         source_version = transcribed_version(await self._templates.versions_of(template.id))
-        if source_version is None:
+        if source_version is None or source_version.spec is None or source_version.sample is None:
             raise TemplateIngestionError("aucune version transcrite avec spécification et exemple")
+        source_spec, source_sample = source_version.spec, source_version.sample
         source_pdf = await self._storage.get(Bucket.TEMPLATES, source_version.source_key)
         spec, derivation = derive_spec(
-            source_version.spec, seed=seed, source_sha256=hashlib.sha256(source_pdf).hexdigest()
+            source_spec, seed=seed, source_sha256=hashlib.sha256(source_pdf).hexdigest()
         )
         if derivation.shares_a_font:
             raise TemplateIngestionError("la dérivation reprend une police de la source")
@@ -961,19 +962,19 @@ class DeriveTemplateVersion:
         for asset_name, key in source_version.assets.items():
             assets[asset_name] = await self._storage.get(Bucket.TEMPLATES, key)
         icons = {k: v for k, v in assets.items() if not k.startswith("sample_")}
-        icons = await asyncio.to_thread(tint_icons, icons, source_version.spec, derivation.primary)
+        icons = await asyncio.to_thread(tint_icons, icons, source_spec, derivation.primary)
         number = await self._templates.next_version_number(template.id)
         await replace_sample_portrait(
             self._portraits,
             spec=spec,
-            sample=source_version.sample,
+            sample=source_sample,
             assets=assets,
             template_name=template.name,
             version=number,
         )
         photo_name = (spec["header"].get("photo") or {}).get("sample_file")
         photo = assets.get(photo_name) if photo_name else None
-        view = from_sample(spec, source_version.sample)
+        view = from_sample(spec, source_sample)
         rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
         distance = await self._engine.measure(source_pdf, rendered.data)
         if distance.ssim_tolerant > MAX_SSIM_TO_SOURCE:
@@ -1010,7 +1011,7 @@ class DeriveTemplateVersion:
             source_key=f"{prefix}/source.pdf",
             created_at=now,
             spec=spec,
-            sample=source_version.sample,
+            sample=source_sample,
             labels=source_version.labels,
             report=report,
             fonts=tuple(dict(f) for f in spec["fonts"]),
