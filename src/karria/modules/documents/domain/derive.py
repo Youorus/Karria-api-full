@@ -198,12 +198,16 @@ def _band_mirrors(band: Json) -> bool:
 def _mirror(spec: Json) -> bool:
     """Inverse la composition en miroir ; faux si rien ne s'est inversé.
 
-    Chaque bande décide pour elle (`_band_mirrors`) ; l'en-tête, la photo et
-    les ornements de page s'inversent toujours, pour que la création change de
-    côté même quand le corps garde ses colonnes latérales.
+    Toutes les bandes doivent pouvoir s'inverser (`_band_mirrors`) ; sinon
+    rien ne bouge, en-tête et photo compris.
     """
     width = float((spec.get("page") or {}).get("width_mm") or 0)
-    if width <= 0:
+    bands = spec.get("bands") or []
+    # Tout ou rien : un en-tête inversé au-dessus d'une bande qui ne l'est pas
+    # pose la photo sur le texte (Frise Pharmacie, 13/11). Sans miroir, la
+    # création se distingue par ses polices, sa couleur et sa photo ; la porte
+    # de distance se relâche alors à la main (`--max-ssim`).
+    if width <= 0 or any(not _band_mirrors(band) for band in bands):
         return False
     header = spec.get("header") or {}
     for element in header.get("elements") or []:
@@ -214,9 +218,7 @@ def _mirror(spec: Json) -> bool:
         _mirror_box(deco, width)
     for deco in spec.get("page_decorations") or []:
         _mirror_box(deco, width)
-    for band in spec.get("bands") or []:
-        if not _band_mirrors(band):
-            continue
+    for band in bands:
         for deco in band.get("decorations") or []:
             _mirror_box(deco, width)
         columns = band.get("columns") or []

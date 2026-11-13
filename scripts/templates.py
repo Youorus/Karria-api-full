@@ -63,6 +63,7 @@ from karria.modules.documents.api.dependencies import build_engine
 from karria.modules.documents.application import TemplateRepository, tint_icons
 from karria.modules.documents.application.use_cases import version_prefix
 from karria.modules.documents.domain import parse_hex_color, primary_color_of, recolor_spec
+from karria.modules.documents.domain.derive import MAX_SSIM_TO_SOURCE
 from karria.modules.documents.domain.errors import TemplateIngestionError
 from karria.modules.documents.domain.plain_letter import PLAIN_FAMILY
 from karria.modules.documents.domain.view import from_sample
@@ -267,7 +268,7 @@ async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912, PLR
                 for name in names:
                     try:
                         version, report = await derive.execute(
-                            name, seed=args.seed, dry_run=args.dry_run
+                            name, seed=args.seed, dry_run=args.dry_run, max_ssim=args.max_ssim
                         )
                     except TemplateIngestionError as exc:
                         print(f"{name}: REFUSÉ — {exc.details.get('detail') or exc}")
@@ -343,6 +344,12 @@ def main() -> None:
     derive.add_argument("--all", action="store_true", help="tous les modèles publiés")
     derive.add_argument("--seed", type=int, default=1, help="graine de la dérivation")
     derive.add_argument("--dry-run", action="store_true", help="mesurer sans publier")
+    derive.add_argument(
+        "--max-ssim",
+        type=float,
+        default=MAX_SSIM_TO_SOURCE,
+        help="ressemblance tolérée à la source (défaut : la porte du domaine)",
+    )
     portraits = sub.add_parser(
         "portraits", help="générer le portrait d'exemple d'un modèle publié et refaire ses aperçus"
     )

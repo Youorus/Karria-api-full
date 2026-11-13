@@ -927,9 +927,18 @@ class DeriveTemplateVersion:
         self._portraits = portraits
 
     async def execute(  # noqa: PLR0915 - la dérivation se lit d'un trait, étape par étape
-        self, name: str, *, seed: int = 1, dry_run: bool = False
+        self,
+        name: str,
+        *,
+        seed: int = 1,
+        dry_run: bool = False,
+        max_ssim: float = MAX_SSIM_TO_SOURCE,
     ) -> tuple[TemplateVersion, dict[str, Any]]:
         """Rend la version dérivée (non enregistrée si `dry_run`) et son compte rendu.
+
+        `max_ssim` : la ressemblance tolérée au rendu de la source ; relâchée à
+        la main pour un modèle qui ne peut pas s'inverser (colonne latérale),
+        la décision restant inscrite dans le rapport.
 
         Raises:
             TemplateNotFoundError: Modèle inconnu ou sans version publiée.
@@ -977,10 +986,10 @@ class DeriveTemplateVersion:
         view = from_sample(spec, source_sample)
         rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=photo)
         distance = await self._engine.measure(source_pdf, rendered.data)
-        if distance.ssim_tolerant > MAX_SSIM_TO_SOURCE:
+        if distance.ssim_tolerant > max_ssim:
             raise TemplateIngestionError(
                 f"dérivation trop proche de la source (ressemblance {distance.ssim_tolerant:.2f} > "
-                f"{MAX_SSIM_TO_SOURCE:.2f})"
+                f"{max_ssim:.2f})"
             )
         report = {
             "derivation": derivation.to_json(),
@@ -991,7 +1000,7 @@ class DeriveTemplateVersion:
             "distance": {
                 "ssim": distance.ssim,
                 "ssim_tolerant": distance.ssim_tolerant,
-                "max_ssim": MAX_SSIM_TO_SOURCE,
+                "max_ssim": max_ssim,
                 **distance.to_json(),
             },
             "fit": rendered.fit.to_json(),
