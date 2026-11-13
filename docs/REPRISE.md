@@ -642,6 +642,12 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, soir — un CV sur une page, aperçus des exports
+
+- `domain/condense.py` : `condense_cv(cv, level)` resserre la **vue** par paliers (1 : ≤ 3 missions, détail formations/projets replié, ≤ 2 projets ; 2 : ≤ 2 missions, ≤ 10 compétences, ≤ 4 langues et centres d'intérêt, à-propos ramené à ses premières phrases) ; jamais d'expérience ni de formation retirée. `ExportCv._on_one_page` l'applique quand `fit.pages > 1` ; si rien ne suffit, le CV entier garde ses pages. `Fit.condensed` (JSON `fit.condensed`) dit ce qui a été replié ; l'app le montre.
+- Aperçus : chaque page d'un export rendue en PNG (`engine.page_images`) dans `generated-cvs/{user}/{id}/apercu-n.png`, `GeneratedCv.preview_keys`, `preview_urls` signés dans `GeneratedCvRead` ; supprimés avec l'export. **Migration 22** (`preview_keys`), appliquée en prod par SQL le 13/11 avant le déploiement ; `aerich upgrade` à rejouer en conteneur ponctuel pour l'enregistrer (idempotente).
+- Idées non faites : condensation par Karria (LLM) quand même le palier 2 ne suffit pas ; aperçus des lettres (les exports de lettre n'en ont pas encore).
+
 ## 2026-11-13 — formule annuelle « sans pub » et CV de démonstration
 
 - `payments` : `AD_FREE_YEARLY_PLAN` (49,90 € / an, `karria_ad_free_yearly`, deux mois offerts sur douze), `plan` (`monthly` | `yearly`) dans `POST /payments/checkout-session`, `ad_free_yearly` dans `GET /payments/catalog`. Le prix Stripe se crée tout seul au premier achat (lookup_key).
