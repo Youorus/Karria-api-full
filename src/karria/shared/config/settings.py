@@ -568,6 +568,8 @@ class PlatformRelease(BaseModel):
 
     minimum_build: int = Field(default=0, ge=0)
     latest_build: int = Field(default=0, ge=0)
+    #: Le numéro lisible de la dernière version publiée (« 1.2.0 »), montré à la personne.
+    latest_version: str = ""
     store_url: str = ""
 
 
@@ -582,9 +584,11 @@ class AppReleaseSettings(BaseModel):
 
     ios_minimum_build: int = Field(default=0, ge=0)
     ios_latest_build: int = Field(default=0, ge=0)
+    ios_latest_version: str = ""
     ios_store_url: str = ""
     android_minimum_build: int = Field(default=0, ge=0)
     android_latest_build: int = Field(default=0, ge=0)
+    android_latest_version: str = ""
     android_store_url: str = ""
 
     def for_platform(self, platform: str) -> PlatformRelease:
@@ -593,11 +597,13 @@ class AppReleaseSettings(BaseModel):
             return PlatformRelease(
                 minimum_build=self.android_minimum_build,
                 latest_build=self.android_latest_build,
+                latest_version=self.android_latest_version,
                 store_url=self.android_store_url,
             )
         return PlatformRelease(
             minimum_build=self.ios_minimum_build,
             latest_build=self.ios_latest_build,
+            latest_version=self.ios_latest_version,
             store_url=self.ios_store_url,
         )
 

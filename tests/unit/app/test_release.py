@@ -84,6 +84,7 @@ class TestRoute:
             "status": "ok",
             "latest_build": 0,
             "minimum_build": 0,
+            "latest_version": "",
             "store_url": "",
         }
 

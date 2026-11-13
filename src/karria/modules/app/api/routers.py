@@ -39,5 +39,6 @@ async def release(
         status=verdict.status,
         latest_build=verdict.latest_build,
         minimum_build=verdict.minimum_build,
+        latest_version=thresholds.latest_version,
         store_url=thresholds.store_url,
     )
