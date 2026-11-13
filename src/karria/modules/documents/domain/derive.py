@@ -72,8 +72,8 @@ MIN_HUE_DISTANCE_DEG: Final = 60.0
 #: Au-delà de cette ressemblance (SSIM tolérant) au rendu de la source, la
 #: dérivation n'est pas une création distincte : on la refuse.
 MAX_SSIM_TO_SOURCE: Final = 0.68
-DISPLAY_ROLES: Final[frozenset[str]] = frozenset(
-    {"header.first_name", "header.last_name", "header.name", "section_title"}
+NAME_ROLES: Final[frozenset[str]] = frozenset(
+    {"header.first_name", "header.last_name", "header.name"}
 )
 
 
@@ -177,10 +177,26 @@ def _mirror_box(box: Json, width: float) -> None:
             line["x_mm"] = round(line["x_mm"] + delta, 2)
 
 
+def _has_side_column(spec: Json) -> bool:
+    """Vrai si une rubrique range ses dates ou ses puces dans une colonne latérale."""
+    return any(
+        section.get("side")
+        for band in spec.get("bands") or []
+        for column in band.get("columns") or []
+        for section in column.get("sections") or []
+    )
+
+
 def _mirror(spec: Json) -> bool:
-    """Inverse la composition en miroir ; faux si la page n'a pas de largeur."""
+    """Inverse la composition en miroir ; faux si la page n'a pas de largeur.
+
+    Pas de miroir quand une rubrique a une colonne latérale (dates, puces à
+    gauche du texte) : elle déborderait de la page une fois la colonne
+    collée au bord gauche (Frise Pharmacie, 13/11). La création se distingue
+    alors par ses polices, sa couleur et sa photo.
+    """
     width = float((spec.get("page") or {}).get("width_mm") or 0)
-    if width <= 0:
+    if width <= 0 or _has_side_column(spec):
         return False
     header = spec.get("header") or {}
     for element in header.get("elements") or []:
@@ -202,10 +218,17 @@ def _mirror(spec: Json) -> bool:
 
 
 def _restyle_fonts(spec: Json, display: str, body: str) -> None:
+    """Le nom en police de titre ; tout le reste, titres de rubrique compris, en police de texte.
+
+    Un titre de rubrique est mesuré au millimètre pour la police de la source ;
+    une police de titre plus large le ferait déborder de sa boîte (« PROFESSIONNELLE / S »).
+    La police de texte, de chasse proche, tient ; et son espacement est plafonné.
+    """
     styles = spec.get("styles") or {}
     for key, style in styles.items():
-        role = key if key in DISPLAY_ROLES else None
-        style["family"] = display if role else body
+        style["family"] = display if key in NAME_ROLES else body
+        if key == "section_title" and isinstance(style.get("letter_spacing_pt"), (int, float)):
+            style["letter_spacing_pt"] = round(min(float(style["letter_spacing_pt"]), 1.5), 2)
     used: dict[tuple[str, int, bool], Json] = {}
     for style in styles.values():
         ref = (style["family"], int(style.get("weight") or 400), bool(style.get("italic")))

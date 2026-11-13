@@ -65,7 +65,7 @@ SPEC: dict[str, Any] = {
                     "x_mm": 10.0,
                     "w_mm": 55.0,
                     "sections": [
-                        {"kind": "skills", "side": "left", "slots": [], "decorations": []}
+                        {"kind": "skills", "side": None, "slots": [], "decorations": []}
                     ],
                 },
                 {
@@ -93,8 +93,7 @@ class TestDerivation:
         # Les colonnes sont inversées : la large à gauche, l'étroite à droite.
         assert [c["w_mm"] for c in columns] == [120.0, 55.0]
         assert columns[1]["x_mm"] == 210.0 - 10.0 - 55.0
-        # Le côté des dates et l'alignement du texte ne bougent pas : on lit de gauche à droite.
-        assert columns[1]["sections"][0]["side"] == "left"
+        assert columns[1]["sections"][0]["side"] is None
         # La bande latérale pleine passe à droite ; la photo carrée change de forme.
         assert derived["page_decorations"][0]["x_mm"] == 140.0
         assert derived["header"]["photo"]["shape"] == "rect"
@@ -108,7 +107,9 @@ class TestDerivation:
         derived, report = derive_spec(SPEC, seed=0)
         assert report.shares_a_font is False
         assert "Poppins" not in {f["family"] for f in derived["fonts"]}
-        assert derived["styles"]["section_title"]["family"] == report.display_font
+        # Le nom seul prend la police de titre ; les titres de rubrique restent en police de texte.
+        assert derived["styles"]["header.first_name"]["family"] == report.display_font
+        assert derived["styles"]["section_title"]["family"] == report.body_font
         assert derived["styles"]["body"]["family"] == report.body_font
 
     def test_change_de_teinte_et_recolore_le_decor(self) -> None:
@@ -122,7 +123,7 @@ class TestDerivation:
         derived, report = derive_spec(SPEC, seed=3, source_sha256="deadbeef")
         assert report.title_uppercase is None
         assert derived["styles"]["section_title"]["uppercase"] is True
-        assert derived["styles"]["section_title"]["letter_spacing_pt"] == 2.0
+        assert derived["styles"]["section_title"]["letter_spacing_pt"] == 1.5
         assert derived["page_decorations"][1]["stroke_pt"] == 0.75
         assert derived["meta"]["origin"] == "karria"
         assert derived["source"]["producer"] == "Canva"
@@ -138,6 +139,14 @@ class TestDerivation:
         b, rb = derive_spec(SPEC, seed=1)
         assert (ra.display_font, ra.primary) != (rb.display_font, rb.primary)
         assert a["styles"]["body"]["family"] != b["styles"]["body"]["family"]
+
+
+def test_pas_de_miroir_quand_une_rubrique_a_une_colonne_laterale() -> None:
+    spec = copy.deepcopy(SPEC)
+    spec["bands"][0]["columns"][0]["sections"][0]["side"] = "left"
+    derived, report = derive_spec(spec, seed=0)
+    assert report.mirrored is False
+    assert derived["bands"][0]["columns"][0]["x_mm"] == 10.0
 
 
 def test_les_choix_evitent_la_source() -> None:
