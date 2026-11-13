@@ -93,14 +93,15 @@ class TestDerivation:
         # Les colonnes sont inversées : la large à gauche, l'étroite à droite.
         assert [c["w_mm"] for c in columns] == [120.0, 55.0]
         assert columns[1]["x_mm"] == 210.0 - 10.0 - 55.0
-        assert columns[1]["sections"][0]["side"] == "right"
-        # La bande latérale pleine passe à droite ; la photo change de forme.
+        # Le côté des dates et l'alignement du texte ne bougent pas : on lit de gauche à droite.
+        assert columns[1]["sections"][0]["side"] == "left"
+        # La bande latérale pleine passe à droite ; la photo carrée change de forme.
         assert derived["page_decorations"][0]["x_mm"] == 140.0
         assert derived["header"]["photo"]["shape"] == "rect"
         assert derived["header"]["photo"]["x_mm"] == 150.0
-        # Un élément ancré à droite devient ancré à gauche.
+        # Un élément ancré à droite garde son ancrage ; ses bornes sont inversées.
         headline = derived["header"]["elements"][1]
-        assert headline["align"] == "left"
+        assert headline["align"] == "right"
         assert (headline["x_mm"], headline["rx_mm"]) == (10.0, 60.0)
 
     def test_ne_partage_aucune_police_avec_la_source(self) -> None:
@@ -117,10 +118,12 @@ class TestDerivation:
         assert report.primary != "#1F4FA3"  # le bleu est trop proche de la source
         assert derived["page_decorations"][0]["fill"] != "#1B3A6B"
 
-    def test_inverse_les_capitales_des_titres_et_trace_la_provenance(self) -> None:
+    def test_garde_les_titres_et_trace_la_provenance(self) -> None:
         derived, report = derive_spec(SPEC, seed=3, source_sha256="deadbeef")
-        assert report.title_uppercase is False
-        assert derived["styles"]["section_title"]["uppercase"] is False
+        assert report.title_uppercase is None
+        assert derived["styles"]["section_title"]["uppercase"] is True
+        assert derived["styles"]["section_title"]["letter_spacing_pt"] == 2.0
+        assert derived["page_decorations"][1]["stroke_pt"] == 0.75
         assert derived["meta"]["origin"] == "karria"
         assert derived["source"]["producer"] == "Canva"
         assert derived["source"]["derived_from_sha256"] == "deadbeef"

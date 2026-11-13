@@ -55,6 +55,7 @@ from karria.modules.documents import (
     build_derive_template,
     build_ingest_template,
     build_publish_plain_letter,
+    build_refresh_portrait,
     build_refresh_template_colors,
     build_submit_template,
 )
@@ -217,7 +218,7 @@ def _png(pdf: bytes) -> bytes:
         return doc.render_png(0, dpi=100)
 
 
-async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912 - une sortie par commande
+async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912, PLR0915 - une sortie par commande
     settings = get_settings()
     configure_logging(settings.observability)
     await connect(TORTOISE_ORM)
@@ -243,6 +244,19 @@ async def _main(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912 - un
                 )
             if args.command == "dump":
                 return await _dump(templates, storage, args)
+            if args.command == "portraits":
+                refresh = build_refresh_portrait(settings, storage)
+                names = (
+                    [t.name for t in await templates.list_all() if t.published_version_id]
+                    if args.all
+                    else [args.name]
+                )
+                for name in names:
+                    done = await refresh.execute(name)
+                    print(
+                        f"{name}: {'portrait refait, aperçus à jour' if done else 'sans photo ou rien généré'}"
+                    )
+                return 0
             if args.command == "derive":
                 derive = build_derive_template(settings, storage)
                 names = (
@@ -329,6 +343,11 @@ def main() -> None:
     derive.add_argument("--all", action="store_true", help="tous les modèles publiés")
     derive.add_argument("--seed", type=int, default=1, help="graine de la dérivation")
     derive.add_argument("--dry-run", action="store_true", help="mesurer sans publier")
+    portraits = sub.add_parser(
+        "portraits", help="générer le portrait d'exemple d'un modèle publié et refaire ses aperçus"
+    )
+    portraits.add_argument("name", nargs="?", help="nom technique du modèle (slug)")
+    portraits.add_argument("--all", action="store_true", help="tous les modèles publiés")
     ingest = sub.add_parser("ingest", help="analyser une version en attente")
     ingest.add_argument("version_id")
     sub.add_parser("list", help="modèles et versions")

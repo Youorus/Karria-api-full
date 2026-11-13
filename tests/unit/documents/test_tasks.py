@@ -13,10 +13,12 @@ from karria.modules import documents
 from karria.modules.documents.api import dependencies as deps
 from karria.modules.documents.api import tasks
 from karria.modules.documents.application import (
+    DeriveTemplateVersion,
     ExplainAts,
     ForgetUser,
     IngestTemplateVersion,
     PublishPlainLetterPreview,
+    RefreshSamplePortrait,
     RefreshTemplateColors,
     SubmitTemplate,
 )
@@ -127,6 +129,8 @@ class TestFabriques:
         assert isinstance(deps.build_ingest_template(SETTINGS, storage()), IngestTemplateVersion)
         assert isinstance(deps.build_submit_template(storage(), jobs), SubmitTemplate)
         assert isinstance(deps.build_refresh_template_colors(), RefreshTemplateColors)
+        assert isinstance(deps.build_derive_template(SETTINGS, storage()), DeriveTemplateVersion)
+        assert isinstance(deps.build_refresh_portrait(SETTINGS, storage()), RefreshSamplePortrait)
         assert isinstance(deps.build_explain_ats(SETTINGS), ExplainAts)
         assert isinstance(deps.build_forget_user(storage()), ForgetUser)
         assert isinstance(

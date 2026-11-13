@@ -8,6 +8,7 @@ from karria.modules.documents.infrastructure.letter_analyzer import LetterLineLa
 from karria.modules.documents.infrastructure.llm import LlmAtsExplainer, VisionLineLabeler
 from karria.modules.documents.infrastructure.logos import StorageLogoFetcher
 from karria.modules.documents.infrastructure.mail import MailDocumentMailer
+from karria.modules.documents.infrastructure.portraits import LlmPortraitGenerator
 from karria.modules.documents.infrastructure.queue import ProcrastinateTemplateJobs
 from karria.modules.documents.infrastructure.repositories import (
     TortoiseGeneratedCvRepository,
@@ -22,6 +23,7 @@ __all__ = [
     "KarriaDocumentEngine",
     "LetterLineLabeler",
     "LlmAtsExplainer",
+    "LlmPortraitGenerator",
     "MailDocumentMailer",
     "ProcrastinateTemplateJobs",
     "StorageLogoFetcher",

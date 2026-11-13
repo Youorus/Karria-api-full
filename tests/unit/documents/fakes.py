@@ -26,6 +26,7 @@ from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
 from karria.modules.documents.domain.headline import ats_safe_spec
 from karria.modules.documents.domain.plain_letter import plain_letter_spec
+from karria.modules.documents.domain.portrait import Persona
 from karria.modules.documents.domain.sends import DocumentSend, SendStatus, canonical_address
 from karria.modules.documents.domain.templates import (
     DocumentKind,
@@ -45,6 +46,7 @@ PDF_SAFE_BYTES = b"%PDF-safe"
 PDF_LETTER_BYTES = b"%PDF-1.7 lettre"
 DOCX_BYTES = b"PK docx"
 PNG_BYTES = b"\x89PNG page"
+PORTRAIT_BYTES = b"\x89PNG portrait genere"
 
 #: Le CV d'une personne, forme de `GET /cv/me`.
 CV_DATA: dict[str, Any] = {
@@ -614,6 +616,18 @@ class FakeCvSource:
         )
         self.snapshots[user_id] = snap
         return snap
+
+
+@dataclass
+class FakePortraits:
+    """Implémente `PortraitGenerator` : un PNG fixe, ou rien."""
+
+    image: bytes | None = PORTRAIT_BYTES
+    personas: list[Persona] = field(default_factory=list)
+
+    async def generate(self, persona: Persona) -> bytes | None:
+        self.personas.append(persona)
+        return self.image
 
 
 @dataclass

@@ -17,8 +17,10 @@ change sur tous les plans à la fois, de façon mesurable :
   texte de l'autre ;
 - les **couleurs** : une couleur principale d'une autre teinte (à plus de
   60° de la source), appliquée par `recolor_spec` au seul décor ;
-- les **titres de rubrique** : capitales et espacement inversés ;
-- les **ornements** : les filets changent de graisse.
+- rien d'autre : les titres, les corps, les filets, les puces gardent leur
+  dessin — c'est ce qui fait que la création reste belle et lisible. On a
+  essayé d'en changer plus (titres, graisse des filets, forme de toute photo) :
+  le résultat était laid et cassé (Marc, 13/11).
 
 La dérivation est **déterministe** (une graine) et **tracée** : la
 spécification porte l'empreinte de la source, la graine et chaque choix
@@ -69,7 +71,7 @@ PRIMARIES: Final[tuple[str, ...]] = (
 MIN_HUE_DISTANCE_DEG: Final = 60.0
 #: Au-delà de cette ressemblance (SSIM tolérant) au rendu de la source, la
 #: dérivation n'est pas une création distincte : on la refuse.
-MAX_SSIM_TO_SOURCE: Final = 0.60
+MAX_SSIM_TO_SOURCE: Final = 0.68
 DISPLAY_ROLES: Final[frozenset[str]] = frozenset(
     {"header.first_name", "header.last_name", "header.name", "section_title"}
 )
@@ -147,48 +149,42 @@ def choose_primary(source_primary: str | None, seed: int) -> str:
     return PRIMARIES[seed % len(PRIMARIES)]
 
 
-def _mirror_box(box: Json, width: float, *, flip_align: bool = False) -> None:
-    """Inverse une boîte (x_mm, w_mm, rx_mm) autour de l'axe vertical de la page.
+def _mirror_box(box: Json, width: float) -> None:
+    """Inverse la **position** d'une boîte autour de l'axe vertical de la page.
 
-    `flip_align` : pour les éléments de l'en-tête, l'ancrage du texte suit
-    (un intitulé calé à droite se cale à gauche). Dans les colonnes, le texte
-    reste aligné à gauche et les puces à leur place : on lit de gauche à
-    droite, seule la composition change de côté.
+    Seule la géométrie change (`x_mm`, `rx_mm`) : l'alignement du texte, le
+    côté des dates et des puces, l'ordre des lignes restent ce qu'ils sont —
+    on lit de gauche à droite, la composition seule change de côté. Les
+    lignes d'exemple d'un élément suivent le même décalage que lui.
     """
     x = box.get("x_mm")
     w = box.get("w_mm")
     rx = box.get("rx_mm")
-    if isinstance(x, (int, float)):
-        if isinstance(rx, (int, float)):
-            box["x_mm"], box["rx_mm"] = round(width - rx, 2), round(width - x, 2)
-        elif isinstance(w, (int, float)):
-            box["x_mm"] = round(width - x - w, 2)
-        else:
-            box["x_mm"] = round(width - x, 2)
-    if flip_align:
-        align = box.get("align")
-        if align == "left":
-            box["align"] = "right"
-        elif align == "right":
-            box["align"] = "left"
-        for line in box.get("sample_lines") or []:
-            if isinstance(line, dict) and isinstance(line.get("x_mm"), (int, float)):
-                line["x_mm"] = round(width - line["x_mm"], 2)
-    side = box.get("side")
-    if side == "left":
-        box["side"] = "right"
-    elif side == "right":
-        box["side"] = "left"
+    if not isinstance(x, (int, float)):
+        return
+    if isinstance(rx, (int, float)):
+        new_x, new_rx = width - rx, width - x
+        box["x_mm"], box["rx_mm"] = round(new_x, 2), round(new_rx, 2)
+    elif isinstance(w, (int, float)):
+        new_x = width - x - w
+        box["x_mm"] = round(new_x, 2)
+    else:
+        new_x = width - x
+        box["x_mm"] = round(new_x, 2)
+    delta = new_x - x
+    for line in box.get("sample_lines") or []:
+        if isinstance(line, dict) and isinstance(line.get("x_mm"), (int, float)):
+            line["x_mm"] = round(line["x_mm"] + delta, 2)
 
 
 def _mirror(spec: Json) -> bool:
-    """Inverse toute la composition en miroir ; faux si la page n'a pas de largeur."""
+    """Inverse la composition en miroir ; faux si la page n'a pas de largeur."""
     width = float((spec.get("page") or {}).get("width_mm") or 0)
     if width <= 0:
         return False
     header = spec.get("header") or {}
     for element in header.get("elements") or []:
-        _mirror_box(element, width, flip_align=True)
+        _mirror_box(element, width)
     if header.get("photo"):
         _mirror_box(header["photo"], width)
     for deco in header.get("decorations") or []:
@@ -201,12 +197,6 @@ def _mirror(spec: Json) -> bool:
         columns = band.get("columns") or []
         for column in columns:
             _mirror_box(column, width)
-            for section in column.get("sections") or []:
-                _mirror_box(section, width)
-                for deco in section.get("decorations") or []:
-                    _mirror_box(deco, width)
-                for slot in section.get("slots") or []:
-                    _mirror_box(slot, width)
         columns.reverse()
     return True
 
@@ -223,47 +213,18 @@ def _restyle_fonts(spec: Json, display: str, body: str) -> None:
     spec["fonts"] = list(used.values())
 
 
-def _restyle_titles(spec: Json) -> bool | None:
-    style = (spec.get("styles") or {}).get("section_title")
-    if not isinstance(style, dict):
-        return None
-    uppercase = not bool(style.get("uppercase"))
-    style["uppercase"] = uppercase
-    style["letter_spacing_pt"] = 1.5 if uppercase else 0.0
-    style["weight"] = 700
-    return uppercase
-
-
-def _restyle_name(spec: Json) -> None:
-    for key in ("header.first_name", "header.last_name", "header.name"):
-        style = (spec.get("styles") or {}).get(key)
-        if isinstance(style, dict) and isinstance(style.get("size_pt"), (int, float)):
-            style["size_pt"] = round(style["size_pt"] * 0.92, 2)
-            style["letter_spacing_pt"] = round(float(style.get("letter_spacing_pt") or 0) + 1.0, 2)
-
-
 def _toggle_photo(spec: Json) -> str | None:
+    """Rond ↔ rectangle, seulement si la boîte est presque carrée : un rond sur un
+    rectangle ferait une ellipse."""
     photo = (spec.get("header") or {}).get("photo")
     if not isinstance(photo, dict):
+        return None
+    w, h = float(photo.get("w_mm") or 0), float(photo.get("h_mm") or 0)
+    if w <= 0 or h <= 0 or abs(w - h) > 0.1 * max(w, h):
         return None
     shape = "rect" if photo.get("shape") == "circle" else "circle"
     photo["shape"] = shape
     return shape
-
-
-def _thicken_lines(spec: Json) -> None:
-    def walk(decos: list[Json]) -> None:
-        for d in decos:
-            if d.get("kind") in {"vline", "hline"}:
-                d["stroke_pt"] = round(float(d.get("stroke_pt") or 0.75) * 2.0, 2)
-
-    walk(spec.get("page_decorations") or [])
-    walk((spec.get("header") or {}).get("decorations") or [])
-    for band in spec.get("bands") or []:
-        walk(band.get("decorations") or [])
-        for column in band.get("columns") or []:
-            for section in column.get("sections") or []:
-                walk(section.get("decorations") or [])
 
 
 def derive_spec(
@@ -283,10 +244,7 @@ def derive_spec(
 
     mirrored = _mirror(out)
     _restyle_fonts(out, display, body)
-    uppercase = _restyle_titles(out)
-    _restyle_name(out)
     shape = _toggle_photo(out)
-    _thicken_lines(out)
     recolored = recolor_spec(out, primary)
     if recolored is not out:
         out = recolored
@@ -301,7 +259,7 @@ def derive_spec(
         primary=applied_primary,
         source_primary=source_primary,
         photo_shape=shape,
-        title_uppercase=uppercase,
+        title_uppercase=None,
         notes=("sans décor coloré : la couleur de la source est conservée",)
         if source_primary is None
         else (),

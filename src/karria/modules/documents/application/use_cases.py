@@ -49,6 +49,7 @@ from karria.modules.documents.application.ports import (
     GeneratedCvRepository,
     LogoFetcher,
     OriginThrottle,
+    PortraitGenerator,
     RenderedHtml,
     SendRepository,
     TemplateJobs,
@@ -93,6 +94,7 @@ from karria.modules.documents.domain.plain_letter import (
     letter_style_served,
     plain_letter_spec,
 )
+from karria.modules.documents.domain.portrait import persona_of
 from karria.modules.documents.domain.sends import (
     MAX_DOCUMENTS_PER_SEND,
     DocumentSend,
@@ -904,6 +906,7 @@ class DeriveTemplateVersion:
         engine: DocumentEngine,
         storage: ObjectStorage,
         clock: Clock,
+        portraits: PortraitGenerator | None = None,
     ) -> None:
         self._templates, self._engine, self._storage, self._clock = (
             templates,
@@ -911,6 +914,7 @@ class DeriveTemplateVersion:
             storage,
             clock,
         )
+        self._portraits = portraits
 
     async def execute(
         self, name: str, *, seed: int = 1, dry_run: bool = False
@@ -945,6 +949,15 @@ class DeriveTemplateVersion:
             assets[asset_name] = await self._storage.get(Bucket.TEMPLATES, key)
         icons = {k: v for k, v in assets.items() if not k.startswith("sample_")}
         icons = await asyncio.to_thread(tint_icons, icons, source_version.spec, derivation.primary)
+        number = await self._templates.next_version_number(template.id)
+        await replace_sample_portrait(
+            self._portraits,
+            spec=spec,
+            sample=source_version.sample,
+            assets=assets,
+            template_name=template.name,
+            version=number,
+        )
         photo_name = (spec["header"].get("photo") or {}).get("sample_file")
         photo = assets.get(photo_name) if photo_name else None
         view = from_sample(spec, source_version.sample)
@@ -974,7 +987,6 @@ class DeriveTemplateVersion:
             ],
             "gate": {"passed": True, "failures": []},
         }
-        number = await self._templates.next_version_number(template.id)
         prefix = version_prefix(template.id, number)
         now = self._clock.now()
         version = TemplateVersion(
@@ -1056,6 +1068,116 @@ class DeriveTemplateVersion:
         return done, report
 
 
+async def replace_sample_portrait(
+    portraits: PortraitGenerator | None,
+    *,
+    spec: dict[str, Any],
+    sample: dict[str, Any] | None,
+    assets: dict[str, bytes],
+    template_name: str,
+    version: int,
+) -> bool:
+    """Remplace, dans `assets`, la photo d'exemple par un portrait généré ; vrai si fait.
+
+    Rien ne change quand le modèle n'a pas de photo, sans générateur, ou
+    quand la génération échoue (meilleur effort : la photo du PDF reste).
+    """
+    photo_name = (spec.get("header", {}).get("photo") or {}).get("sample_file")
+    if not photo_name or portraits is None:
+        return False
+    persona = persona_of(spec, sample or {}, template_name=template_name, version=version)
+    portrait = await portraits.generate(persona)
+    if not portrait:
+        return False
+    assets[photo_name] = portrait
+    return True
+
+
+class RefreshSamplePortrait:
+    """Donne à la version publiée d'un modèle son portrait d'exemple généré, et refait ses aperçus."""
+
+    def __init__(
+        self,
+        templates: TemplateRepository,
+        engine: DocumentEngine,
+        storage: ObjectStorage,
+        portraits: PortraitGenerator,
+        clock: Clock,
+    ) -> None:
+        self._templates, self._engine, self._storage = templates, engine, storage
+        self._portraits, self._clock = portraits, clock
+
+    async def execute(self, name: str) -> TemplateVersion | None:
+        """Rend la version mise à jour ; `None` si le modèle n'a pas de photo ou que rien n'a été généré.
+
+        Raises:
+            TemplateNotFoundError: Modèle inconnu ou sans version publiée.
+        """
+        template = await self._templates.get_by_name(slugify(name))
+        if template is None or template.published_version_id is None:
+            raise TemplateNotFoundError()
+        version = await self._templates.get_version(template.published_version_id)
+        if version is None or not version.spec or not version.sample:
+            raise TemplateNotFoundError()
+        spec = version.spec
+        assets: dict[str, bytes] = {}
+        for asset_name, key in version.assets.items():
+            assets[asset_name] = await self._storage.get(Bucket.TEMPLATES, key)
+        if not await replace_sample_portrait(
+            self._portraits,
+            spec=spec,
+            sample=version.sample,
+            assets=assets,
+            template_name=template.name,
+            version=version.version,
+        ):
+            return None
+        photo_name = str(spec["header"]["photo"]["sample_file"])
+        prefix = version_prefix(template.id, version.version)
+        photo_key = f"{prefix}/assets/{photo_name}"
+        await self._storage.put(
+            Bucket.TEMPLATES, photo_key, assets[photo_name], content_type="image/png"
+        )
+        icons = {k: v for k, v in assets.items() if not k.startswith("sample_")}
+        view = from_sample(spec, version.sample)
+        rendered = await self._engine.render_pdf(spec, view, assets=icons, photo=assets[photo_name])
+        previews = await self._engine.previews(rendered.data)
+        keys = {
+            "thumbnail_key": f"{prefix}/preview/vignette.webp",
+            "preview_key": f"{prefix}/preview/apercu.png",
+            "full_key": f"{prefix}/preview/apercu_pleine_page.png",
+        }
+        await self._storage.put(
+            Bucket.TEMPLATES,
+            keys["thumbnail_key"],
+            previews.thumbnail_webp,
+            content_type="image/webp",
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["preview_key"], previews.preview_png, content_type="image/png"
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, keys["full_key"], previews.full_png, content_type="image/png"
+        )
+        await self._storage.put(
+            Bucket.TEMPLATES, f"{prefix}/sample_render.pdf", rendered.data, content_type=PDF
+        )
+        done = replace(
+            version,
+            assets={**version.assets, photo_name: photo_key},
+            thumbnail_blurhash=previews.blurhash,
+            thumbnail_key=keys["thumbnail_key"],
+            preview_key=keys["preview_key"],
+            full_key=keys["full_key"],
+            report={**version.report, "portrait": {"generated_at": self._clock.now().isoformat()}},
+        )
+        await self._templates.save_version(done)
+        logger.info(
+            "documents.sample_portrait_refreshed", template=template.name, version=version.version
+        )
+        return done
+
+
 class IngestTemplateVersion:
     """Analyse une version, la mesure, et la publie si elle passe la porte de qualité."""
 
@@ -1065,13 +1187,16 @@ class IngestTemplateVersion:
         engine: DocumentEngine,
         storage: ObjectStorage,
         clock: Clock,
+        portraits: PortraitGenerator | None = None,
     ) -> None:
+        """`portraits` : le générateur du portrait d'exemple ; sans lui, la photo du PDF reste."""
         self._templates, self._engine, self._storage, self._clock = (
             templates,
             engine,
             storage,
             clock,
         )
+        self._portraits = portraits
 
     async def execute(self, version_id: UUID) -> TemplateVersion | None:
         version = await self._templates.get_version(version_id)
@@ -1111,6 +1236,16 @@ class IngestTemplateVersion:
         timings["analyze_s"] = round(time.monotonic() - t, 1)
         spec, sample = analysis.spec, analysis.sample
         prefix = version_prefix(template.id, version.version)
+        # Le portrait d'exemple : une personne fictive à Karria, accordée au modèle,
+        # à la place de la photo de banque d'images du fournisseur.
+        await replace_sample_portrait(
+            self._portraits,
+            spec=spec,
+            sample=sample,
+            assets=analysis.assets,
+            template_name=template.name,
+            version=version.version,
+        )
         asset_keys: dict[str, str] = {}
         for name, data in analysis.assets.items():
             key = f"{prefix}/assets/{name}"

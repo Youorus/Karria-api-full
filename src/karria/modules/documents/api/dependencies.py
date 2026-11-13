@@ -45,6 +45,7 @@ from karria.modules.documents.application import (
     PreviewTemplate,
     PublishPlainLetterPreview,
     RecordTemplateView,
+    RefreshSamplePortrait,
     RefreshTemplateColors,
     RenderDocument,
     SelectTemplate,
@@ -70,6 +71,7 @@ from karria.modules.documents.infrastructure import (
     KarriaDocumentEngine,
     LetterLineLabeler,
     LlmAtsExplainer,
+    LlmPortraitGenerator,
     MailDocumentMailer,
     ProcrastinateTemplateJobs,
     StorageLogoFetcher,
@@ -447,17 +449,41 @@ def get_explainer(llm: LanguageModelDep) -> AtsExplainer:
 # --- Hors requête : le worker et les commandes ------------------------------
 
 
+def build_portrait_generator(settings: Settings) -> LlmPortraitGenerator:
+    """Le portrait d'exemple généré (modèle d'image), pour l'ingestion, la dérivation et `portraits`."""
+    return LlmPortraitGenerator(build_language_model(settings))
+
+
 def build_ingest_template(settings: Settings, storage: ObjectStorage) -> IngestTemplateVersion:
     """L'ingestion d'une version, pour le travail `documents.ingest_template` et la commande."""
     return IngestTemplateVersion(
-        get_template_repository(), build_engine(settings, storage), storage, get_clock()
+        get_template_repository(),
+        build_engine(settings, storage),
+        storage,
+        get_clock(),
+        portraits=build_portrait_generator(settings),
+    )
+
+
+def build_refresh_portrait(settings: Settings, storage: ObjectStorage) -> RefreshSamplePortrait:
+    """Le portrait d'exemple d'un modèle publié, pour `scripts/templates.py portraits`."""
+    return RefreshSamplePortrait(
+        get_template_repository(),
+        build_engine(settings, storage),
+        storage,
+        build_portrait_generator(settings),
+        get_clock(),
     )
 
 
 def build_derive_template(settings: Settings, storage: ObjectStorage) -> DeriveTemplateVersion:
     """La dérivation d'un modèle en création Karria, pour `scripts/templates.py derive`."""
     return DeriveTemplateVersion(
-        get_template_repository(), build_engine(settings, storage), storage, get_clock()
+        get_template_repository(),
+        build_engine(settings, storage),
+        storage,
+        get_clock(),
+        portraits=build_portrait_generator(settings),
     )
 
 

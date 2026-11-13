@@ -26,6 +26,7 @@ from uuid import UUID
 
 from karria.modules.documents.domain.ats import ExtractedDocument
 from karria.modules.documents.domain.gate import Fidelity
+from karria.modules.documents.domain.portrait import Persona
 from karria.modules.documents.domain.sends import DocumentSend
 from karria.modules.documents.domain.templates import (
     DocumentKind,
@@ -225,6 +226,16 @@ class LogoFetcher(Protocol):
     """Port : le logo d'une entreprise (octets PNG/WebP), ou `None` s'il est injoignable."""
 
     async def fetch(self, url: str) -> bytes | None: ...
+
+
+class PortraitGenerator(Protocol):
+    """Le portrait d'exemple d'un modèle : une personne fictive accordée au modèle.
+
+    Meilleur effort : `None` quand rien n'a pu être généré (panne, refus) ;
+    l'appelant garde alors la photo extraite du PDF du fournisseur.
+    """
+
+    async def generate(self, persona: Persona) -> bytes | None: ...
 
 
 class DocumentEngine(Protocol):
