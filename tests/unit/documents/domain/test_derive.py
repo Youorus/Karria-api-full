@@ -64,9 +64,7 @@ SPEC: dict[str, Any] = {
                 {
                     "x_mm": 10.0,
                     "w_mm": 55.0,
-                    "sections": [
-                        {"kind": "skills", "side": None, "slots": [], "decorations": []}
-                    ],
+                    "sections": [{"kind": "skills", "side": None, "slots": [], "decorations": []}],
                 },
                 {
                     "x_mm": 80.0,

@@ -642,6 +642,13 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 20 h — portraits générés, dérivation sobre, retour de Marc
+
+- Marc : les dérivations v2 « ne donnent rien de beau ni d'exploitable », les lignes de couleur épaissies non plus. Analyse : (1) photo ronde sur boîte rectangulaire → ellipse ; (2) ancrages et lignes d'exemple de l'en-tête inversés un à un → intitulé sur « À propos » ; (3) filets doublés ; (4) côté des dates inversé → dates hors page ; (5) titres en police de titre plus large → « PROFESSIONNELLE / S ». Dérivation **sobre** désormais : miroir des positions seulement (pas d'alignement, pas de côté), aucun miroir si colonne latérale, polices (nom en police de titre, le reste en police de texte, espacement des titres ≤ 1,5 pt), couleur, forme de photo seulement si carrée ; plancher de distance 0,68. Toujours dérivée de la **transcription** (`transcribed_version`), jamais d'une dérivation (la v3 avait dérivé de la v2 : miroir annulé).
+- Portraits : `domain/portrait.py` (persona, consigne accordée à la couleur et aux étiquettes, graine par modèle+version), `infrastructure/portraits.py` (tâche `portrait`, Gemini image, meilleur effort), branché à l'ingestion, à la dérivation et à `scripts.templates portraits NAME|--all` (`RefreshSamplePortrait`). Prod : v4 publiées avec portraits générés pour les six modèles à photo.
+- Reste : v5 à publier après le correctif titres/colonne latérale ; regarder chaque aperçu à taille réelle ; `marketing`/`cv3` en revue.
+- Apple (demande de Marc) : liste des gestes App Store/Apple Developer à faire par lui — voir message du 13/11 (RevenueCat absent du code : rien à retirer dans l'app).
+
 ## 2026-11-13, 19 h 15 — les neuf modèles régénérés en créations Karria (PROD)
 
 - `derive` lancé en prod, graine distincte par modèle : sacha-dubois (Playfair Display + Lato, caramel, 0,52), romain-dupont (Josefin Sans + Work Sans, violet, 0,54 — graine 3, la 2 refusée à 0,61), cv2 (0,43), cv5 (Oswald + Karla, brique, 0,55), cv6 (DM Sans + Lora, sarcelle, 0,56), cv8 (Montserrat + Nunito Sans, ocre, 0,59), cv9 (Raleway + Open Sans, bleu, 0,56), meridian (Red Hat Display + Source Sans 3, 0,57), minimalist (Playfair + Lato, 0,59). Toutes en **v2 publiée**, étiquette « création Karria », v1 transcrites gardées en base.
