@@ -642,6 +642,11 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 17 h 30 — plus de resserrement silencieux à l'export
+
+- Marc : « ce que j'ai finalisé n'est pas ce que j'obtiens ». `ExportCv` ne resserre plus la vue quand le CV déborde : `condense.py` et ses tests supprimés, `Fit.condensed` reste au contrat (toujours vide). Tenir sur une page se décide dans l'atelier ; deux pages sont propres.
+- Test de bout en bout par script (`scratchpad/export_send.py`) : export Galerie Monochrome du CV de Marc + envoi à son Gmail depuis un conteneur ponctuel.
+
 ## 2026-11-13, 17 h — incident du script en direct, seconde page vérifiée
 
 - **Incident** 15 h 55 → 17 h : une accolade en trop dans la variante `live` du `fit_script` (étiquette « Page 2 ») cassait le script dans l'atelier : pas de `karriaFit`, feuille d'une page, Marc ne voyait pas la seconde page. Corrigé (`12310c4`) + test d'équilibre des accolades/parenthèses. Règle : après toute retouche du script, charger le HTML en direct (`scratchpad/page2/html_local.py` + `node -e "new Function(...)"`) avant de pousser.

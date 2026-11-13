@@ -1,8 +1,6 @@
 """Domaine du module `documents` : modèles, versions, exports, porte de qualité, score ATS, polices."""
 
 from karria.modules.documents.domain.ats import AtsReport, Check, ExtractedDocument, analyse
-from karria.modules.documents.domain.condense import LEVELS as CONDENSE_LEVELS
-from karria.modules.documents.domain.condense import condense_cv
 from karria.modules.documents.domain.errors import (
     AccountEmailUnknownError,
     CvMissingError,
@@ -59,7 +57,6 @@ from karria.modules.documents.domain.templates import (
 )
 
 __all__ = [
-    "CONDENSE_LEVELS",
     "DAILY_SEND_LIMIT",
     "GUEST_RATE_LIMIT",
     "GUEST_RATE_WINDOW_SECONDS",
@@ -100,7 +97,6 @@ __all__ = [
     "TemplateVersion",
     "VersionStatus",
     "analyse",
-    "condense_cv",
     "ensure_quota",
     "evaluate",
     "from_letter",

@@ -50,13 +50,11 @@ from karria.modules.documents.application.ports import (
     LogoFetcher,
     OriginThrottle,
     RenderedHtml,
-    RenderedPdf,
     SendRepository,
     TemplateJobs,
     TemplateRepository,
     UserTemplateRepository,
 )
-from karria.modules.documents.domain import CONDENSE_LEVELS, condense_cv
 from karria.modules.documents.domain.ats import analyse
 from karria.modules.documents.domain.errors import (
     AccountEmailUnknownError,
@@ -575,9 +573,10 @@ class ExportCv:
             user_id, template_id, ats_safe=safe, cv=cv, primary_color=primary_color
         )
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
-        view, rendered, fit = await self._on_one_page(
-            spec, view, rendered, cv=snapshot.data, assets=assets, photo=photo
-        )
+        # Ce que la personne a finalisé dans l'atelier est ce qu'elle obtient :
+        # aucun resserrement silencieux. Deux pages sont permises et propres
+        # (`fit_script`) ; tenir sur une page se décide dans l'atelier.
+        fit = rendered.fit
         docx = None
         if "docx" in wanted:
             docx = await self._engine.render_docx(spec, view, assets=assets, photo=photo, fit=fit)
@@ -672,37 +671,6 @@ class ExportCv:
             ms=round((time.monotonic() - started) * 1000),
         )
         return generated
-
-    async def _on_one_page(
-        self,
-        spec: dict[str, Any],
-        view: dict[str, Any],
-        rendered: RenderedPdf,
-        *,
-        cv: dict[str, Any],
-        assets: dict[str, bytes],
-        photo: bytes | None,
-    ) -> tuple[dict[str, Any], RenderedPdf, Fit]:
-        """Resserre la vue par paliers tant que le CV déborde d'une page (`condense_cv`).
-
-        Si aucun palier ne suffit, le CV entier est gardé, sur ses pages : on
-        ne rend pas un CV comprimé **et** débordant. Ce qui a été replié est
-        inscrit dans `Fit.condensed`.
-        """
-        if rendered.fit.pages <= 1:
-            return view, rendered, rendered.fit
-        first_view, first_rendered = view, rendered
-        for level in CONDENSE_LEVELS:
-            tight, notes = condense_cv(cv, level)
-            if not notes:
-                break
-            view = from_cv(spec, tight)
-            rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
-            if rendered.fit.pages <= 1:
-                logger.info("documents.export_condensed", level=level, condensed=notes)
-                return view, rendered, replace(rendered.fit, condensed=notes)
-        logger.info("documents.export_overflows", pages=first_rendered.fit.pages)
-        return first_view, first_rendered, first_rendered.fit
 
     async def _variant_helps(
         self,
