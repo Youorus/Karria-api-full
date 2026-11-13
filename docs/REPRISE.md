@@ -642,6 +642,12 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 21 h — les neuf créations Karria v5 en prod, validées par Marc
+
+- Dérivation bande par bande (`_band_mirrors`) : une bande à colonne latérale ou à une seule colonne garde sa place, l'en-tête/photo/ornements s'inversent. Frise Pharmacie publiée en v5 (graine 3, 0,55). Les huit autres en v5 (graines 1..9). Marc : « c'est déjà très bien, j'aime beaucoup ».
+- Marc a demandé puis **annulé** des variantes « artistique » et « même thème » (code non gardé).
+- Portraits générés : six modèles à photo, personnes fictives différentes, accordées à la couleur.
+
 ## 2026-11-13, 20 h — portraits générés, dérivation sobre, retour de Marc
 
 - Marc : les dérivations v2 « ne donnent rien de beau ni d'exploitable », les lignes de couleur épaissies non plus. Analyse : (1) photo ronde sur boîte rectangulaire → ellipse ; (2) ancrages et lignes d'exemple de l'en-tête inversés un à un → intitulé sur « À propos » ; (3) filets doublés ; (4) côté des dates inversé → dates hors page ; (5) titres en police de titre plus large → « PROFESSIONNELLE / S ». Dérivation **sobre** désormais : miroir des positions seulement (pas d'alignement, pas de côté), aucun miroir si colonne latérale, polices (nom en police de titre, le reste en police de texte, espacement des titres ≤ 1,5 pt), couleur, forme de photo seulement si carrée ; plancher de distance 0,68. Toujours dérivée de la **transcription** (`transcribed_version`), jamais d'une dérivation (la v3 avait dérivé de la v2 : miroir annulé).
