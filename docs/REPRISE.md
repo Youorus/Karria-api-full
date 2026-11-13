@@ -644,7 +644,7 @@ jour 50 ms.
 
 ## 2026-11-13, 21 h — les neuf créations Karria v5 en prod, validées par Marc
 
-- Dérivation bande par bande (`_band_mirrors`) : une bande à colonne latérale ou à une seule colonne garde sa place, l'en-tête/photo/ornements s'inversent. Frise Pharmacie publiée en v5 (graine 3, 0,55). Les huit autres en v5 (graines 1..9). Marc : « c'est déjà très bien, j'aime beaucoup ».
+- Miroir **tout ou rien** : si une bande ne peut pas s'inverser (colonne latérale, une seule colonne), rien ne s'inverse — un en-tête inversé posait la photo sur le texte (Frise Pharmacie v5). Frise Pharmacie publiée en **v6 sans miroir**, ressemblance 0,77 acceptée à la main (`--max-ssim 0.78`, inscrit dans le rapport) : polices Manrope + Mulish, vert forêt, portrait généré. Les huit autres en v5 (graines 1..9). Marc : « c'est déjà très bien, j'aime beaucoup ».
 - Marc a demandé puis **annulé** des variantes « artistique » et « même thème » (code non gardé).
 - Portraits générés : six modèles à photo, personnes fictives différentes, accordées à la couleur.
 
