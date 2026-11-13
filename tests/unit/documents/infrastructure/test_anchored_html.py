@@ -147,6 +147,11 @@ class TestPages:
         printed = fit_script(spec, live=False)
         assert "window.karriaFit=" in live
         assert "border-top:2px dashed" in live
+        # Un script à accolades déséquilibrées ne s'exécute pas : l'atelier
+        # perdrait le nombre de pages et la seconde page (incident du 13/11).
+        for script in (live, printed):
+            assert script.count("{") == script.count("}"), script
+            assert script.count("(") == script.count(")"), script
         assert "window.karriaFit=" in printed
         assert "border-top:2px dashed" not in printed
         assert f"lim={page_limit_mm(spec):.2f}*mm" in printed

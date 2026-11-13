@@ -115,7 +115,7 @@ def fit_script(spec: Json, *, live: bool) -> str:
         # L'étiquette « Page 2 » sur le trait : la coupure se voit, elle ne se devine pas.
         "var l=document.createElement('span');l.textContent='Page '+(g+1);"
         f"l.style.cssText='position:absolute;right:4mm;top:1mm;font:600 8pt sans-serif;color:{PAGE_BREAK_COLOR};"
-        "background:#fff;padding:1px 6px;border-radius:8px;';d.appendChild(l);p.appendChild(d)}}"
+        "background:#fff;padding:1px 6px;border-radius:8px;';d.appendChild(l);p.appendChild(d)}"
         if live
         else ""
     )
