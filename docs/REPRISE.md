@@ -642,6 +642,10 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, 22 h 15 — en-tête : plus de poste visé replié sur le paragraphe
+
+- Retour de Marc (Croisée Graphite, son CV) : « DÉVELOPPEUR FULL-STACK & DATA » replié sur deux lignes recouvrait le paragraphe. Deux garde-fous dans `html_renderer.py` : (1) un champ d'en-tête se réduit jusqu'à 60 % du corps avant de se replier (`FIELD_SIZE_STEPS`) ; (2) le script d'ajustement mesure le bas réel de l'en-tête (textes `s-header*` en absolu) et pousse la première bande d'autant si elle serait recouverte. Vérifié en prod par un export réel (`scratchpad/export_check.py`).
+
 ## 2026-11-13, 22 h — `latest_version` dans `GET /app/release`
 
 - `APP_RELEASE__IOS_LATEST_VERSION` / `ANDROID_LATEST_VERSION` (« 1.2.0 ») : le numéro lisible rendu par la route, montré par l'écran bloquant de l'app. Procédure de sortie : poser `LATEST_BUILD`, `LATEST_VERSION`, `STORE_URL` (et `MINIMUM_BUILD` si on veut) dans l'env Dokploy de l'API **et** `/root/karria-api.env`, puis redéployer. Tout à 0 aujourd'hui.
