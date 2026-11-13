@@ -642,6 +642,11 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-13, soir — seconde page propre
+
+- `fit_script` : quand rien ne tient sur une page, chaque `.item` (ou titre hors item) qui chevauche une pliure descend sous elle à 16 mm du bord, un titre collé à la pliure suit son premier item, les ornements absolus pleine page sont prolongés sur n pages, n recompté. Vérifié en local (scratchpad `page2/render_local.py`, Galerie Monochrome + CV de Marc : 2 pages, page 2 propre). Attention aux unités dans ce script : `ph` est en **px** côté JS, la hauteur de page en mm est le littéral Python.
+- Worker : remis à 1 réplica par le redéploiement Dokploy ; file quasi vide (17 jobs). Envoi de test `886dfbd9…` parti à 16 h 14.
+
 ## 2026-11-13, fin d'après-midi — INCIDENT worker réparé, paliers, aperçus
 
 - **Incident** : depuis le 10/11, l'env Dokploy du worker (`wEJP2eb298j-fVCoPBp_x`) ne contenait que les trois variables `LLM__*` (mon écriture directe en base avait remplacé l'env complet, stocké chiffré `enc:v1:…`). Le worker redémarrait en boucle sans `DB__URL` : **aucun job** (explications ATS, envois d'e-mail, logos, index des offres) pendant trois jours ; 6 170 jobs `todo` accumulés. Réparé le 13/11 ~15 h 45 : env complet (plain, depuis `/root/karria-api.env`, y compris `LLM__TASKS__TEMPLATE_EXTRACT`) posé dans `application.env` **et** `docker service update --env-add` ; service monté à **3 réplicas** pour drainer — **à redescendre à 1** (`docker service scale karria-worker-y9xkmo=1`) une fois la file vide. Leçon : ne jamais remplacer `application.env` par un fragment ; l'env de l'API en base est chiffré, celui du worker est désormais en clair (Dokploy l'accepte).
