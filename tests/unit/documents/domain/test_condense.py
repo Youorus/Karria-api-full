@@ -91,4 +91,16 @@ class TestPalierDeux:
 
 
 def test_les_paliers_sont_du_plus_discret_au_plus_franc() -> None:
-    assert CONDENSE_LEVELS == (1, 2)
+    assert CONDENSE_LEVELS == (1, 2, 3)
+
+
+class TestPalierTrois:
+    def test_le_dernier_recours_garde_une_mission_et_toutes_les_experiences(self) -> None:
+        tight, notes = condense_cv(CV, 3)
+        assert [len(e["missions"]) for e in tight["experiences"]] == [1, 1, 0]
+        assert len(tight["experiences"]) == 3
+        assert len(tight["skills"]) == 8
+        assert len(tight["languages"]) == 3
+        assert len(tight["interests"]) == 3
+        assert len(tight["summary"]) <= 200
+        assert notes["skills"] == 4

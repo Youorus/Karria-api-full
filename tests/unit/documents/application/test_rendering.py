@@ -473,14 +473,14 @@ class TestUneSeulePage:
                 ],
             },
         )
-        env.engine.fits = [Fit(pages=3), Fit(pages=2), Fit(pages=2)]
+        env.engine.fits = [Fit(pages=3), Fit(pages=2), Fit(pages=2), Fit(pages=2)]
 
         generated = await env.export().execute(
             env.user, template_id=template.id, formats=["pdf"], ats_safe=False, offer_id=None
         )
 
-        # Trois rendus (entier, palier 1, palier 2) ; le CV entier est gardé, sur ses pages.
-        assert len(env.engine.called("render_pdf")) == 3
+        # Quatre rendus (entier, paliers 1, 2, 3) ; le CV entier est gardé, sur ses pages.
+        assert len(env.engine.called("render_pdf")) == 4
         assert generated.fit.pages == 3
         assert generated.fit.condensed == {}
 

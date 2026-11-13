@@ -17,7 +17,9 @@ Les paliers, du plus discret au plus franc :
    projets replié ; deux projets au plus ;
 2. en plus : deux missions par expérience ; dix compétences, quatre langues,
    quatre centres d'intérêt au plus ; l'à-propos ramené à ses premières
-   phrases.
+   phrases ;
+3. en dernier recours : une mission par expérience ; huit compétences, trois
+   langues, trois centres d'intérêt ; l'à-propos à une phrase ou deux.
 
 On ne retire **jamais** une expérience ni une formation : ce sont les faits
 du parcours, pas des détails.
@@ -31,14 +33,14 @@ from typing import Any, Final
 Json = dict[str, Any]
 
 #: Les paliers que l'export essaie, dans l'ordre.
-LEVELS: Final[tuple[int, ...]] = (1, 2)
+LEVELS: Final[tuple[int, ...]] = (1, 2, 3)
 
-MAX_MISSIONS: Final[dict[int, int]] = {1: 3, 2: 2}
+MAX_MISSIONS: Final[dict[int, int]] = {1: 3, 2: 2, 3: 1}
 MAX_PROJECTS: Final = 2
-MAX_SKILLS: Final = 10
-MAX_LANGUAGES: Final = 4
-MAX_INTERESTS: Final = 4
-SUMMARY_CHARS: Final = 320
+MAX_SKILLS: Final[dict[int, int]] = {2: 10, 3: 8}
+MAX_LANGUAGES: Final[dict[int, int]] = {2: 4, 3: 3}
+MAX_INTERESTS: Final[dict[int, int]] = {2: 4, 3: 3}
+SUMMARY_CHARS: Final[dict[int, int]] = {2: 320, 3: 200}
 
 
 def _trim_list(cv: Json, key: str, limit: int, notes: dict[str, int]) -> None:
@@ -48,14 +50,14 @@ def _trim_list(cv: Json, key: str, limit: int, notes: dict[str, int]) -> None:
         cv[key] = items[:limit]
 
 
-def _shorten_summary(text: str) -> str:
-    """Les premières phrases qui tiennent dans `SUMMARY_CHARS`, sans couper un mot."""
-    if len(text) <= SUMMARY_CHARS:
+def _shorten_summary(text: str, limit: int) -> str:
+    """Les premières phrases qui tiennent dans `limit` caractères, sans couper un mot."""
+    if len(text) <= limit:
         return text
-    head = text[:SUMMARY_CHARS]
+    head = text[:limit]
     for sep in (". ", "! ", "? "):
         cut = head.rfind(sep)
-        if cut > SUMMARY_CHARS // 2:
+        if cut > limit // 2:
             return head[: cut + 1]
     cut = head.rfind(" ")
     return (head[:cut] if cut > 0 else head).rstrip(",;:") + "…"
@@ -87,12 +89,13 @@ def condense_cv(cv: Json, level: int) -> tuple[Json, dict[str, int]]:
         if project.get("description"):
             notes["projects_detail"] = notes.get("projects_detail", 0) + 1
             project["description"] = None
-    if level >= 2:  # noqa: PLR2004 - le second palier
-        _trim_list(out, "skills", MAX_SKILLS, notes)
-        _trim_list(out, "languages", MAX_LANGUAGES, notes)
-        _trim_list(out, "interests", MAX_INTERESTS, notes)
+    if level >= 2:  # noqa: PLR2004 - à partir du second palier
+        tier = min(level, max(MAX_SKILLS))
+        _trim_list(out, "skills", MAX_SKILLS[tier], notes)
+        _trim_list(out, "languages", MAX_LANGUAGES[tier], notes)
+        _trim_list(out, "interests", MAX_INTERESTS[tier], notes)
         summary = out.get("summary")
-        if isinstance(summary, str) and len(summary) > SUMMARY_CHARS:
-            out["summary"] = _shorten_summary(summary)
+        if isinstance(summary, str) and len(summary) > SUMMARY_CHARS[tier]:
+            out["summary"] = _shorten_summary(summary, SUMMARY_CHARS[tier])
             notes["summary"] = 1
     return out, notes

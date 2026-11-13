@@ -146,9 +146,9 @@ class TestPages:
         live = fit_script(spec, live=True)
         printed = fit_script(spec, live=False)
         assert "window.karriaFit=" in live
-        assert "border-top:1px dashed" in live
+        assert "border-top:2px dashed" in live
         assert "window.karriaFit=" in printed
-        assert "border-top:1px dashed" not in printed
+        assert "border-top:2px dashed" not in printed
         assert f"lim={page_limit_mm(spec):.2f}*mm" in printed
 
     def test_un_cv_court_tient_sur_une_page_un_cv_long_non(

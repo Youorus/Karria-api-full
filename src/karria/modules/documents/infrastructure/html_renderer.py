@@ -108,7 +108,11 @@ def fit_script(spec: Json, *, live: bool) -> str:
     guides = (
         "for(var g=1;g<n;g++){var d=document.createElement('div');"
         f"d.className='pb';d.style.cssText='position:absolute;left:0;width:100%;height:0;top:'+(g*{ph})+'mm;"
-        f"border-top:1px dashed {PAGE_BREAK_COLOR};pointer-events:none';p.appendChild(d)}}"
+        f"border-top:2px dashed {PAGE_BREAK_COLOR};pointer-events:none';"
+        # L'étiquette « Page 2 » sur le trait : la coupure se voit, elle ne se devine pas.
+        "var l=document.createElement('span');l.textContent='Page '+(g+1);"
+        f"l.style.cssText='position:absolute;right:4mm;top:1mm;font:600 8pt sans-serif;color:{PAGE_BREAK_COLOR};"
+        "background:#fff;padding:1px 6px;border-radius:8px;';d.appendChild(l);p.appendChild(d)}}"
         if live
         else ""
     )
