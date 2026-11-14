@@ -840,3 +840,56 @@ class TestVraiCvEtEnTete:
         html = render(spec, view, fonts)
         assert "overflow-wrap:normal" in html
         assert re.search(r"overflow-wrap:normal;letter-spacing:[\d.]+pt;font-size:[\d.]+pt", html)
+
+
+class TestChampEnBoite:
+    """Un champ d'en-tête écrit sur plusieurs lignes dans l'exemple (`box_w_mm`) :
+    chez une personne, il se réduit d'abord, et ne se replie qu'en dernier recours."""
+
+    @staticmethod
+    def _headline_div(html: str, text: str) -> str:
+        m = re.search(r"<div [^>]*>" + re.escape(text), html)
+        assert m, text
+        return m.group(0)
+
+    def test_un_poste_vise_long_tient_sur_une_ligne_reduit(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        el = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        st = spec["styles"][el["style"]]
+        el["box_w_mm"], el["pitch_mm"] = 30.0, 5.0
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        avail = max(30.0, renderer.header_limit(el, st))
+        text = "Développeuse full-stack & data"
+        while fonts.width_mm(text, st) <= avail:  # plus long que la place, mais pas de beaucoup
+            text += " senior"
+        cv = copy.deepcopy(CV)
+        cv["identity"]["headline"] = text
+        html = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None).render()
+        div = self._headline_div(html, esc(text))
+        assert "white-space:nowrap" in div  # 14/11 : sur une ligne plutôt que replié sur le résumé
+        assert "letter-spacing:" in div
+        assert f"width:{avail:.2f}mm" in div
+
+    def test_un_poste_vise_interminable_se_replie_a_son_corps(
+        self, spec: Json, fonts: FontSet
+    ) -> None:
+        el = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        el["box_w_mm"], el["pitch_mm"] = 30.0, 5.0
+        cv = copy.deepcopy(CV)
+        cv["identity"]["headline"] = " ".join(["Développeuse full-stack, data et intelligence"] * 6)
+        html = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None).render()
+        div = self._headline_div(html, "Développeuse full-stack, data et intelligence")
+        assert "white-space:normal" in div
+        assert "font-size:" not in div  # replié, il garde le corps du modèle, comme l'exemple
+
+    def test_lexemple_garde_sa_boite_telle_quelle(self, cv_built: tuple, fonts: FontSet) -> None:
+        spec, sample, _ = copy.deepcopy(cv_built)
+        el = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
+        el["box_w_mm"], el["pitch_mm"] = 30.0, 5.0
+        el.pop("sample_lines", None)
+        sample["identity"]["headline"] = "CHARGÉE DE PROJET DIGITAL ET DATA"
+        html = HtmlRenderer(spec, from_sample(spec, sample), fonts, photo=None).render()
+        div = self._headline_div(html, "CHARGÉE DE PROJET")
+        assert "width:30.00mm;white-space:normal" in div
+        assert "letter-spacing:" not in div

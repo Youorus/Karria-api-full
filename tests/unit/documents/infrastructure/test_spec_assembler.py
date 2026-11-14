@@ -515,9 +515,11 @@ class TestRendus:
         }
         view = from_cv(spec, cv)
         html = HtmlRenderer(spec, view, fonts, photo=None).render()
-        assert "white-space:normal;line-height:5.0" in html
-        # Le poste visé d'une personne replie dans toute la place disponible, pas
-        # dans la boîte de l'exemple ; le titre d'une rubrique prend la colonne.
+        # Un poste visé court tient sur une ligne dans sa boîte (14/11 : il ne se
+        # replie qu'en dernier recours) ; la boîte garde l'interligne de l'exemple.
+        assert "white-space:nowrap;line-height:5.0" in html
+        # Le poste visé d'une personne s'étend à toute la place disponible, pas
+        # à la boîte de l'exemple ; le titre d'une rubrique prend la colonne.
         headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
         assert f"width:{headline['box_w_mm']:.2f}mm" not in html
         sample_html = HtmlRenderer(spec, from_sample(spec, sample), fonts, photo=None).render()

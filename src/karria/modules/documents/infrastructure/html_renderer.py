@@ -1176,6 +1176,28 @@ class HtmlRenderer:
             shrink_wrapped=True,
         )
 
+    def fit_header_field(self, e: Json, st: Json, val: str) -> tuple[float | None, str, bool]:
+        """La place d'un champ d'en-tête, son CSS d'ajustement, et s'il tient sur une ligne.
+
+        Un champ **en boîte** (écrit sur plusieurs lignes dans l'exemple,
+        `box_w_mm`) : chez une personne, la boîte s'élargit à toute la place
+        disponible, et le texte se resserre puis se réduit avant de se replier
+        (14/11 : « Développeur full-stack & data » replié recouvrait le résumé
+        de Croisée Graphite). S'il ne tient toujours pas, il se replie à son
+        corps, comme l'exemple. Un champ sans boîte s'ajuste à la place libre.
+        """
+        box = e.get("box_w_mm")
+        name = e["field"] in NAME_FIELDS
+        if not box:
+            return None, self.fit_header_text(val, st, self.header_limit(e, st), name=name), False
+        if self.view.get("sample"):
+            return float(box), "", False
+        box = max(float(box), self.header_limit(e, st))
+        tried = self.fit_header_text(val, st, box, name=name)
+        if "white-space:normal" in tried:
+            return box, "", False
+        return box, tried, True
+
     def header(self) -> str:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""
         h = self.spec["header"]
@@ -1199,18 +1221,7 @@ class HtmlRenderer:
                     for sl in e["sample_lines"]
                 )
                 continue
-            box = e.get("box_w_mm")
-            if box and not self.view.get("sample"):
-                # Le CV d'une personne replie dans toute la place disponible,
-                # pas dans la boîte de la ligne la plus longue de l'exemple.
-                box = max(float(box), self.header_limit(e, st))
-            fit_css = (
-                ""
-                if box
-                else self.fit_header_text(
-                    val, st, self.header_limit(e, st), name=e["field"] in NAME_FIELDS
-                )
-            )
+            box, fit_css, one_line = self.fit_header_field(e, st, val)
             icon = ""
             if e.get("icon"):
                 ic = e["icon"]
@@ -1228,8 +1239,9 @@ class HtmlRenderer:
                 )
             elif align == "right":
                 left = f"right:{pw - e['rx_mm']:.2f}mm"
+            space = "nowrap" if one_line else "normal"
             wrap = (
-                f";width:{box:.2f}mm;white-space:normal;line-height:{e['pitch_mm']:.3f}mm;text-align:{align}"
+                f";width:{box:.2f}mm;white-space:{space};line-height:{e['pitch_mm']:.3f}mm;text-align:{align}"
                 if box
                 else ";white-space:nowrap"
             )
