@@ -462,6 +462,13 @@ class TestEnTete:
         wrapped = renderer.fit_header_text(text, st, natural * 0.3, name=True)
         assert "white-space:normal" in wrapped
         assert f";font-size:{float(st['size_pt']) * 0.35:.2f}pt" in wrapped
+        # Un poste visé descend jusqu'à 50 % (14/11 : 1,7 fois l'exemple, replié à 60 %).
+        headline = renderer.fit_header_text(text, st, natural * 0.52, headline=True)
+        assert "white-space:normal" not in headline
+        assert f";font-size:{float(st['size_pt']) * 0.5:.2f}pt" in headline
+        assert "white-space:normal" in renderer.fit_header_text(
+            text, st, natural * 0.48, headline=True
+        )
 
     @pytest.mark.parametrize(
         ("avail", "expected"),

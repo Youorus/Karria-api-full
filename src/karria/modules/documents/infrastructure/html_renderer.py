@@ -65,6 +65,9 @@ FIELD_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6)
 #: Un nom se réduit davantage : replié, il écraserait ce qui est sous lui.
 NAME_SIZE_STEPS: Final = (0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35)
 NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
+#: Un poste visé aussi : sur une ligne à 50 % plutôt que replié sur deux en 60 %
+#: (14/11, « Développeur full-stack & data », 1,7 fois l'exemple de Croisée Graphite).
+HEADLINE_SIZE_STEPS: Final = (*FIELD_SIZE_STEPS, 0.55, 0.5)
 
 
 def identity_url(name: str) -> str:
@@ -1160,21 +1163,18 @@ class HtmlRenderer:
                 left_bound = max(left_bound, d["x_mm"] + 2.0)
         return left_bound, right_bound
 
-    def fit_header_text(self, val: str, st: Json, avail: float, *, name: bool = False) -> str:
+    def fit_header_text(
+        self, val: str, st: Json, avail: float, *, name: bool = False, headline: bool = False
+    ) -> str:
         """Texte trop long dans l'en-tête : interlettrage resserré, puis corps réduit, puis retour à la ligne.
 
         Un **nom** se réduit jusqu'à 35 % de son corps avant de se replier :
         replié, il descendrait sur le poste visé et les coordonnées, posés en
-        absolu sous lui (mesuré avec « Moreau-Lefebvre » en 48 pt).
+        absolu sous lui (mesuré avec « Moreau-Lefebvre » en 48 pt). Un **poste
+        visé** descend jusqu'à 50 % ; un autre champ, jusqu'à 60 %.
         """
-        return fit_text_css(
-            self.fonts,
-            val,
-            st,
-            avail,
-            steps=NAME_SIZE_STEPS if name else FIELD_SIZE_STEPS,
-            shrink_wrapped=True,
-        )
+        steps = NAME_SIZE_STEPS if name else HEADLINE_SIZE_STEPS if headline else FIELD_SIZE_STEPS
+        return fit_text_css(self.fonts, val, st, avail, steps=steps, shrink_wrapped=True)
 
     def fit_header_field(self, e: Json, st: Json, val: str) -> tuple[float | None, str, bool]:
         """La place d'un champ d'en-tête, son CSS d'ajustement, et s'il tient sur une ligne.
@@ -1187,13 +1187,13 @@ class HtmlRenderer:
         corps, comme l'exemple. Un champ sans boîte s'ajuste à la place libre.
         """
         box = e.get("box_w_mm")
-        name = e["field"] in NAME_FIELDS
+        kind = {"name": e["field"] in NAME_FIELDS, "headline": e["field"] == "headline"}
         if not box:
-            return None, self.fit_header_text(val, st, self.header_limit(e, st), name=name), False
+            return None, self.fit_header_text(val, st, self.header_limit(e, st), **kind), False
         if self.view.get("sample"):
             return float(box), "", False
         box = max(float(box), self.header_limit(e, st))
-        tried = self.fit_header_text(val, st, box, name=name)
+        tried = self.fit_header_text(val, st, box, **kind)
         if "white-space:normal" in tried:
             return box, "", False
         return box, tried, True
