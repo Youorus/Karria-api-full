@@ -642,6 +642,10 @@ de test sous la main ; la route e2e est couverte par les tests).
 seuil d'occurrences si Marc les voit dans l'app ; `pg_trgm` seulement si la latence dépasse un
 jour 50 ms.
 
+## 2026-11-14 — brief UI/UX de l'atelier CV pour une autre IA
+
+Le dossier de consignes que Marc remettra à une IA chargée d'auditer et de refaire l'ergonomie du parcours CV est dans l'app : `karria_app/docs/BRIEF-UX-ATELIER-CV.md`. Il décrit aussi ce côté-ci (module `documents`, routes, rendu ancré, export, règles de prod). Toute évolution du contrat demandée par cet audit se discute ici avant d'être codée.
+
 ## 2026-11-13, 22 h 15 — en-tête : plus de poste visé replié sur le paragraphe
 
 - Retour de Marc (Croisée Graphite, son CV) : « DÉVELOPPEUR FULL-STACK & DATA » replié sur deux lignes recouvrait le paragraphe. Deux garde-fous dans `html_renderer.py` : (1) un champ d'en-tête se réduit jusqu'à 60 % du corps avant de se replier (`FIELD_SIZE_STEPS`) ; (2) le script d'ajustement mesure le bas réel de l'en-tête (textes `s-header*` en absolu) et pousse la première bande d'autant si elle serait recouverte. Vérifié en prod par un export réel (`scratchpad/export_check.py`). Suite (14/11) : (3) un champ **en boîte** (`box_w_mm`, écrit sur plusieurs lignes dans l'exemple) se resserre et se réduit avant de se replier chez une personne (`fit_header_field`) ; (4) le **poste visé** a ses propres paliers jusqu'à 50 % (`HEADLINE_SIZE_STEPS`) : dans Croisée Graphite il n'est pas en boîte, il fait 20 pt et 129 mm pour 74 mm de place, à 60 % il dépassait encore de 3 mm. Diagnostic en prod : `scratchpad/diag_head.py` (place calculée, CSS d'ajustement), à lancer dans l'image avec `-v /root/diag_head.py:/app/diag_head.py:ro`.
