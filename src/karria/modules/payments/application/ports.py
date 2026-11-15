@@ -56,7 +56,7 @@ class CheckoutRequest:
     """
 
     customer_id: str
-    price_id: str
+    price: str | PriceSpec
     mode: CheckoutMode
     success_url: str
     cancel_url: str

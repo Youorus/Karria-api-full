@@ -81,6 +81,13 @@ class UnknownCoffeeTierError(InvalidInputError):
         )
 
 
+class InvalidCoffeeAmountError(InvalidInputError):
+    """Un montant libre hors limites ou incompatible avec la commande."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message, details={"reason": reason, "field": "coffee_amount_cents"})
+
+
 class TemplateRequiredError(InvalidInputError):
     """Un achat de modèle sans dire lequel."""
 

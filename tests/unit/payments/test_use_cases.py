@@ -180,7 +180,7 @@ class TestOpenCheckout:
         assert env.gateway.customers == [(env.user, "toi@exemple.fr")]
         request = env.gateway.opened[0]
         assert request.customer_id == "cus_1"
-        assert request.price_id == "price_karria_ad_free_monthly"
+        assert request.price == "price_karria_ad_free_monthly"
         assert request.metadata == {
             "user_id": str(env.user),
             "amount_cents": "499",
@@ -206,7 +206,7 @@ class TestOpenCheckout:
             env.user, CheckoutOrder(ProductKind.COFFEE, 2), return_url=APP, return_page=RETURN_PAGE
         )
         assert len(env.gateway.customers) == 1
-        assert [r.price_id for r in env.gateway.opened] == [
+        assert [r.price for r in env.gateway.opened] == [
             "price_karria_coffee_1",
             "price_karria_coffee_2",
         ]

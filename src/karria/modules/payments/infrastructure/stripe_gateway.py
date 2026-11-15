@@ -373,10 +373,21 @@ class StripeGateway:
     async def open_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         """`checkout.sessions.create`."""
         metadata = _tagged(request.metadata)
+        price = request.price
+        line_item: dict[str, Any] = {"quantity": 1}
+        if isinstance(price, PriceSpec):
+            line_item["price_data"] = {
+                "currency": price.currency,
+                "unit_amount": price.amount_cents,
+                "tax_behavior": "inclusive",
+                "product_data": {"name": price.product_name, "metadata": _tagged()},
+            }
+        else:
+            line_item["price"] = price
         params: dict[str, Any] = {
             "mode": request.mode,
             "customer": request.customer_id,
-            "line_items": [{"price": request.price_id, "quantity": 1}],
+            "line_items": [line_item],
             "success_url": request.success_url,
             "cancel_url": request.cancel_url,
             "metadata": metadata,

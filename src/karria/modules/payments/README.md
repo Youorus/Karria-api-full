@@ -9,8 +9,11 @@ Stripe : `docs/DEPLOIEMENT.md` § Encaissements.
 
 - Le **catalogue et ses prix** (`domain/catalog.py`) : « Karria sans pub »
   4,99 €/mois sans engagement ; les cafés 1 / 2 / 3 / 5 à 2,99 / 4,99 / 7,99 /
-  12,99 € ; le modèle Premium au prix que `documents` lui donne. Chaque prix
-  a une `lookup_key` stable ; Stripe le porte, le code le crée s'il manque.
+  12,99 € ou un soutien libre dès 2,99 € (dans la limite du prestataire),
+  compté comme un café ;
+  le modèle Premium au prix que `documents` lui donne. Chaque prix fixe a
+  une `lookup_key` stable. Pour un montant libre, le prix TTC est transmis
+  à la session Stripe Checkout et son montant est confirmé par la notification signée.
 - La **projection de l'abonnement** (`payments_accounts`, une ligne par compte :
   client Stripe, statut, fin de période, résiliation programmée, départ de la
   grâce), les **achats confirmés** (`payments_purchases`, uniques par session

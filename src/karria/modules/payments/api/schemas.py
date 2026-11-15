@@ -58,6 +58,13 @@ class CoffeeRead(PriceRead):
     count: int
 
 
+class CoffeeCustomRead(BaseModel):
+    """Bornes du soutien libre, en centimes TTC, bornes incluses."""
+
+    minimum_cents: int
+    maximum_cents: int
+
+
 class TemplateOfferRead(BaseModel):
     """Un modèle de CV Premium en vente (le prix est celui de `documents`)."""
 
@@ -75,6 +82,7 @@ class CatalogResponse(BaseModel):
         description="« Karria sans pub », par an : deux mois offerts sur douze, sans engagement."
     )
     coffees: list[CoffeeRead]
+    coffee_custom: CoffeeCustomRead
     templates: list[TemplateOfferRead]
     enabled: EnabledRead
 
@@ -88,6 +96,10 @@ class CatalogResponse(BaseModel):
                 CoffeeRead(count=count, **PriceRead.from_spec(spec).model_dump())
                 for count, spec in cat.coffees
             ],
+            coffee_custom=CoffeeCustomRead(
+                minimum_cents=cat.coffee_minimum_cents,
+                maximum_cents=cat.coffee_maximum_cents,
+            ),
             templates=[_offer(o) for o in cat.templates],
             enabled=EnabledRead.from_flags(flags),
         )
@@ -110,8 +122,16 @@ class CreateCheckoutSessionRequest(BaseModel):
             "l'équipe ; `template` : un modèle de CV Premium."
         )
     )
-    coffee_count: int = Field(
-        default=1, ge=1, le=10, description="Nombre de cafés : 1, 2, 3 ou 5 (`coffee`)."
+    coffee_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="Nombre de cafés : 1, 2, 3 ou 5. Par défaut : 1 sans montant libre.",
+    )
+    coffee_amount_cents: int | None = Field(
+        default=None,
+        strict=True,
+        description="Soutien libre en centimes TTC, réservé à `coffee` sans `coffee_count`.",
     )
     template_id: UUID | None = Field(default=None, description="Le modèle à acheter (`template`).")
     plan: Literal["monthly", "yearly"] = Field(
@@ -132,6 +152,7 @@ class CreateCheckoutSessionRequest(BaseModel):
         return CheckoutOrder(
             kind=ProductKind(self.payment_type),
             coffee_count=self.coffee_count,
+            coffee_amount_cents=self.coffee_amount_cents,
             template_id=self.template_id,
             plan=self.plan,
         )

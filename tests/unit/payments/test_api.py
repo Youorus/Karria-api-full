@@ -117,6 +117,7 @@ class TestCatalogue:
         assert body["ad_free_yearly"]["interval"] == "year"
         assert [c["count"] for c in body["coffees"]] == [1, 2, 3, 5]
         assert body["coffees"][3]["amount_cents"] == 1299
+        assert body["coffee_custom"] == {"minimum_cents": 299, "maximum_cents": 99_999_999}
         assert body["templates"] == [
             {"template_id": str(offer.template_id), "label": "Meridian", "amount_cents": 499}
         ]
@@ -134,6 +135,45 @@ class TestCatalogue:
 
 
 class TestCheckoutSession:
+    async def test_un_montant_libre_identifie_la_session_et_ne_cree_pas_de_prix_fixe(
+        self,
+    ) -> None:
+        h = Harness(FakeGateway())
+        assert h.gateway is not None
+        for amount in (299, 723, 99_999_999):
+            response = await h.http.post(
+                "/api/v1/payments/checkout-session",
+                json={"payment_type": "coffee", "coffee_amount_cents": amount},
+            )
+            assert response.status_code == 201
+            assert response.json()["amount_cents"] == amount
+        assert not h.gateway.prices
+        assert len({request.idempotency_key for request in h.gateway.opened}) == 3
+        assert all(request.metadata["coffee_count"] == "1" for request in h.gateway.opened)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"coffee_amount_cents": 298},
+            {"coffee_amount_cents": 100_000_000},
+            {"coffee_amount_cents": 299.5},
+            {"coffee_amount_cents": "299"},
+            {"coffee_amount_cents": True},
+            {"coffee_amount_cents": 499, "coffee_count": 1},
+            {"coffee_amount_cents": 499, "payment_type": "ad_free"},
+        ],
+    )
+    async def test_un_montant_invalide_n_ouvre_aucune_session(
+        self, body: dict[str, object]
+    ) -> None:
+        h = Harness(FakeGateway())
+        assert h.gateway is not None
+        response = await h.http.post(
+            "/api/v1/payments/checkout-session", json={"payment_type": "coffee", **body}
+        )
+        assert response.status_code == 422
+        assert not h.gateway.opened
+
     async def test_exige_la_session(self) -> None:
         h = Harness(FakeGateway(), authenticated=False)
         response = await h.http.post(

@@ -173,13 +173,15 @@ class OpenCheckout:
             account = BillingAccount.opened(user_id=user_id, customer_id=customer_id)
             await self._accounts.save(account)
 
-        price_id = await self._gateway.ensure_price(priced.spec)
+        checkout_price = (
+            priced.spec if priced.inline_price else await self._gateway.ensure_price(priced.spec)
+        )
         metadata = {"user_id": str(user_id), "amount_cents": str(priced.amount_cents)}
         metadata.update(priced.metadata)
         session = await self._gateway.open_checkout(
             CheckoutRequest(
                 customer_id=account.customer_id,
-                price_id=price_id,
+                price=checkout_price,
                 mode=priced.mode,
                 success_url=with_query(
                     return_page,

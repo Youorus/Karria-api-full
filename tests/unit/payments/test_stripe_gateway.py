@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +19,7 @@ from karria.modules.payments.application import (
 from karria.modules.payments.domain import (
     AD_FREE_PLAN,
     PaymentsUnavailableError,
+    PriceSpec,
     SubscriptionStatus,
     coffee_price,
 )
@@ -201,7 +202,7 @@ class TestPrices:
 def request(mode: str = "payment") -> CheckoutRequest:
     return CheckoutRequest(
         customer_id="cus_1",
-        price_id="price_1",
+        price="price_1",
         mode="subscription" if mode == "subscription" else "payment",
         success_url="https://api.karria.fr/r?status=success",
         cancel_url="https://api.karria.fr/r?status=cancelled",
@@ -211,6 +212,24 @@ def request(mode: str = "payment") -> CheckoutRequest:
 
 
 class TestCheckout:
+    async def test_un_soutien_libre_transmet_le_montant_exact_ttc(self) -> None:
+        client = FakeStripeClient()
+        spec = PriceSpec("karria_coffee_custom_734", "Un soutien", 734)
+        await gateway(client, tax=True).open_checkout(replace(request(), price=spec))
+        (params,), _ = client.sessions_create.calls[0]
+        assert params["line_items"] == [
+            {
+                "quantity": 1,
+                "price_data": {
+                    "currency": "eur",
+                    "unit_amount": 734,
+                    "tax_behavior": "inclusive",
+                    "product_data": {"name": "Un soutien", "metadata": {"app": "karria"}},
+                },
+            }
+        ]
+        assert client.prices_create.calls == []
+
     async def test_un_paiement_unique(self) -> None:
         client = FakeStripeClient()
         session = await gateway(client).open_checkout(request())
