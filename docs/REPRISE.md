@@ -3,7 +3,36 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-10**
+**Dernière mise à jour : 2026-11-15**
+
+### Session du 2026-11-15 — coupure de page dans le PDF du CV
+
+- Avec un CV fictif long, Chromium supprimait la marge CSS à la coupure.
+  Le titre « Formation » commençait au bord de la page 2. Le moteur insère
+  un espace de mise en page qui se conserve à l’impression. Le rendu
+  contrôlé replace le titre à 12,9 mm du bord et garde son contenu sur la
+  même page. Le DOCX du scénario a été ouvert dans LibreOffice.
+- `make check` vert sur PostgreSQL local, avec le test d’impression
+  Chromium. 3 892 tests passent, 22 sont ignorés faute de services
+  externes de test, dont MinIO. Couverture de 98,31 %.
+
+### Session du 2026-11-14 — audit UX de l’atelier CV côté app
+
+- L’audit et le plan sont dans `karria_app/docs/AUDIT-UX-ATELIER.md`.
+  Vu sur iPhone en simulation : passage d’une offre à l’envoi fictif et
+  défauts de mise en page à la taille maximale du texte.
+- Aucun changement de code ni de contrat API ; `make check` non lancé pour
+  cette mise à jour documentaire. Le lot proposé réutilise les contrats de
+  rendu, de sauvegarde et d’export. La conservation du CV source d’un export
+  et son renommage restent hors lot, à discuter avec Marc.
+- Marc a validé l’application du plan côté mobile. L’atelier attend les
+  écritures avant export, Finaliser ne force plus le passage par la lettre
+  et Dossiers exploite les `preview_urls` déjà servis par l’API. Le trajet
+  offre → envoi simulé a été vérifié en quatre touchers sur iPhone, hors
+  premier accord IA. Les essais complémentaires sur iOS 18.4 et 26.5,
+  Android 14 et 16, ainsi que le diagnostic de l’aura sont consignés
+  dans le journal de l’app. La recette avec les lecteurs d’écran et
+  les exports réels reste à faire.
 
 ### Session du 2026-11-10 — ingestion v2 : le lot passe (Fable) — fusionnée dans `main` le 10 (pas encore poussée)
 

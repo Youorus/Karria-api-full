@@ -151,7 +151,12 @@ def fit_script(spec: Json, *, live: bool) -> str:
         # Un élément (item, ou titre hors item) qui chevauche une pliure descend
         # sous elle, à la marge haute ; un titre collé à la pliure suit son premier item.
         "function sh(e){var q=e.getBoundingClientRect();return{t:q.top-pt,b:q.bottom-pt}}"
-        "function push(e,y){var q=sh(e);e.style.marginTop=(parseFloat(getComputedStyle(e).marginTop)||0)+(y-q.t)+'px'}"
+        # Chromium peut supprimer une marge qui traverse une coupure à
+        # l'impression. Un bloc vide se répartit sur les deux pages. On
+        # mesure après l'insertion pour tenir compte des marges fusionnées.
+        "function push(e,y){var spacer=document.createElement('div');"
+        "spacer.setAttribute('aria-hidden','true');spacer.style.height='0';"
+        "e.before(spacer);e.style.marginTop='0';spacer.style.height=Math.max(0,y-sh(e).t)+'px'}"
         "document.querySelectorAll('.col').forEach(function(c){"
         "var els=Array.prototype.filter.call(c.querySelectorAll('.item,.t'),function(e){return e.classList.contains('item')||!e.closest('.item')});"
         "for(var i=0;i<els.length;i++){var e=els[i],q=sh(e);if(q.b-q.t>ph*0.8)continue;"

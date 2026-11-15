@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -469,6 +473,54 @@ class TestVerification:
 
 
 class TestRendus:
+    def test_le_titre_qui_chevauche_la_coupure_garde_sa_marge_dans_le_pdf(
+        self,
+        spec: Json,
+        sample: Json,
+        fonts: FontSet,
+        tmp_path: Path,
+    ) -> None:
+        chromium = shutil.which("chromium") or shutil.which("google-chrome")
+        if chromium is None:
+            pytest.skip("Chromium n'est pas disponible pour l'impression du PDF")
+
+        view = from_sample(spec, sample)
+        experiences = next(s for s in view["sections"] if s["kind"] == "experiences")
+        experiences["items"] *= 4
+        page = tmp_path / "cv.html"
+        page.write_text(HtmlRenderer(spec, view, fonts, photo=None).render(), encoding="utf-8")
+        for font in fonts.files:
+            (tmp_path / font.file_name).write_bytes(font.data)
+        output = tmp_path / "cv.pdf"
+        # Le profil est séparé du profil personnel et son chemin reste court
+        # pour les sockets Unix que Chromium y crée.
+        with tempfile.TemporaryDirectory(prefix="cv-print-") as profile:
+            printed = subprocess.run(  # noqa: S603 - moteur et document locaux
+                [
+                    str(Path(chromium).resolve()),
+                    "--headless",
+                    "--no-first-run",
+                    "--disable-background-networking",
+                    f"--user-data-dir={profile}",
+                    "--virtual-time-budget=3000",
+                    "--no-pdf-header-footer",
+                    f"--print-to-pdf={output}",
+                    page.as_uri(),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        assert printed.returncode == 0, printed.stderr
+
+        with PdfDocument(output.read_bytes()) as pdf:
+            assert pdf.page_count == 2
+            lines = pdf.text_lines(1)
+            title = next(line for line in lines if line["text"] == "FORMATION")
+            assert title["y"] >= 10  # mm, avec la tolérance de rendu des glyphes
+            assert any("Master en commerce" in line["text"] for line in lines)
+
     def test_le_html_de_lexemple_rend_frise_colonne_laterale_et_filets(
         self, spec: Json, sample: Json, fonts: FontSet
     ) -> None:

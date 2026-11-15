@@ -72,6 +72,8 @@ export(s) ──► SendDocuments (journal, quota) ──► file ──► Deli
   pas celui de la personne — sauf sa photo. Polices copiées une fois dans le bucket
   public `assets` (`fonts/<fichier>`) pour une adresse stable ; pictogrammes en `data:` ;
   `pages` estimé par mesure, vérité dans `window.karriaFit`. 90 rendus / min / compte.
+  Le blanc qui reporte un bloc sur la page suivante est un élément de mise en page,
+  car Chromium peut supprimer une marge CSS à la coupure lors de l'impression PDF.
 - **Lettre** (ADR-0030, ADR-0036) : vue `kind: "letter"`, moteurs `LetterHtmlRenderer` /
   `LetterDocxRenderer` lus dans une **spécification de lettre** (blocs d'en-tête ancrés,
   colonne de texte, blancs mesurés) : la lettre appariée du modèle, recolorée avec le CV,
