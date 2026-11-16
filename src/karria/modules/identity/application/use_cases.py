@@ -76,6 +76,7 @@ from karria.modules.identity.domain import (
     LoginCodeExhaustedError,
     LoginCodeInvalidError,
     ProviderIdentity,
+    ReviewAccess,
     Session,
     SessionEndReason,
     SessionNotFoundError,
@@ -311,17 +312,37 @@ class _CodeIssuer:
     un serveur SMTP lent tiendrait sinon un verrou pendant tout l'envoi.
     """
 
-    def __init__(self, *, tokens: TokenFactory, sender: LoginCodeSender) -> None:
+    def __init__(
+        self,
+        *,
+        tokens: TokenFactory,
+        sender: LoginCodeSender,
+        review: ReviewAccess | None = None,
+    ) -> None:
         self._tokens = tokens
         self._sender = sender
+        self._review = review
 
-    def new_code(self) -> tuple[str, str]:
-        """Rend `(code en clair, empreinte)`. Le clair ne vit que le temps de l'envoi."""
-        code = self._tokens.new_numeric_code(CODE_DIGITS)
+    def is_review(self, email: str) -> bool:
+        """L'adresse de démonstration des revues d'Apple et de Google (ADR-0039)."""
+        return self._review is not None and self._review.matches(email)
+
+    def new_code(self, email: str) -> tuple[str, str]:
+        """Rend `(code en clair, empreinte)`. Le clair ne vit que le temps de l'envoi.
+
+        Pour l'adresse de démonstration, le code est le code fixe configuré.
+        """
+        if self._review is not None and self._review.matches(email):
+            code = self._review.code
+        else:
+            code = self._tokens.new_numeric_code(CODE_DIGITS)
         return code, self._tokens.fingerprint(code)
 
     async def deliver(self, *, email: str, code: str, language: Language) -> None:
-        """Achemine le code."""
+        """Achemine le code — sauf à l'adresse de démonstration, qui ne reçoit rien."""
+        if self.is_review(email):
+            logger.info("auth.review_code_not_sent")
+            return
         await self._sender.send(
             email=email,
             code=code,
@@ -352,10 +373,11 @@ class StartEmailLogin:
         throttle: LoginThrottle,
         clock: Clock,
         uow: UnitOfWork,
+        review: ReviewAccess | None = None,
     ) -> None:
         self._users = users
         self._challenges = challenges
-        self._codes = _CodeIssuer(tokens=tokens, sender=sender)
+        self._codes = _CodeIssuer(tokens=tokens, sender=sender, review=review)
         self._throttle = throttle
         self._clock = clock
         self._uow = uow
@@ -383,7 +405,7 @@ class StartEmailLogin:
 
         now = self._clock.now()
         user = await self._users.find_by_email(address)
-        code, code_hash = self._codes.new_code()
+        code, code_hash = self._codes.new_code(address.value)
         challenge = open_challenge(
             challenge_id=uuid4(),
             email=address.value,
@@ -419,9 +441,10 @@ class ResendEmailLoginCode:
         throttle: LoginThrottle,
         clock: Clock,
         uow: UnitOfWork,
+        review: ReviewAccess | None = None,
     ) -> None:
         self._challenges = challenges
-        self._codes = _CodeIssuer(tokens=tokens, sender=sender)
+        self._codes = _CodeIssuer(tokens=tokens, sender=sender, review=review)
         self._throttle = throttle
         self._clock = clock
         self._uow = uow
@@ -450,7 +473,7 @@ class ResendEmailLoginCode:
             raise LoginChallengeExpiredError
         challenge.ensure_usable_at(now)
 
-        code, code_hash = self._codes.new_code()
+        code, code_hash = self._codes.new_code(challenge.email)
         # Le refus tombe ici, avant toute écriture et tout envoi.
         resent = challenge.resent(code_hash=code_hash, at=now)
         async with self._uow.atomic():

@@ -72,8 +72,7 @@ class UsageQuotaExceededError(RateLimitedError):
         message = (
             f"Tu as atteint la limite d'usage raisonnable de {limit} {words} ce mois-ci."
             if subscriber
-            else f"Tu as utilisé tes {limit} {words} du mois. "
-            "Avec Karria sans pub, tu n'as plus de limite."
+            else f"Tu as utilisé tes {limit} {words} du mois. Le compteur repart le mois prochain."
         )
         super().__init__(
             message,

@@ -591,7 +591,7 @@ class TestQuotas:
             "resets_at": "2026-12-01T00:00:00+00:00",
             "retry_after": 1_242_000,
         }
-        assert "sans pub" in excinfo.value.message
+        assert "sans pub" not in excinfo.value.message  # l'app propose l'offre, là où elle existe
 
     async def test_un_abonne_depasse_le_plafond_du_gratuit_jusqua_son_garde_fou(self) -> None:
         now = datetime(2026, 11, 16, tzinfo=UTC)

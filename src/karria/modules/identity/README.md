@@ -76,6 +76,12 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
 
 ## Les choix qu'on ne devine pas en lisant le code
 
+- **L'accès de démonstration des revues** (ADR-0039, `domain/review.py`) : pour
+  la seule adresse `REVIEW__EMAIL`, le code du parcours est le code fixe
+  `REVIEW__CODE` et aucun courriel ne part (`auth.review_code_not_sent`). Tout
+  le reste du parcours est inchangé ; toute autre adresse reçoit son vrai
+  code. Vides, les réglages n'ouvrent rien.
+
 - **La réponse de `/auth/email/start` est la même pour une adresse connue
   ou non**, et un code part dans les deux cas : la validation crée le
   compte. Cette route n'est donc pas un annuaire.

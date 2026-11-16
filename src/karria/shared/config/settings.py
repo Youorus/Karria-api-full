@@ -674,6 +674,28 @@ class ObservabilitySettings(BaseModel):
     log_format: Literal["console", "json"] = "json"
 
 
+class ReviewSettings(BaseModel):
+    """L'accès de démonstration des équipes de revue d'Apple et de Google (ADR-0039).
+
+    `REVIEW__EMAIL` : la seule adresse dont la connexion n'envoie aucun
+    courriel ; `REVIEW__CODE` : son code fixe, réutilisable (six chiffres, la
+    forme d'un code de connexion). Vides : aucun accès de démonstration. Ce
+    sont des identifiants d'environnement, comme une clé d'API — pas une
+    règle métier : la règle (« cette adresse, ce code, rien d'autre ») vit
+    dans `identity/domain/review.py`.
+    """
+
+    email: str = ""
+    code: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def _code_shape(self) -> Self:
+        code = self.code.get_secret_value()
+        if self.email.strip() and not (len(code) == 6 and code.isdigit()):  # noqa: PLR2004 - CODE_DIGITS d'identity
+            raise ValueError("REVIEW__CODE doit faire six chiffres quand REVIEW__EMAIL est posé")
+        return self
+
+
 class Settings(BaseSettings):
     """Configuration complète, composée de blocs indépendants."""
 
@@ -704,6 +726,7 @@ class Settings(BaseSettings):
     payments: PaymentsSettings = Field(default_factory=PaymentsSettings)
     support: SupportSettings = Field(default_factory=SupportSettings)
     app_release: AppReleaseSettings = Field(default_factory=AppReleaseSettings)
+    review: ReviewSettings = Field(default_factory=ReviewSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     def _provider_problems(self) -> list[str]:

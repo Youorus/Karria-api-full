@@ -48,7 +48,11 @@ from karria.modules.identity.application import (
     UserRepository,
     VerifyEmailLoginCode,
 )
-from karria.modules.identity.domain import SocialProvider, SocialProviderUnavailableError
+from karria.modules.identity.domain import (
+    ReviewAccess,
+    SocialProvider,
+    SocialProviderUnavailableError,
+)
 from karria.modules.identity.infrastructure import (
     AppleTokenVerifier,
     GoogleTokenVerifier,
@@ -243,6 +247,14 @@ RequestContextDep = Annotated[RequestContext, Depends(get_request_context)]
 # ---------------------------------------------------------------------
 
 
+def get_review_access(settings: SettingsDep) -> ReviewAccess | None:
+    """L'accès de démonstration des revues d'Apple et de Google, s'il est configuré (ADR-0039)."""
+    return ReviewAccess.of(settings.review.email, settings.review.code.get_secret_value())
+
+
+ReviewAccessDep = Annotated[ReviewAccess | None, Depends(get_review_access)]
+
+
 def get_start_email_login(
     *,
     users: UserRepositoryDep,
@@ -252,6 +264,7 @@ def get_start_email_login(
     throttle: ThrottleDep,
     clock: ClockDep,
     uow: UnitOfWorkDep,
+    review: ReviewAccessDep,
 ) -> StartEmailLogin:
     """Assemble l'envoi du premier code."""
     return StartEmailLogin(
@@ -262,6 +275,7 @@ def get_start_email_login(
         throttle=throttle,
         clock=clock,
         uow=uow,
+        review=review,
     )
 
 
@@ -273,10 +287,17 @@ def get_resend_email_login_code(
     throttle: ThrottleDep,
     clock: ClockDep,
     uow: UnitOfWorkDep,
+    review: ReviewAccessDep,
 ) -> ResendEmailLoginCode:
     """Assemble le renvoi du code."""
     return ResendEmailLoginCode(
-        challenges=challenges, sender=sender, tokens=tokens, throttle=throttle, clock=clock, uow=uow
+        challenges=challenges,
+        sender=sender,
+        tokens=tokens,
+        throttle=throttle,
+        clock=clock,
+        uow=uow,
+        review=review,
     )
 
 

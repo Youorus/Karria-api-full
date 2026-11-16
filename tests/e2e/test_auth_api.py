@@ -28,6 +28,7 @@ from karria.modules.identity.application import (
 from karria.modules.identity.domain import (
     REFRESH_REUSE_GRACE,
     AiDisclosure,
+    ReviewAccess,
     SocialProvider,
     VerifiedSocialProfile,
 )
@@ -97,6 +98,32 @@ class TestEmailLogin:
         assert me.json()["ai_consent"]["disclosure"]["providers"] == [
             {"id": "gemini", "name": "Google Gemini"}
         ]
+
+    async def test_l_acces_de_demonstration_se_reutilise_sans_courriel(
+        self, app: FastAPI, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        """ADR-0039 : l'adresse des revues d'Apple et de Google, son code fixe, aucun envoi."""
+        app.dependency_overrides[deps.get_review_access] = lambda: ReviewAccess(
+            email="appreview@karria.fr", code="482913"
+        )
+        try:
+            codes = []
+            for _ in range(2):
+                started = await client.post(
+                    "/api/v1/auth/email/start", json={"email": "appreview@karria.fr", **CONSENT}
+                )
+                verified = await client.post(
+                    "/api/v1/auth/email/verify",
+                    json={"challenge_id": started.json()["challenge_id"], "code": "482913"},
+                )
+                codes.append(verified.status_code)
+            other = await client.post("/api/v1/auth/email/start", json={"email": EMAIL, **CONSENT})
+        finally:
+            app.dependency_overrides.pop(deps.get_review_access, None)
+
+        assert codes == [200, 200]
+        assert other.status_code == 200
+        assert [to for to, _, _ in identity_env.sender.sent] == [EMAIL]
 
     async def test_une_adresse_invalide_repond_422_sous_le_champ(self, client: AsyncClient) -> None:
         response = await client.post("/api/v1/auth/email/start", json={"email": "nope", **CONSENT})

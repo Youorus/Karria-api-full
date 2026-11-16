@@ -248,6 +248,17 @@ sert `/opt/karria/models/e5-base-int8`, produit par
 - **Couper d'urgence** : `PAYMENTS__IOS_ENABLED=false` (ou retirer la clé :
   503 partout) et redéployer l'API — aucune livraison de l'app.
 
+## Revues d'Apple et de Google (ADR-0039 — 2026-11-16)
+
+- `REVIEW__EMAIL` (une adresse qui n'a pas besoin d'exister) et `REVIEW__CODE`
+  (six chiffres, **secret**) : l'identifiant et le mot de passe à donner dans
+  App Store Connect et la Play Console. À poser dans Dokploy **et**
+  `/root/karria-api.env`, puis redéployer. Un code mal formé bloque le
+  démarrage.
+- Paiements Stripe coupés dans les apps des stores :
+  `PAYMENTS__IOS_ENABLED=false`, `PAYMENTS__ANDROID_ENABLED=false` (les rouvrir
+  suppose l'achat intégré d'Apple et la facturation Google Play).
+
 ## Consentement à l'IA et accès sans compte (ADR-0025 — 2026-10-30)
 
 - **Migration 13** (`consentement_ia` : `identity_ai_consents`) : `aerich upgrade`

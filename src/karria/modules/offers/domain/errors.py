@@ -81,8 +81,7 @@ class AssistantRateLimitedError(RateLimitedError):
             f"Tu as atteint la limite d'usage raisonnable de {limit} messages sur 24 heures. "
             "Réessaie un peu plus tard."
             if subscriber
-            else f"Tu as envoyé {limit} messages à Karria en 24 heures. Réessaie un peu plus "
-            "tard, ou passe à Karria sans pub pour ne plus avoir de limite."
+            else f"Tu as envoyé {limit} messages à Karria en 24 heures. Réessaie un peu plus tard."
         )
         super().__init__(
             message,

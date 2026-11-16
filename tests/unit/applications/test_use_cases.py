@@ -711,7 +711,7 @@ class TestQuotas:
 
         assert letter.value.details["reason"] == "letter_quota_exceeded"
         assert paragraph.value.details["reason"] == "paragraph_quota_exceeded"
-        assert "sans pub" in paragraph.value.message
+        assert "mois prochain" in paragraph.value.message
         assert len(env.writer.instructions) == 0
 
     async def test_une_panne_du_modele_ne_consomme_pas_de_lettre(self) -> None:
