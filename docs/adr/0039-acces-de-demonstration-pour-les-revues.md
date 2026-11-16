@@ -64,3 +64,12 @@ et la facturation de Google Play, ou leurs programmes de paiement externe
 - Le risque assumé : qui connaît l'adresse et le code entre dans un compte
   fictif, plafonné par les quotas d'IA. On change le code s'il fuit.
 - Journal : `auth.review_code_not_sent` à chaque code non envoyé.
+
+## Addendum du 2026-11-16 (soir) — Marc rouvre les paiements
+
+Marc choisit de soumettre **avec** les paiements Stripe ouverts dans les deux
+apps (`PAYMENTS__IOS_ENABLED=true`, `PAYMENTS__ANDROID_ENABLED=true`),
+risque de refus connu (Apple 3.1.1, Google Paiements) : « si j'ai un refus,
+je verrai ». L'accès de démonstration reste. Si un store refuse : recouper
+l'interrupteur (sans livraison), puis l'achat intégré et la facturation Play.
+

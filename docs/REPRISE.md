@@ -18,8 +18,10 @@
   heure, compté avant comparaison. Vérifié en prod : deux connexions de suite,
   faux code refusé, `auth.review_code_not_sent` au journal. Compte préparé :
   CV fictif « Camille Testeur », consentement IA retiré (l’évaluateur le voit).
-- **Paiements coupés** : `PAYMENTS__IOS_ENABLED=false`,
-  `PAYMENTS__ANDROID_ENABLED=false`. Messages de quota sans réclame.
+- **Paiements** : coupés puis **rouverts le soir même à la demande de Marc**
+  (`PAYMENTS__IOS_ENABLED=true`, `PAYMENTS__ANDROID_ENABLED=true`, Dokploy +
+  fichier + service ; vérifié) — soumission avec Stripe, risque de refus connu
+  (ADR-0039, addendum). Messages de quota sans réclame côté API.
 - **Environnement Dokploy de l’API désormais en clair** (comme celui du
   worker) : reconstruit depuis l’env du service en cours (54 → 56 lignes),
   sauvegarde de l’ancien chiffré dans `/root/backup-dokploy-api-env-20261116.txt`
