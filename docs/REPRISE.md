@@ -21,6 +21,16 @@
   (`PaymentsSubscriptionReader`). `GET /cv/me/photo/quota` rend `subscriber`.
 - `make check` vert sur PostgreSQL local : 3 924 tests, 23 ignorés (MinIO,
   Chromium).
+- **En production le 2026-11-16** : migration 23 appliquée **avant** le code
+  (conteneur ponctuel sur `karria-worker-y9xkmo:latest`, fichier monté depuis
+  `/root/karria-applications-deploy/migrations/models/`, « Success upgrading
+  to 23_… », tables vérifiées) ; commit `0a322f5` poussé sur `main`, les trois
+  services redéployés (15:10 UTC), `/health/ready` 200, aucun journal d'erreur.
+  **Non vérifié avec une vraie session** (pas de compte de test en prod).
+- **App non publiée** : `eas update` signé refusé (« code signing requires a
+  subscription to the EAS Production or Enterprise plan »). Les versions
+  installées gardent l'ancien écran : un quota atteint y affiche le message
+  générique de la photo, ou celui du serveur ailleurs.
 
 ### Session du 2026-11-15 — coupure de page dans le PDF du CV
 
