@@ -5,6 +5,28 @@
 
 **Dernière mise à jour : 2026-11-16**
 
+### Session du 2026-11-16 (soir) — prêt pour les revues d’Apple et de Google (ADR-0039)
+
+- **Audit** (essais en production, compte jetable puis supprimé) : offres sans
+  compte, consentement IA, import de CV, export PDF, dossier « candidaté »,
+  suppression du compte → tout passe. Deux blocages : aucun accès réutilisable
+  (code e-mail à usage unique), paiements Stripe live dans les apps.
+- **Accès de démonstration** (commits `3a9e71a`, `a012da1`, `3371c36`) :
+  `REVIEW__EMAIL=appreview@karria.fr` (boîte inexistante, rien n’y part) et
+  `REVIEW__CODE` (six chiffres, **secret** : chez Marc dans
+  `~/.karria/app-review-demo.txt`, mode 600). Frein global de 30 essais par
+  heure, compté avant comparaison. Vérifié en prod : deux connexions de suite,
+  faux code refusé, `auth.review_code_not_sent` au journal. Compte préparé :
+  CV fictif « Camille Testeur », consentement IA retiré (l’évaluateur le voit).
+- **Paiements coupés** : `PAYMENTS__IOS_ENABLED=false`,
+  `PAYMENTS__ANDROID_ENABLED=false`. Messages de quota sans réclame.
+- **Environnement Dokploy de l’API désormais en clair** (comme celui du
+  worker) : reconstruit depuis l’env du service en cours (54 → 56 lignes),
+  sauvegarde de l’ancien chiffré dans `/root/backup-dokploy-api-env-20261116.txt`
+  et de l’ancien fichier dans `/root/karria-api.env.bak-20261116`. Vérifié
+  après un redéploiement : les quatre réglages tiennent.
+- Limite connue : le frein est en mémoire, par processus (quatre workers).
+
 ### Session du 2026-11-16 — coût de l’IA et quotas d’IA levés par l’abonnement (ADR-0038)
 
 - Analyse du coût d’IA par utilisateur : ≈ 0,09 € par inscrit et par mois
