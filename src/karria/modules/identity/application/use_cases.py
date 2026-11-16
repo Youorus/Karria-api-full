@@ -550,7 +550,10 @@ class VerifyEmailLoginCode:
             else None
         )
         if review_throttle is not None:
+            # Compté **avant** de comparer, juste ou faux : deux requêtes
+            # simultanées ne passent pas le frein avant d'y être inscrites.
             await review_throttle.ensure_allowed(key=REVIEW_THROTTLE_KEY)
+            await review_throttle.record_failure(key=REVIEW_THROTTLE_KEY)
 
         if not self._tokens.matches(code.strip(), challenge.code_hash):
             failed = challenge.failed_attempt(at=now)
@@ -558,7 +561,6 @@ class VerifyEmailLoginCode:
                 await self._challenges.save(failed)
             await self._throttle.record_failure(key=throttle_key)
             if review_throttle is not None:
-                await review_throttle.record_failure(key=REVIEW_THROTTLE_KEY)
                 logger.warning("auth.review_code_rejected", challenge_id=str(challenge_id))
             logger.info(
                 "auth.login_code_rejected",

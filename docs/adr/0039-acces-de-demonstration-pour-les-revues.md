@@ -33,8 +33,9 @@ il naît à la première connexion, renaît vide après une suppression (un
 Un code mal formé est refusé au démarrage.
 
 **Contre la devinette du code fixe** (relevé par la revue de sécurité du
-commit) : un frein **global** — toutes origines confondues — de trente codes
-faux par heure pour cette adresse (`REVIEW_MAX_FAILURES_PER_HOUR`, par
+commit) : un frein **global** — toutes origines confondues — de trente essais
+de code par heure pour cette adresse, chacun compté **avant** la comparaison
+(deux requêtes simultanées ne passent pas le frein avant d'y être inscrites) (`REVIEW_MAX_FAILURES_PER_HOUR`, par
 processus), journalisé (`auth.review_code_rejected`). Six chiffres à trente
 essais par heure et par processus : des mois en moyenne pour un compte
 fictif. Saturé, le frein refuse aussi le bon code jusqu'à la fin de l'heure :

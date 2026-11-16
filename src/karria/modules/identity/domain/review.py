@@ -28,8 +28,9 @@ from karria.modules.identity.domain.accounts import EmailAddress
 from karria.modules.identity.domain.errors import InvalidEmailError
 from karria.modules.identity.domain.login import CODE_DIGITS
 
-#: Codes faux admis pour l'adresse de démonstration, **toutes origines
-#: confondues**, par fenêtre d'une heure (et par processus). Le code fixe a six
+#: Essais de code admis pour l'adresse de démonstration, **toutes origines
+#: confondues**, par fenêtre d'une heure (et par processus) — chaque essai est
+#: compté avant la comparaison, juste ou faux. Le code fixe a six
 #: chiffres : sans ce frein global, en multipliant les origines et les
 #: parcours, on finirait par le deviner. Saturé, le frein refuse aussi le bon
 #: code jusqu'à la fin de la fenêtre — un déni de service possible pendant une
