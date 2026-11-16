@@ -22,10 +22,21 @@ l'on change le code dans la configuration.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Final
 
 from karria.modules.identity.domain.accounts import EmailAddress
 from karria.modules.identity.domain.errors import InvalidEmailError
 from karria.modules.identity.domain.login import CODE_DIGITS
+
+#: Codes faux admis pour l'adresse de démonstration, **toutes origines
+#: confondues**, par fenêtre d'une heure (et par processus). Le code fixe a six
+#: chiffres : sans ce frein global, en multipliant les origines et les
+#: parcours, on finirait par le deviner. Saturé, le frein refuse aussi le bon
+#: code jusqu'à la fin de la fenêtre — un déni de service possible pendant une
+#: revue, assumé : le compte est fictif, mais il ne doit pas se deviner.
+REVIEW_MAX_FAILURES_PER_HOUR: Final = 30
+#: La clé de ce frein : une seule, pour toutes les origines.
+REVIEW_THROTTLE_KEY: Final = "review-access"
 
 
 @dataclass(frozen=True, slots=True)

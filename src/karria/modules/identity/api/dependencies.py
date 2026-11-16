@@ -49,6 +49,7 @@ from karria.modules.identity.application import (
     VerifyEmailLoginCode,
 )
 from karria.modules.identity.domain import (
+    REVIEW_MAX_FAILURES_PER_HOUR,
     ReviewAccess,
     SocialProvider,
     SocialProviderUnavailableError,
@@ -140,6 +141,12 @@ def _token_factory(pepper: str) -> Sha256TokenFactory:
 def get_token_factory(settings: SettingsDep) -> TokenFactory:
     """La fabrique de jetons, poivrée par la configuration."""
     return _token_factory(settings.security.token_pepper.get_secret_value())
+
+
+@lru_cache(maxsize=1)
+def _review_throttle() -> InMemoryLoginThrottle:
+    """Le frein global des codes faux de l'adresse de démonstration (ADR-0039)."""
+    return InMemoryLoginThrottle(max_attempts=REVIEW_MAX_FAILURES_PER_HOUR, window_seconds=3600)
 
 
 @lru_cache(maxsize=1)
@@ -312,6 +319,7 @@ def get_verify_email_login_code(
     uow: UnitOfWorkDep,
     events: EventBusDep,
     ai_consent: AcceptAiConsentDep,
+    review: ReviewAccessDep,
 ) -> VerifyEmailLoginCode:
     """Assemble la validation du code — avec l'accord IA donné « en continuant » (ADR-0025)."""
     return VerifyEmailLoginCode(
@@ -324,6 +332,8 @@ def get_verify_email_login_code(
         uow=uow,
         events=events,
         ai_consent=ai_consent,
+        review=review,
+        review_throttle=_review_throttle() if review is not None else None,
     )
 
 

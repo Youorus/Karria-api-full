@@ -21,7 +21,9 @@ from karria.modules.identity.domain import (
     LoginChallengeExpiredError,
     LoginCodeInvalidError,
     ReviewAccess,
+    TooManyAttemptsError,
 )
+from karria.modules.identity.infrastructure import InMemoryLoginThrottle
 from karria.shared.config import ReviewSettings
 
 REVIEW = ReviewAccess(email="appreview@karria.fr", code="482913")
@@ -151,3 +153,35 @@ class TestParcours:
         )
 
         assert [to for to, _, _ in env.sender.sent] == ["appreview@karria.fr"]
+
+    async def test_un_frein_global_arrete_la_devinette_du_code_toutes_origines_confondues(
+        self, env: IdentityEnv
+    ) -> None:
+        frein = InMemoryLoginThrottle(max_attempts=2, window_seconds=3600)
+        verify = VerifyEmailLoginCode(
+            users=env.users,
+            challenges=env.challenges,
+            sessions=env.sessions,
+            tokens=env.tokens,
+            throttle=env.throttle,
+            clock=env.clock,
+            uow=env.uow,
+            review=REVIEW,
+            review_throttle=frein,
+        )
+        start = _start(env)
+        for origine in ("a", "b"):
+            started = await start.execute(
+                email="appreview@karria.fr", consent=CONSENT, throttle_key=origine
+            )
+            with pytest.raises(LoginCodeInvalidError):
+                await verify.execute(
+                    challenge_id=started.challenge_id, code="000000", throttle_key=origine
+                )
+        started = await start.execute(
+            email="appreview@karria.fr", consent=CONSENT, throttle_key="c"
+        )
+
+        # Saturé : même le bon code attend la fin de la fenêtre.
+        with pytest.raises(TooManyAttemptsError):
+            await verify.execute(challenge_id=started.challenge_id, code="482913", throttle_key="c")

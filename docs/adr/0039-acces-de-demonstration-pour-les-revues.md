@@ -32,6 +32,14 @@ il naît à la première connexion, renaît vide après une suppression (un
 évaluateur teste la suppression). Vides, les deux réglages n'ouvrent rien.
 Un code mal formé est refusé au démarrage.
 
+**Contre la devinette du code fixe** (relevé par la revue de sécurité du
+commit) : un frein **global** — toutes origines confondues — de trente codes
+faux par heure pour cette adresse (`REVIEW_MAX_FAILURES_PER_HOUR`, par
+processus), journalisé (`auth.review_code_rejected`). Six chiffres à trente
+essais par heure et par processus : des mois en moyenne pour un compte
+fictif. Saturé, le frein refuse aussi le bon code jusqu'à la fin de l'heure :
+un déni de service possible pendant une revue, assumé et visible au journal.
+
 Écarté : un compte Google de test (les connexions depuis un lieu inconnu
 déclenchent une vérification — identifiants non fiables), un mode
 démonstration dans l'app (une seconde app à maintenir, et Apple l'exige

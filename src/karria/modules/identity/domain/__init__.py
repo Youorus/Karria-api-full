@@ -62,7 +62,11 @@ from karria.modules.identity.domain.login import (
     LoginChallengeStatus,
     open_challenge,
 )
-from karria.modules.identity.domain.review import ReviewAccess
+from karria.modules.identity.domain.review import (
+    REVIEW_MAX_FAILURES_PER_HOUR,
+    REVIEW_THROTTLE_KEY,
+    ReviewAccess,
+)
 from karria.modules.identity.domain.sessions import (
     ACCESS_TOKEN_LIFETIME,
     MAX_SESSIONS_PER_USER,
@@ -88,6 +92,8 @@ __all__ = [
     "PURPOSE_TASKS",
     "REFRESH_REUSE_GRACE",
     "REFRESH_TOKEN_LIFETIME",
+    "REVIEW_MAX_FAILURES_PER_HOUR",
+    "REVIEW_THROTTLE_KEY",
     "AiConsent",
     "AiConsentRequiredError",
     "AiConsentStatus",

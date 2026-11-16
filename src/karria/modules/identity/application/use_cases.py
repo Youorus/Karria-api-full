@@ -62,6 +62,7 @@ from karria.modules.identity.domain import (
     CODE_DIGITS,
     LOGIN_CHALLENGE_LIFETIME,
     MAX_SESSIONS_PER_USER,
+    REVIEW_THROTTLE_KEY,
     AiConsent,
     AiConsentRequiredError,
     AiConsentStatus,
@@ -500,10 +501,16 @@ class VerifyEmailLoginCode:
         uow: UnitOfWork,
         events: EventBus | None = None,
         ai_consent: AcceptAiConsent | None = None,
+        review: ReviewAccess | None = None,
+        review_throttle: LoginThrottle | None = None,
     ) -> None:
         self._challenges = challenges
         self._tokens = tokens
         self._throttle = throttle
+        # Le frein global de l'adresse de démonstration (ADR-0039) : sans lui,
+        # le code fixe se devinerait en multipliant les origines.
+        self._review = review
+        self._review_throttle = review_throttle
         self._clock = clock
         self._uow = uow
         self._events = events
@@ -537,12 +544,22 @@ class VerifyEmailLoginCode:
             raise LoginChallengeExpiredError
         challenge.ensure_usable_at(now)
         challenge.ensure_attempt_allowed()
+        review_throttle = (
+            self._review_throttle
+            if self._review is not None and self._review.matches(challenge.email)
+            else None
+        )
+        if review_throttle is not None:
+            await review_throttle.ensure_allowed(key=REVIEW_THROTTLE_KEY)
 
         if not self._tokens.matches(code.strip(), challenge.code_hash):
             failed = challenge.failed_attempt(at=now)
             async with self._uow.atomic():
                 await self._challenges.save(failed)
             await self._throttle.record_failure(key=throttle_key)
+            if review_throttle is not None:
+                await review_throttle.record_failure(key=REVIEW_THROTTLE_KEY)
+                logger.warning("auth.review_code_rejected", challenge_id=str(challenge_id))
             logger.info(
                 "auth.login_code_rejected",
                 challenge_id=str(challenge_id),
