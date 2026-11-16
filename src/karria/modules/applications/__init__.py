@@ -27,6 +27,10 @@ Ce qu'il expose, et pour qui :
   compte, abonnée au bus par `bootstrap/wiring.py` (ADR-0015) ;
 - `register_tasks` — le travail `applications.adapt_cv`, inscrit par
   `bootstrap/worker.py`.
+
+`get_subscription_reader` est le port « cette personne a-t-elle Karria
+sans pub ? » des quotas d'IA (ADR-0038), branché sur `payments` par
+`bootstrap/wiring.py` ; par défaut, personne n'est abonné.
 """
 
 from karria.modules.applications.api import router
@@ -36,6 +40,7 @@ from karria.modules.applications.api.dependencies import (
     get_cv_validator,
     get_logo_url,
     get_offer_reader,
+    get_subscription_reader,
     get_template_checker,
 )
 from karria.modules.applications.api.tasks import register_tasks
@@ -78,6 +83,7 @@ __all__ = [
     "get_cv_validator",
     "get_logo_url",
     "get_offer_reader",
+    "get_subscription_reader",
     "get_template_checker",
     "register_tasks",
 ]

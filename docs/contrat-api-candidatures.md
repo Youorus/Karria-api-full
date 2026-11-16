@@ -292,6 +292,7 @@ Retour à `brouillon` ou `pret` ; le fil retire `applied`. Idempotent.
 | 422 | `cv_invalid`, `letter_invalid` | forme refusée, `details.fields` |
 | 422 | `cv_too_large` | corps de `PUT /{id}/cv` au-delà de 256 Kio (`details.size`, `details.limit`) |
 | 429 | `ai_rate_limited` | plus de 30 appels au modèle en 10 minutes pour ce compte ; `details.retry_after` en secondes |
+| 429 | `dossier_quota_exceeded`, `letter_quota_exceeded`, `paragraph_quota_exceeded` | plafond du mois civil UTC atteint (ADR-0038) : 20 dossiers ouverts, 30 lettres, 100 paragraphes — 100, 150, 500 avec « Karria sans pub ». `details` : `limit`, `subscriber`, `resets_at`, `retry_after`. Le message, écrit pour être lu, propose l'abonnement à qui ne l'a pas. Rouvrir un dossier existant ne compte pas |
 | 503 | `ai_unavailable`, `ai_output_invalid` | le modèle ne répond pas, ou hors schéma |
 
 ## Ce que l'app doit prévoir

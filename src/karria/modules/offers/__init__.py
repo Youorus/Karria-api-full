@@ -26,6 +26,10 @@ Ce qu'il expose, et pour qui :
   offre, l'adresse de son logo et l'état « candidaté », que
   `bootstrap/wiring.py` donne au module `applications` (dossiers de
   candidature, ADR-0029).
+
+`get_subscription_reader` est le port « cette personne a-t-elle Karria
+sans pub ? » des quotas d'IA (ADR-0038), branché sur `payments` par
+`bootstrap/wiring.py` ; par défaut, personne n'est abonné.
 """
 
 from karria.modules.offers.api import router
@@ -47,6 +51,7 @@ from karria.modules.offers.api.dependencies import (
     ensure_indexes,
     get_get_offer,
     get_logo_url,
+    get_subscription_reader,
     get_user_notifier,
 )
 from karria.modules.offers.api.schemas import LogoUrl
@@ -104,6 +109,7 @@ __all__ = [
     "fetch_logos_within",
     "get_get_offer",
     "get_logo_url",
+    "get_subscription_reader",
     "get_user_notifier",
     "plausible_domain",
     "register_tasks",

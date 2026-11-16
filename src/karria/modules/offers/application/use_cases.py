@@ -65,6 +65,7 @@ from karria.modules.offers.application.ports import (
     SearchDialogue,
     StoredCriteria,
     StoredTarget,
+    SubscriptionReader,
     TextEmbedder,
     UserNotifier,
 )
@@ -73,6 +74,7 @@ from karria.modules.offers.domain import (
     ALERT_MIN_SIMILARITY,
     ASSISTANT_DAILY_LIMIT,
     ASSISTANT_RETRY_AFTER,
+    ASSISTANT_SUBSCRIBER_DAILY_LIMIT,
     BATCH_MAX_BYTES,
     BATCH_MAX_POSTINGS,
     DEMAND_TTL,
@@ -1291,8 +1293,12 @@ class ConverseSearch:
         queue: JobQueue,
         clock: Clock,
         constitution_version: str,
+        subscriptions: SubscriptionReader | None = None,
         widen: SuggestWidenings | None = None,
     ) -> None:
+        # Sans lecteur d'abonnement (scripts, tests), personne n'est abonné :
+        # le plafond du gratuit s'applique, jamais l'inverse.
+        self._subscriptions = subscriptions
         self._conversations = conversations
         self._criteria = criteria
         self._dialogue = dialogue
@@ -1303,14 +1309,35 @@ class ConverseSearch:
         self._clock = clock
         self._constitution_version = constitution_version
 
+    async def _ensure_turn_allowed(self, user_id: UUID, now: datetime) -> None:
+        """Le plafond sur 24 heures glissantes, levé par « Karria sans pub » (ADR-0038).
+
+        L'abonnement n'est lu qu'au plafond du gratuit : un tour ordinaire ne
+        coûte pas une lecture de plus.
+
+        Raises:
+            AssistantRateLimitedError: Plafond atteint.
+        """
+        turns = await self._conversations.user_turns_since(user_id, now - timedelta(days=1))
+        if turns < ASSISTANT_DAILY_LIMIT:
+            return
+        subscriber = self._subscriptions is not None and await self._subscriptions.is_subscriber(
+            user_id
+        )
+        limit = ASSISTANT_SUBSCRIBER_DAILY_LIMIT if subscriber else ASSISTANT_DAILY_LIMIT
+        if turns >= limit:
+            raise AssistantRateLimitedError(
+                retry_after=int(ASSISTANT_RETRY_AFTER.total_seconds()),
+                limit=limit,
+                subscriber=subscriber,
+            )
+
     async def execute(
         self, user_id: UUID, *, conversation_id: UUID | None, content: str
     ) -> ConversationTurn:
         """Joue un tour."""
         now = self._clock.now()
-        turns = await self._conversations.user_turns_since(user_id, now - timedelta(days=1))
-        if turns >= ASSISTANT_DAILY_LIMIT:
-            raise AssistantRateLimitedError(retry_after=int(ASSISTANT_RETRY_AFTER.total_seconds()))
+        await self._ensure_turn_allowed(user_id, now)
 
         if conversation_id is None:
             conversation_id = await self._conversations.create(user_id, at=now)

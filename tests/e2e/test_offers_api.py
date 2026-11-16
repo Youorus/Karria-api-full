@@ -418,7 +418,10 @@ class TestAssistant:
     async def test_le_quota_journalier_rend_429(
         self, client: AsyncClient, user: UUID, use: Callable[..., Stub]
     ) -> None:
-        use(deps.get_converse_search, Stub(error=AssistantRateLimitedError(retry_after=3600)))
+        use(
+            deps.get_converse_search,
+            Stub(error=AssistantRateLimitedError(retry_after=3600, limit=40, subscriber=False)),
+        )
 
         response = await client.post(f"{API}/assistant/messages", json={"content": "serveur"})
 

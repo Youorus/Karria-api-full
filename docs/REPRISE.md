@@ -3,7 +3,24 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-15**
+**Dernière mise à jour : 2026-11-16**
+
+### Session du 2026-11-16 — coût de l’IA et quotas d’IA levés par l’abonnement (ADR-0038)
+
+- Analyse du coût d’IA par utilisateur : ≈ 0,09 € par inscrit et par mois
+  aux tarifs 2026, ≈ 0,16 € en 2027 (`gemini-3.8-flash` double au
+  01/01/2027). Les portraits (≈ 5,8 c€) et les dossiers (≈ 1,4 c€) dominent.
+  Marc garde « Karria sans pub » à 4,99 €/mois, qui lève désormais les limites.
+- **Quotas livrés** (ADR-0038, acceptée) : gratuit 3 portraits, 5 imports,
+  20 dossiers, 30 lettres, 100 paragraphes par mois civil UTC, 40 messages de
+  chat par 24 h (120 pour tous avant) ; abonné : garde-fou d’usage raisonnable
+  30, 30, 100, 150, 500, 150. Registres `cv_ai_usages` et
+  `applications_ai_usages` (**migration 23**, deux tables neuves), port
+  `SubscriptionReader` dans `cv`, `applications`, `offers`, branché sur
+  `payments.GetBillingOverview` par `bootstrap/wiring.py`
+  (`PaymentsSubscriptionReader`). `GET /cv/me/photo/quota` rend `subscriber`.
+- `make check` vert sur PostgreSQL local : 3 924 tests, 23 ignorés (MinIO,
+  Chromium).
 
 ### Session du 2026-11-15 — coupure de page dans le PDF du CV
 

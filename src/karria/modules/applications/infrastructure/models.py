@@ -13,6 +13,10 @@ et les offres appartiennent à d'autres modules (règle 4). L'offre peut
 disparaître de l'index ; le dossier garde ce qu'il en a figé
 (`offer_snapshot`) et reste lisible. La suppression d'un compte efface les
 dossiers par le bus (ADR-0015).
+
+À côté, le registre des quotas d'IA (`applications_ai_usages`, ADR-0038) :
+une ligne par action rendue, indépendante du dossier — supprimer un dossier
+ne rend pas ce qu'il a coûté.
 """
 
 from __future__ import annotations
@@ -83,3 +87,13 @@ class ApplicationDossierModel(BaseDBModel):
         )
         unique_together = (("user_id", "offer_id"),)
         indexes = (("user_id", "updated_at"),)
+
+
+class ApplicationAiUsageModel(BaseDBModel):
+    """Une action d'IA rendue (dossier, lettre, paragraphe) — le registre des quotas mensuels."""
+
+    user_id: UUID = fields.UUIDField(db_index=True, description="Compte bénéficiaire.")
+    kind = fields.CharField(max_length=16, description="dossier, letter ou paragraph.")
+
+    class Meta:
+        table = "applications_ai_usages"

@@ -15,8 +15,12 @@ from typing import Final
 from karria.modules.offers.domain.criteria import SearchCriteria
 from karria.modules.offers.domain.guardrails import DECLINE_REPLY, Intent
 
-#: Tours de conversation par personne et par jour. Au-delà, 429.
-ASSISTANT_DAILY_LIMIT: Final = 120
+#: Tours de conversation par personne sur 24 heures glissantes, sans abonnement.
+#: Au-delà, 429. Quelques messages suffisent à un usage normal ; quarante
+#: arrêtent un script sans gêner personne (ADR-0038, 2026-11-16 ; 120 avant).
+ASSISTANT_DAILY_LIMIT: Final = 40
+#: La même limite avec « Karria sans pub » : le garde-fou de l'usage raisonnable.
+ASSISTANT_SUBSCRIBER_DAILY_LIMIT: Final = 150
 ASSISTANT_RETRY_AFTER: Final = timedelta(hours=1)
 #: Messages passés relus par le modèle à chaque tour.
 HISTORY_WINDOW: Final = 12

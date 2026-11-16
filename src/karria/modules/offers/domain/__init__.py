@@ -31,6 +31,7 @@ from karria.modules.offers.domain.departments import department_label, neighbour
 from karria.modules.offers.domain.dialogue import (
     ASSISTANT_DAILY_LIMIT,
     ASSISTANT_RETRY_AFTER,
+    ASSISTANT_SUBSCRIBER_DAILY_LIMIT,
     HISTORY_WINDOW,
     MESSAGE_MAX_LENGTH,
     DialogueOutcome,
@@ -186,6 +187,7 @@ __all__ = [
     "ALERT_MIN_SIMILARITY",
     "ASSISTANT_DAILY_LIMIT",
     "ASSISTANT_RETRY_AFTER",
+    "ASSISTANT_SUBSCRIBER_DAILY_LIMIT",
     "BATCH_MAX_BYTES",
     "BATCH_MAX_POSTINGS",
     "CONTRACT_LABELS",

@@ -35,6 +35,7 @@ from karria.modules.offers.application.ports import (
     SearchDialogue,
     StoredCriteria,
     StoredTarget,
+    SubscriptionReader,
     TextEmbedder,
     UserNotifier,
 )
@@ -168,6 +169,7 @@ __all__ = [
     "StateChanges",
     "StoredCriteria",
     "StoredTarget",
+    "SubscriptionReader",
     "SuggestWidenings",
     "SyncIndex",
     "SyncReport",

@@ -26,7 +26,9 @@ from doubles import (
     FakeExtractor,
     FakeInspector,
     FakeInterpreter,
+    FakeSubscriptions,
     FakeTranscriber,
+    InMemoryAiUsageRepository,
     InMemoryCvRepository,
     InMemoryDraftRepository,
     InMemoryPhotoRepository,
@@ -34,6 +36,7 @@ from doubles import (
     sample_image,
 )
 from karria.modules.cv.api.dependencies import (
+    get_ai_usage_repository,
     get_audio_transcriber,
     get_chapter_interpreter,
     get_clock,
@@ -42,6 +45,7 @@ from karria.modules.cv.api.dependencies import (
     get_draft_repository,
     get_photo_repository,
     get_portrait_enhancer,
+    get_subscription_reader,
     get_suggestion_index,
     get_upload_inspector,
 )
@@ -70,6 +74,8 @@ class Fakes:
         self.drafts = InMemoryDraftRepository()
         self.cvs = InMemoryCvRepository()
         self.photos = InMemoryPhotoRepository()
+        self.ai_usage = InMemoryAiUsageRepository()
+        self.subscriptions = FakeSubscriptions()
         self.interpreter = FakeInterpreter()
         self.transcriber = FakeTranscriber(text="Je m'appelle Awa.")
         self.enhancer = FakeEnhancer(result=GeneratedImage(sample_image(400, 500), "image/jpeg"))
@@ -88,6 +94,8 @@ def fakes(app: FastAPI, ai_consented: None) -> Fakes:
             get_draft_repository: lambda: doubles.drafts,
             get_cv_repository: lambda: doubles.cvs,
             get_photo_repository: lambda: doubles.photos,
+            get_ai_usage_repository: lambda: doubles.ai_usage,
+            get_subscription_reader: lambda: doubles.subscriptions,
             get_chapter_interpreter: lambda: doubles.interpreter,
             get_audio_transcriber: lambda: doubles.transcriber,
             get_portrait_enhancer: lambda: doubles.enhancer,
@@ -140,6 +148,7 @@ class TestAuthentification:
             ("POST", "/cv/draft/finalize"),
             ("POST", "/cv/photo"),
             ("POST", "/cv/me/photo/enhance"),
+            ("GET", "/cv/me/photo/quota"),
             ("POST", "/cv/import"),
             ("POST", "/voice/transcribe"),
         ],
@@ -369,6 +378,48 @@ class TestPhoto:
         assert response.status_code == 201
         assert response.json()["enhanced"] is True
         assert len(fakes.enhancer.calls) == 1
+
+    async def test_le_quota_se_lit_puis_le_quatrieme_portrait_est_un_429(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        before = await client.get(f"{API}/cv/me/photo/quota")
+        for _ in range(3):
+            assert (await client.post(f"{API}/cv/photo", **photo_form(True))).status_code == 201
+        after = await client.get(f"{API}/cv/me/photo/quota")
+        refused = await client.post(f"{API}/cv/photo", **photo_form(True))
+        plain = await client.post(f"{API}/cv/photo", **photo_form(False))
+
+        assert before.status_code == 200
+        assert before.json() == {
+            "subscriber": False,
+            "limit": 3,
+            "used": 0,
+            "remaining": 3,
+            "resets_at": "2026-11-01T00:00:00Z",
+        }
+        assert after.json()["remaining"] == 0
+        assert refused.status_code == 429
+        error = refused.json()["error"]
+        assert error["code"] == "rate_limited"
+        assert error["details"]["reason"] == "portrait_quota_exceeded"
+        assert error["details"]["limit"] == 3
+        assert error["details"]["retry_after"] > 0
+        assert len(fakes.enhancer.calls) == 3
+        # Une photo sans amélioration reste toujours possible.
+        assert plain.status_code == 201
+
+    async def test_un_abonne_na_pas_la_limite_du_gratuit(
+        self, client: AsyncClient, fakes: Fakes, me: Principal
+    ) -> None:
+        fakes.subscriptions.subscribers.add(me.subject_id)
+        for _ in range(4):
+            assert (await client.post(f"{API}/cv/photo", **photo_form(True))).status_code == 201
+
+        quota = (await client.get(f"{API}/cv/me/photo/quota")).json()
+
+        assert quota["subscriber"] is True
+        assert quota["limit"] == 30
+        assert quota["remaining"] == 26
 
     async def test_un_refus_est_un_422_et_une_panne_un_503(
         self, client: AsyncClient, fakes: Fakes, me: Principal

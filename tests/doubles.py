@@ -22,7 +22,7 @@ from io import BytesIO
 from typing import Any
 from uuid import UUID, uuid4
 
-from karria.modules.applications.application import BaseCv, OfferCard
+from karria.modules.applications.application import BaseCv, OfferCard, UsageGate
 from karria.modules.applications.domain import AdaptationOutput, OfferSnapshot
 from karria.modules.applications.domain import CvInvalidError as ApplicationsCvInvalidError
 from karria.modules.applications.domain import Dossier as ApplicationDossier
@@ -713,6 +713,38 @@ class InMemoryPhotoRepository:
     async def delete(self, photo_ids: Sequence[UUID]) -> None:
         for photo_id in photo_ids:
             self.photos.pop(photo_id, None)
+
+
+class InMemoryAiUsageRepository:
+    """Implémente les `AiUsageRepository` de `cv` et d'`applications` dans une liste."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[UUID, str, datetime]] = []
+
+    async def record(self, user_id: UUID, usage: str, at: datetime) -> None:
+        self.records.append((user_id, str(usage), at))
+
+    async def count_since(self, user_id: UUID, usage: str, since: datetime) -> int:
+        return sum(
+            1
+            for owner, kind, at in self.records
+            if owner == user_id and kind == str(usage) and at >= since
+        )
+
+    async def delete_by_user(self, user_id: UUID) -> None:
+        self.records = [r for r in self.records if r[0] != user_id]
+
+
+class FakeSubscriptions:
+    """Implémente les `SubscriptionReader` des modules : les abonnés sont nommés."""
+
+    def __init__(self, *subscribers: UUID) -> None:
+        self.subscribers = set(subscribers)
+        self.calls: list[UUID] = []
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        self.calls.append(user_id)
+        return user_id in self.subscribers
 
 
 class InMemorySuggestionIndex:
@@ -1438,6 +1470,13 @@ class ApplicationsEnv:
     jobs: RecordingDossierJobs
     clock: FakeClock
     offer: OfferCard
+    usage: InMemoryAiUsageRepository
+    subscriptions: FakeSubscriptions
+
+    @property
+    def gate(self) -> UsageGate:
+        """Les quotas mensuels, sur le registre et l'abonnement de l'environnement."""
+        return UsageGate(self.usage, self.subscriptions, self.clock)
 
     @classmethod
     def build(cls) -> ApplicationsEnv:
@@ -1453,4 +1492,6 @@ class ApplicationsEnv:
             jobs=RecordingDossierJobs(),
             clock=FakeClock(),
             offer=offer,
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
         )

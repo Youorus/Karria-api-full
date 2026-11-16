@@ -72,6 +72,10 @@ Les branchements d'aujourd'hui
   `applications.get_template_checker` ← `documents.TemplateShop` (ADR-0033).
   Sans eux : `offer_not_found`, initiales, `cv_missing`, 503 à la retouche,
   `template_locked` — les refus par défaut du module.
+- `cv.get_subscription_reader`, `applications.get_subscription_reader`,
+  `offers.get_subscription_reader` ← `payments.GetBillingOverview` (ADR-0038).
+  Sans eux, personne n'est abonné : les plafonds du gratuit s'appliquent à
+  tous, abonnés compris — dégradé pour l'abonné, jamais coûteux.
 
 Les ponts du bus
 ----------------
@@ -119,6 +123,9 @@ from karria.modules.applications import build_forget_user as build_forget_user_a
 from karria.modules.applications import (
     get_logo_url as get_applications_logo_url,
 )
+from karria.modules.applications import (
+    get_subscription_reader as get_applications_subscription_reader,
+)
 from karria.modules.cv import (
     Contact,
     CurriculumVitae,
@@ -133,6 +140,7 @@ from karria.modules.cv import (
     build_forget_user,
     get_get_my_cv,
 )
+from karria.modules.cv import get_subscription_reader as get_cv_subscription_reader
 from karria.modules.devices import (
     GetMainDevice,
     SendPushToUser,
@@ -180,13 +188,16 @@ from karria.modules.offers import (
 from karria.modules.offers import (
     build_forget_user as build_forget_user_offers,
 )
+from karria.modules.offers import get_subscription_reader as get_offers_subscription_reader
 from karria.modules.payments import (
     AccountDirectory,
+    GetBillingOverview,
     PremiumOffer,
     TemplateStore,
     ThankForPurchase,
     build_thank_for_purchase,
     get_account_directory,
+    get_billing_overview,
     get_template_store,
 )
 from karria.modules.payments import UserNotifier as PaymentsUserNotifier
@@ -719,6 +730,28 @@ def build_thank_for_purchase_wired() -> ThankForPurchase:
     )
 
 
+class PaymentsSubscriptionReader:
+    """`cv`, `applications`, `offers` ← `payments.GetBillingOverview` : « sans pub » actif ?
+
+    Une seule implémentation pour les trois ports, de même forme : chaque
+    module garde son `SubscriptionReader`, aucun n'importe l'autre.
+    """
+
+    def __init__(self, overview: GetBillingOverview) -> None:
+        self._overview = overview
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Vrai si l'abonnement est actif, période de grâce comprise."""
+        return (await self._overview.execute(user_id)).ad_free
+
+
+def subscription_reader_from_payments(
+    overview: Annotated[GetBillingOverview, Depends(get_billing_overview)],
+) -> PaymentsSubscriptionReader:
+    """L'abonnement lu chez `payments`, pour les quotas d'IA."""
+    return PaymentsSubscriptionReader(overview)
+
+
 def wire_modules(app: FastAPI) -> None:
     """Branche les ports inter-modules sur leurs implémentations réelles.
 
@@ -769,8 +802,15 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_base_cv_reader] = base_cv_reader_from_cv
     app.dependency_overrides[get_cv_validator] = cv_validator_from_cv
     app.dependency_overrides[get_template_checker] = template_checker_from_documents
+    # Sans ces lignes : un abonné « sans pub » garde les plafonds du gratuit
+    # (portraits, imports, dossiers, lettres, chat — ADR-0038).
+    app.dependency_overrides[get_cv_subscription_reader] = subscription_reader_from_payments
+    app.dependency_overrides[get_applications_subscription_reader] = (
+        subscription_reader_from_payments
+    )
+    app.dependency_overrides[get_offers_subscription_reader] = subscription_reader_from_payments
 
-    logger.debug("bootstrap.modules_wired", bindings=17)
+    logger.debug("bootstrap.modules_wired", bindings=20)
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:

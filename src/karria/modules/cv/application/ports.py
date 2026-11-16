@@ -22,10 +22,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
 from karria.modules.cv.domain import (
+    AiUsage,
     AudioInfo,
     Chapter,
     CurriculumVitae,
@@ -90,6 +92,38 @@ class PhotoRepository(Protocol):
 
     async def delete(self, photo_ids: Sequence[UUID]) -> None:
         """Oublie des photos. Idempotent."""
+        ...
+
+
+class AiUsageRepository(Protocol):
+    """Le registre des actions d'IA rendues (portraits, imports), pour les quotas mensuels.
+
+    Distinct des photos : une photo en attente s'efface dès qu'une autre est
+    retenue, un portrait rendu reste compté jusqu'à la fin du mois.
+    """
+
+    async def record(self, user_id: UUID, usage: AiUsage, at: datetime) -> None:
+        """Note une action rendue à cet instant."""
+        ...
+
+    async def count_since(self, user_id: UUID, usage: AiUsage, since: datetime) -> int:
+        """Les actions de ce type rendues à la personne depuis `since` (inclus)."""
+        ...
+
+    async def delete_by_user(self, user_id: UUID) -> None:
+        """Oublie le registre de la personne. Idempotent."""
+        ...
+
+
+class SubscriptionReader(Protocol):
+    """La personne a-t-elle « Karria sans pub » ? (module `payments`, ADR-0024).
+
+    Branché par `bootstrap/wiring.py`. Par défaut, personne n'est abonné :
+    les plafonds du gratuit s'appliquent, ce qui ne coûte jamais trop.
+    """
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Vrai si l'abonnement est actif (grâce comprise)."""
         ...
 
 

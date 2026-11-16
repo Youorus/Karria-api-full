@@ -44,9 +44,12 @@ from karria.modules.applications.application import (
     excerpt_of,
 )
 from karria.modules.applications.domain import (
+    MONTHLY_LIMITS,
+    SUBSCRIBER_MONTHLY_LIMITS,
     AdaptationInProgressError,
     AdaptationOutput,
     AdaptationState,
+    AiUsage,
     BaseCvMissingError,
     CvInvalidError,
     Decision,
@@ -64,6 +67,7 @@ from karria.modules.applications.domain import (
     PropositionInvalidError,
     PropositionState,
     TemplateLockedError,
+    UsageQuotaExceededError,
 )
 
 pytestmark = pytest.mark.unit
@@ -88,6 +92,7 @@ def create_of(env: ApplicationsEnv, **kwargs: float) -> CreateDossierFromOffer:
         templates=env.templates,
         adapt=adapt_of(env, **kwargs),
         clock=env.clock,
+        gate=env.gate,
     )
 
 
@@ -291,8 +296,8 @@ class TestLectureEtSuppression:
         assert env.dossiers.rows == {}
 
         dossier, user = await opened(env)
-        assert await ForgetUser(env.dossiers).execute(user) == 1
-        assert await ForgetUser(env.dossiers).execute(user) == 0
+        assert await ForgetUser(env.dossiers, env.usage).execute(user) == 1
+        assert await ForgetUser(env.dossiers, env.usage).execute(user) == 0
 
 
 class TestPropositionsEtCv:
@@ -336,7 +341,9 @@ class TestPropositionsEtCv:
                 user, pending.id, pending.cv
             )
         with pytest.raises(AdaptationInProgressError):
-            await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, pending.id)
+            await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+                user, pending.id
+            )
 
 
 class TestModele:
@@ -427,7 +434,9 @@ class TestLettre:
         env = ApplicationsEnv.build()
         dossier, user = await opened(env)
 
-        drafted = await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+        drafted = await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+            user, dossier.id
+        )
         assert drafted.letter is not None
         assert drafted.letter.subject == f"Candidature au poste de {env.offer.title}"
 
@@ -439,14 +448,14 @@ class TestLettre:
         with pytest.raises(LetterInvalidError):
             await UpdateLetter(env.dossiers, env.clock).execute(user, dossier.id, {"subject": "x"})
 
-        regenerated = await RegenerateParagraph(env.dossiers, env.writer, env.clock).execute(
-            user, dossier.id, 2, "plus court"
-        )
+        regenerated = await RegenerateParagraph(
+            env.dossiers, env.writer, env.clock, env.gate
+        ).execute(user, dossier.id, 2, "plus court")
         assert regenerated.letter is not None
         assert regenerated.letter.paragraphs[2].text == "Paragraphe réécrit."
         assert env.writer.instructions == ["plus court"]
         with pytest.raises(ParagraphNotFoundError):
-            await RegenerateParagraph(env.dossiers, env.writer, env.clock).execute(
+            await RegenerateParagraph(env.dossiers, env.writer, env.clock, env.gate).execute(
                 user, dossier.id, 9, None
             )
 
@@ -454,13 +463,15 @@ class TestLettre:
         env = ApplicationsEnv.build()
         dossier, user = await opened(env)
         with pytest.raises(LetterMissingError):
-            await RegenerateParagraph(env.dossiers, env.writer, env.clock).execute(
+            await RegenerateParagraph(env.dossiers, env.writer, env.clock, env.gate).execute(
                 user, dossier.id, 0, None
             )
 
         env.writer = FakeLetterWriter(error=ModelUnavailableError("panne"))
         with pytest.raises(ModelUnavailableError):
-            await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+            await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+                user, dossier.id
+            )
         assert env.dossiers.rows[dossier.id].letter is None
 
 
@@ -545,7 +556,9 @@ class TestEcrituresSousControle:
 
         env.writer = TouchingWriter()
 
-        drafted = await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+        drafted = await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+            user, dossier.id
+        )
 
         assert drafted.letter is not None
         assert drafted.cv["summary"] == "Retouché pendant"
@@ -561,12 +574,14 @@ class TestEcrituresSousControle:
         flaky = Flaky()
         flaky.rows = env.dossiers.rows
         with pytest.raises(DossierConflictError):
-            await DraftLetter(flaky, env.writer, env.clock).execute(user, dossier.id)
+            await DraftLetter(flaky, env.writer, env.clock, env.gate).execute(user, dossier.id)
         assert env.dossiers.rows[dossier.id].letter is None
 
-        drafted = await DraftLetter(env.dossiers, env.writer, env.clock).execute(user, dossier.id)
+        drafted = await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+            user, dossier.id
+        )
         with pytest.raises(DossierConflictError):
-            await RegenerateParagraph(flaky, env.writer, env.clock).execute(
+            await RegenerateParagraph(flaky, env.writer, env.clock, env.gate).execute(
                 user, dossier.id, 0, None
             )
         assert env.dossiers.rows[dossier.id].letter == drafted.letter
@@ -634,3 +649,87 @@ class TestStyleDeLettreDuDossier:
         assert reset.letter_style is None
         with pytest.raises(DossierNotFoundError):
             await change.execute(uuid4(), dossier.id, "template")
+
+
+class TestQuotas:
+    """Dossiers, lettres et paragraphes : plafonds mensuels, levés par l'abonnement (ADR-0038)."""
+
+    async def test_le_vingt_et_unieme_dossier_du_mois_est_refuse_sans_appel_au_modele(
+        self,
+    ) -> None:
+        env = ApplicationsEnv.build()
+        user = uuid4()
+        for _ in range(MONTHLY_LIMITS[AiUsage.DOSSIER]):
+            await env.usage.record(user, AiUsage.DOSSIER, env.clock.now())
+
+        with pytest.raises(UsageQuotaExceededError) as excinfo:
+            await create_of(env).execute(user, env.offer.offer_id, None)
+
+        assert excinfo.value.details["reason"] == "dossier_quota_exceeded"
+        assert excinfo.value.details["limit"] == 20
+        assert env.adapter.calls == []
+        assert env.dossiers.rows == {}
+
+    async def test_ouvrir_compte_un_dossier_et_redemander_lexistant_ne_compte_rien(
+        self,
+    ) -> None:
+        env = ApplicationsEnv.build()
+        user = uuid4()
+
+        await create_of(env).execute(user, env.offer.offer_id, None)
+        await create_of(env).execute(user, env.offer.offer_id, None)
+
+        assert [kind for _, kind, _ in env.usage.records] == ["dossier"]
+
+    async def test_un_abonne_ouvre_au_dela_du_plafond_du_gratuit(self) -> None:
+        env = ApplicationsEnv.build()
+        user = uuid4()
+        env.subscriptions.subscribers.add(user)
+        for _ in range(MONTHLY_LIMITS[AiUsage.DOSSIER]):
+            await env.usage.record(user, AiUsage.DOSSIER, env.clock.now())
+
+        result = await create_of(env).execute(user, env.offer.offer_id, None)
+
+        assert result.created
+        assert SUBSCRIBER_MONTHLY_LIMITS[AiUsage.DOSSIER] == 100
+
+    async def test_lettre_et_paragraphe_ont_chacun_leur_plafond(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        draft = DraftLetter(env.dossiers, env.writer, env.clock, env.gate)
+        regenerate = RegenerateParagraph(env.dossiers, env.writer, env.clock, env.gate)
+        await draft.execute(user, dossier.id)
+        for _ in range(MONTHLY_LIMITS[AiUsage.LETTER] - 1):
+            await env.usage.record(user, AiUsage.LETTER, env.clock.now())
+        for _ in range(MONTHLY_LIMITS[AiUsage.PARAGRAPH]):
+            await env.usage.record(user, AiUsage.PARAGRAPH, env.clock.now())
+
+        with pytest.raises(UsageQuotaExceededError) as letter:
+            await draft.execute(user, dossier.id)
+        with pytest.raises(UsageQuotaExceededError) as paragraph:
+            await regenerate.execute(user, dossier.id, 0, None)
+
+        assert letter.value.details["reason"] == "letter_quota_exceeded"
+        assert paragraph.value.details["reason"] == "paragraph_quota_exceeded"
+        assert "sans pub" in paragraph.value.message
+        assert len(env.writer.instructions) == 0
+
+    async def test_une_panne_du_modele_ne_consomme_pas_de_lettre(self) -> None:
+        env = ApplicationsEnv.build()
+        dossier, user = await opened(env)
+        env.writer = FakeLetterWriter(error=ModelUnavailableError("panne"))
+
+        with pytest.raises(ModelUnavailableError):
+            await DraftLetter(env.dossiers, env.writer, env.clock, env.gate).execute(
+                user, dossier.id
+            )
+
+        assert [kind for _, kind, _ in env.usage.records] == ["dossier"]
+
+    async def test_loubli_du_compte_efface_aussi_le_registre(self) -> None:
+        env = ApplicationsEnv.build()
+        _, user = await opened(env)
+
+        await ForgetUser(env.dossiers, env.usage).execute(user)
+
+        assert env.usage.records == []

@@ -9,6 +9,7 @@ que trois couches plus loin.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from tortoise.transactions import in_transaction
 
 from karria.modules.cv.domain import (
     CHAPTER_ORDER,
+    AiUsage,
     Chapter,
     ChapterState,
     ChapterStatus,
@@ -36,6 +38,7 @@ from karria.modules.cv.domain import (
 )
 from karria.modules.cv.infrastructure.models import (
     CurriculumVitaeModel,
+    CvAiUsageModel,
     CvDraftModel,
     CvPhotoModel,
     CvSuggestionModel,
@@ -102,6 +105,21 @@ class TortoisePhotoRepository:
     async def delete(self, photo_ids: Sequence[UUID]) -> None:
         if photo_ids:
             await CvPhotoModel.filter(id__in=list(photo_ids)).delete()
+
+
+class TortoiseAiUsageRepository:
+    """Implémente `AiUsageRepository`."""
+
+    async def record(self, user_id: UUID, usage: AiUsage, at: datetime) -> None:
+        await CvAiUsageModel.create(user_id=user_id, kind=usage.value, created_at=at)
+
+    async def count_since(self, user_id: UUID, usage: AiUsage, since: datetime) -> int:
+        return await CvAiUsageModel.filter(
+            user_id=user_id, kind=usage.value, created_at__gte=since
+        ).count()
+
+    async def delete_by_user(self, user_id: UUID) -> None:
+        await CvAiUsageModel.filter(user_id=user_id).delete()
 
 
 # ---------------------------------------------------------------------

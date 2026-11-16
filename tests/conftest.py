@@ -249,6 +249,8 @@ def applications_env(app: FastAPI) -> Iterator[ApplicationsEnv]:
             lambda digest: f"https://logos.test/{digest}/128.webp"
         ),
         applications_deps.get_clock: lambda: env.clock,
+        applications_deps.get_ai_usage_repository: lambda: env.usage,
+        applications_deps.get_subscription_reader: lambda: env.subscriptions,
         get_unit_of_work: NullUnitOfWork,
     }
     app.dependency_overrides.update(overrides)

@@ -2,6 +2,7 @@
 
 from karria.modules.cv.application.events import CvFinalized
 from karria.modules.cv.application.ports import (
+    AiUsageRepository,
     AudioTranscriber,
     ChapterInterpreter,
     CvDocumentExtractor,
@@ -12,6 +13,7 @@ from karria.modules.cv.application.ports import (
     OfferVocabulary,
     PhotoRepository,
     PortraitEnhancer,
+    SubscriptionReader,
     SuggestionIndex,
     UploadInspector,
 )
@@ -25,6 +27,7 @@ from karria.modules.cv.application.use_cases import (
     ForgetUser,
     GetDraft,
     GetMyCv,
+    GetUsageQuota,
     ImportCv,
     ImportResult,
     ImportSource,
@@ -43,6 +46,7 @@ __all__ = [
     "DEFAULT_FOLLOW_UP",
     "PHOTO_FOLLOW_UP",
     "TOO_SHORT_FOLLOW_UP",
+    "AiUsageRepository",
     "AudioTranscriber",
     "ChapterInterpreter",
     "CvDocumentExtractor",
@@ -56,6 +60,7 @@ __all__ = [
     "GeneratedImage",
     "GetDraft",
     "GetMyCv",
+    "GetUsageQuota",
     "ImportCv",
     "ImportResult",
     "ImportSource",
@@ -66,6 +71,7 @@ __all__ = [
     "PhotoRepository",
     "PortraitEnhancer",
     "RefreshSuggestions",
+    "SubscriptionReader",
     "SuggestCompletions",
     "SuggestionIndex",
     "SuggestionRefreshReport",

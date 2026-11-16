@@ -4,6 +4,7 @@ Le contrat est `karria_app/docs/contrat-api-cv.md` ; ce module le sert sous
 `/api/v1` : `GET /cv/me`, `PUT /cv/me/chapters/{chapter}`, `GET|POST /cv/draft`,
 `POST /cv/draft/interpret`, `PUT /cv/draft/chapters/{chapter}`,
 `POST /cv/draft/finalize`, `POST /cv/photo`, `POST /cv/me/photo/enhance`,
+`GET /cv/me/photo/quota`,
 `POST /cv/import`, `POST /voice/transcribe`, `GET /cv/suggestions`. Toutes
 exigent la session.
 
@@ -26,6 +27,12 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
 - **Les photos en attente** (`cv_photos`) — ce que `POST /cv/photo` a écrit
   dans le bucket `media`, originale ou améliorée, jusqu'à ce que la
   finalisation en retienne une et oublie les autres.
+- **Les quotas d'IA du mois** (ADR-0038, `domain/quotas.py`) : 3 portraits
+  et 5 imports par personne et par mois civil UTC ; 30 et 30 avec « Karria
+  sans pub » (garde-fou d'usage raisonnable). Comptés dans le registre
+  `cv_ai_usages` — une ligne par action **rendue**, distinct de `cv_photos`
+  qui s'efface dès qu'une photo est retenue. L'abonnement se lit par le port
+  `SubscriptionReader` (`payments`, branché par `bootstrap`).
 - **Les appels à Gemini** qui concernent le CV : interprétation d'une
   réponse, transcription d'une voix, extraction d'un CV existant, portrait.
   Quatre ports (`application/ports.py`), quatre adaptateurs, un client REST
@@ -46,7 +53,8 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
 - **Le compte.** `user_id` est un UUID sans clé étrangère. La finalisation
   publie `CvFinalized` (identité et contact) ; le module des comptes
   pourra s'y abonner pour mettre à jour le profil. À la **suppression** d'un
-  compte, `ForgetUser` efface brouillon, CV, photos et objets — abonné à
+  compte, `ForgetUser` efface brouillon, CV, photos, registre des portraits
+  et objets — abonné à
   `AccountDeleted` par `bootstrap/wiring.py` (ADR-0015).
 - **La génération de documents** (CV PDF, lettres). Elle lira le CV par
   l'API publique du module (`CurriculumVitae`, ses sections) — jamais par
@@ -92,6 +100,15 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   pas : la personne compare dans l'app, puis retient l'améliorée par
   `PUT /cv/me/chapters/photo` ou garde l'originale, qui est restée.
   `409 photo_missing` sans photo ; consentement IA requis (ADR-0025).
+- **Le quota se vérifie avant le générateur et se compte après lui**
+  (`UploadPhoto`) : le quatrième portrait du mois est un `429` sans appel à
+  Gemini ; un refus ou une panne ne consomment rien. Deux demandes
+  simultanées au dernier portrait peuvent passer toutes les deux — un
+  portrait de trop, assumé plutôt qu'un verrou. Une photo **sans**
+  amélioration n'est jamais limitée. `GET /cv/me/photo/quota` ne demande
+  pas l'accord d'IA : l'app affiche le compteur avant (`subscriber` vrai :
+  pas de compteur). L'import se vérifie après les contrôles gratuits du
+  fichier et se compte dès que le modèle a lu, qu'il en sorte un CV ou non.
 - **La sortie du modèle est une donnée** (ADR-0013). Elle est bornée par un
   schéma JSON dérivé des modèles du domaine, puis revalidée par ces mêmes
   modèles ; ce qui n'y tient pas est retiré, journalisé
@@ -132,10 +149,12 @@ pas de CV), et **l'édition directe** d'une section depuis l'écran du CV.
   `chapter_data_expected` / `chapter_items_empty` (422), `cv_not_found`
   (404), `document_*` (dont `document_not_a_cv`,
   `document_pages_must_be_images`) et `audio_*` (422),
-  `photo_enhance_refused` (422),
+  `photo_enhance_refused` (422), `portrait_quota_exceeded` et
+  `import_quota_exceeded` (429, avec `limit`, `subscriber`, `resets_at`,
+  `retry_after`),
   `photo_enhance_unavailable` / `ai_unavailable` / `ai_output_invalid`
   (503). Le `code` reste celui du socle (`not_found`, `rule_violation`,
-  `invalid_input`, `dependency_failure`).
+  `invalid_input`, `dependency_failure`, `rate_limited`).
 
 ## Essayer en local
 

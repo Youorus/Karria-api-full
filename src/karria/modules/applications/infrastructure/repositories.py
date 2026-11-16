@@ -8,6 +8,7 @@ from uuid import UUID
 
 from karria.modules.applications.domain import (
     AdaptationState,
+    AiUsage,
     Coverage,
     Dossier,
     DossierNotFoundError,
@@ -15,7 +16,10 @@ from karria.modules.applications.domain import (
     OfferSnapshot,
     Proposition,
 )
-from karria.modules.applications.infrastructure.models import ApplicationDossierModel
+from karria.modules.applications.infrastructure.models import (
+    ApplicationAiUsageModel,
+    ApplicationDossierModel,
+)
 
 
 def _to_dossier(row: ApplicationDossierModel) -> Dossier:
@@ -113,3 +117,18 @@ class TortoiseDossierRepository:
 
     async def delete_by_user(self, user_id: UUID) -> int:
         return await ApplicationDossierModel.filter(user_id=user_id).delete()
+
+
+class TortoiseAiUsageRepository:
+    """Implémente `AiUsageRepository`."""
+
+    async def record(self, user_id: UUID, usage: AiUsage, at: datetime) -> None:
+        await ApplicationAiUsageModel.create(user_id=user_id, kind=usage.value, created_at=at)
+
+    async def count_since(self, user_id: UUID, usage: AiUsage, since: datetime) -> int:
+        return await ApplicationAiUsageModel.filter(
+            user_id=user_id, kind=usage.value, created_at__gte=since
+        ).count()
+
+    async def delete_by_user(self, user_id: UUID) -> None:
+        await ApplicationAiUsageModel.filter(user_id=user_id).delete()

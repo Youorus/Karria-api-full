@@ -16,6 +16,7 @@ from fastapi import Depends
 
 from karria.modules.cv.api.schemas import DraftPresenter
 from karria.modules.cv.application import (
+    AiUsageRepository,
     AudioTranscriber,
     ChapterInterpreter,
     CvDocumentExtractor,
@@ -26,6 +27,7 @@ from karria.modules.cv.application import (
     ForgetUser,
     GetDraft,
     GetMyCv,
+    GetUsageQuota,
     ImportCv,
     InterpretAnswer,
     OfferVocabulary,
@@ -33,6 +35,7 @@ from karria.modules.cv.application import (
     PhotoRepository,
     PortraitEnhancer,
     RefreshSuggestions,
+    SubscriptionReader,
     SuggestCompletions,
     SuggestionIndex,
     TranscribeVoice,
@@ -47,6 +50,7 @@ from karria.modules.cv.infrastructure import (
     LlmCvExtractor,
     LlmPortraitEnhancer,
     LlmTranscriber,
+    TortoiseAiUsageRepository,
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
@@ -81,6 +85,23 @@ def get_photo_repository() -> PhotoRepository:
     return TortoisePhotoRepository()
 
 
+def get_ai_usage_repository() -> AiUsageRepository:
+    return TortoiseAiUsageRepository()
+
+
+class _NoSubscription:
+    """Le défaut tant que `bootstrap` n'a rien branché : personne n'est abonné."""
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        _ = user_id
+        return False
+
+
+def get_subscription_reader() -> SubscriptionReader:
+    """Remplacé par `bootstrap/wiring.py` (module `payments`) ; sinon, plafonds du gratuit."""
+    return _NoSubscription()
+
+
 def get_upload_inspector() -> UploadInspector:
     return FileInspector()
 
@@ -109,6 +130,8 @@ ClockDep = Annotated[Clock, Depends(get_clock)]
 DraftRepositoryDep = Annotated[DraftRepository, Depends(get_draft_repository)]
 CvRepositoryDep = Annotated[CvRepository, Depends(get_cv_repository)]
 PhotoRepositoryDep = Annotated[PhotoRepository, Depends(get_photo_repository)]
+AiUsageRepositoryDep = Annotated[AiUsageRepository, Depends(get_ai_usage_repository)]
+SubscriptionReaderDep = Annotated[SubscriptionReader, Depends(get_subscription_reader)]
 UploadInspectorDep = Annotated[UploadInspector, Depends(get_upload_inspector)]
 ChapterInterpreterDep = Annotated[ChapterInterpreter, Depends(get_chapter_interpreter)]
 AudioTranscriberDep = Annotated[AudioTranscriber, Depends(get_audio_transcriber)]
@@ -168,13 +191,21 @@ def get_transcribe_voice(
     return TranscribeVoice(transcriber, inspector)
 
 
-def get_upload_photo(
+def get_upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
     enhancer: PortraitEnhancerDep,
     storage: ObjectStorageDep,
     photos: PhotoRepositoryDep,
     clock: ClockDep,
+    usage: AiUsageRepositoryDep,
+    subscriptions: SubscriptionReaderDep,
 ) -> UploadPhoto:
-    return UploadPhoto(enhancer, storage, photos, clock)
+    return UploadPhoto(enhancer, storage, photos, clock, usage=usage, subscriptions=subscriptions)
+
+
+def get_usage_quota(
+    usage: AiUsageRepositoryDep, subscriptions: SubscriptionReaderDep, clock: ClockDep
+) -> GetUsageQuota:
+    return GetUsageQuota(usage, subscriptions, clock)
 
 
 def get_enhance_current_photo(
@@ -192,6 +223,8 @@ def get_import_cv(
     unit_of_work: UnitOfWorkDep,
     events: EventBusDep,
     clock: ClockDep,
+    usage: AiUsageRepositoryDep,
+    subscriptions: SubscriptionReaderDep,
 ) -> ImportCv:
     return ImportCv(
         extractor=extractor,
@@ -201,6 +234,8 @@ def get_import_cv(
         unit_of_work=unit_of_work,
         events=events,
         clock=clock,
+        usage=usage,
+        subscriptions=subscriptions,
     )
 
 
@@ -220,6 +255,7 @@ def build_forget_user(storage: ObjectStorage) -> ForgetUser:
         drafts=get_draft_repository(),
         cvs=get_cv_repository(),
         photos=get_photo_repository(),
+        ai_usage=get_ai_usage_repository(),
         storage=storage,
         unit_of_work=get_unit_of_work(),
     )
@@ -244,6 +280,7 @@ FinalizeDraftDep = Annotated[FinalizeDraft, Depends(get_finalize_draft)]
 TranscribeVoiceDep = Annotated[TranscribeVoice, Depends(get_transcribe_voice)]
 UploadPhotoDep = Annotated[UploadPhoto, Depends(get_upload_photo)]
 EnhanceCurrentPhotoDep = Annotated[EnhanceCurrentPhoto, Depends(get_enhance_current_photo)]
+GetUsageQuotaDep = Annotated[GetUsageQuota, Depends(get_usage_quota)]
 ImportCvDep = Annotated[ImportCv, Depends(get_import_cv)]
 UpdateCvChapterDep = Annotated[UpdateCvChapter, Depends(get_update_cv_chapter)]
 DraftPresenterDep = Annotated[DraftPresenter, Depends(get_draft_presenter)]

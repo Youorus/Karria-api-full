@@ -724,6 +724,17 @@ class JobQueue(Protocol):
         ...
 
 
+class SubscriptionReader(Protocol):
+    """La personne a-t-elle « Karria sans pub » ? (module `payments`, ADR-0024, ADR-0038).
+
+    Branché par `bootstrap/wiring.py`. Par défaut, personne n'est abonné.
+    """
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Vrai si l'abonnement est actif (grâce comprise)."""
+        ...
+
+
 class UserNotifier(Protocol):
     """Port : prévenir une personne. Branché sur `devices` par `bootstrap/wiring.py`."""
 

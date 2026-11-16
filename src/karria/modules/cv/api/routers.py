@@ -19,6 +19,7 @@ from karria.modules.cv.api.dependencies import (
     FinalizeDraftDep,
     GetDraftDep,
     GetMyCvDep,
+    GetUsageQuotaDep,
     ImportCvDep,
     InterpretAnswerDep,
     OpenDraftDep,
@@ -36,6 +37,7 @@ from karria.modules.cv.api.schemas import (
     InterpretationRead,
     InterpretRequest,
     PhotoRead,
+    PortraitQuotaRead,
     SuggestionsRead,
     TranscriptionRead,
 )
@@ -43,6 +45,7 @@ from karria.modules.cv.domain import (
     MAX_AUDIO_BYTES,
     MAX_DOCUMENT_BYTES,
     QUERY_MAX_LENGTH,
+    AiUsage,
     Chapter,
     ChapterSubmission,
     ReceivedFile,
@@ -245,6 +248,7 @@ async def finalize_draft(
         ErrorCode.UNAUTHENTICATED,
         ErrorCode.FORBIDDEN,
         ErrorCode.INVALID_INPUT,
+        ErrorCode.RATE_LIMITED,
         ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
@@ -259,6 +263,9 @@ async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
     ] = False,
 ) -> PhotoRead:
     """`422 photo_enhance_refused` si le générateur refuse ; `503 photo_enhance_unavailable` s'il est en panne.
+
+    Avec `enhance`, `429 portrait_quota_exceeded` quand les portraits du mois
+    sont épuisés (`GET /cv/me/photo/quota`) : rien ne part au générateur.
 
     Sans amélioration, la photo ne quitte pas Karria : la porte d'IA ne joue
     que si `enhance` est vrai (`403 ai_consent_required` sinon, ADR-0025).
@@ -281,6 +288,7 @@ async def upload_photo(  # noqa: PLR0917 - FastAPI injecte par position
         ErrorCode.NOT_FOUND,
         ErrorCode.RULE_VIOLATION,
         ErrorCode.INVALID_INPUT,
+        ErrorCode.RATE_LIMITED,
         ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
@@ -293,10 +301,29 @@ async def enhance_current_photo(
     `PUT /cv/me/chapters/photo` (`{ data: { image_id } }`) ou garde
     l'originale, qui est restée. `404 cv_not_found` sans CV, `409 photo_missing`
     sans photo ; `422 photo_enhance_refused` / `503 photo_enhance_unavailable`
-    comme `POST /cv/photo` ; `403 ai_consent_required` sans accord (ADR-0025).
+    comme `POST /cv/photo` ; `429 portrait_quota_exceeded` quand les portraits
+    du mois sont épuisés ; `403 ai_consent_required` sans accord (ADR-0025).
     """
     photo = await enhance.execute(principal.subject_id)
     return await PhotoRead.present(photo, storage)
+
+
+@cv_router.get(
+    "/me/photo/quota",
+    summary="Mes portraits générés ce mois-ci",
+    response_model=PortraitQuotaRead,
+    responses=error_responses(ErrorCode.UNAUTHENTICATED),
+)
+async def get_portrait_quota(
+    principal: CurrentPrincipalDep, quota: GetUsageQuotaDep
+) -> PortraitQuotaRead:
+    """Le plafond mensuel, ce qui est consommé et ce qui reste.
+
+    Ne demande pas l'accord d'IA : on peut afficher le compteur avant de
+    l'avoir donné. Seul un portrait **rendu** compte ; un refus ou une panne
+    du générateur ne consomment rien.
+    """
+    return PortraitQuotaRead.present(await quota.execute(principal.subject_id, AiUsage.PORTRAIT))
 
 
 @cv_router.post(
@@ -308,6 +335,7 @@ async def enhance_current_photo(
         ErrorCode.UNAUTHENTICATED,
         ErrorCode.FORBIDDEN,
         ErrorCode.INVALID_INPUT,
+        ErrorCode.RATE_LIMITED,
         ErrorCode.DEPENDENCY_FAILURE,
     ),
 )
@@ -330,7 +358,9 @@ async def import_cv(
     La réponse dit ce qui a **vraiment** été retenu (`kept`), écarté
     (`discarded`) et ce qu'il reste à vérifier (`missing`). Rien n'est écrit
     si la lecture échoue. `422 document_not_a_cv` si rien d'un CV n'y est
-    lu ; `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
+    lu ; `403 ai_consent_required` sans consentement à l'IA (ADR-0025) ;
+    `429 import_quota_exceeded` passé cinq imports dans le mois (trente avec
+    « Karria sans pub », ADR-0038).
     """
     received = [
         ReceivedFile(

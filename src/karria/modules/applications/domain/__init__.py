@@ -48,6 +48,7 @@ from karria.modules.applications.domain.errors import (
     PropositionNotFoundError,
     PropositionPathError,
     TemplateLockedError,
+    UsageQuotaExceededError,
 )
 from karria.modules.applications.domain.letters import (
     DRAFT_KINDS,
@@ -62,6 +63,13 @@ from karria.modules.applications.domain.letters import (
     validated_paragraph,
 )
 from karria.modules.applications.domain.paths import PathError, is_well_formed, read, write
+from karria.modules.applications.domain.quotas import (
+    MONTHLY_LIMITS,
+    SUBSCRIBER_MONTHLY_LIMITS,
+    AiUsage,
+    UsageQuota,
+    month_bounds,
+)
 
 __all__ = [
     "AI_RATE_LIMIT",
@@ -72,11 +80,14 @@ __all__ = [
     "INSTRUCTION_MAX_LENGTH",
     "MAX_KEYWORDS",
     "MAX_PARAGRAPHS",
+    "MONTHLY_LIMITS",
     "PARAGRAPH_MAX_LENGTH",
+    "SUBSCRIBER_MONTHLY_LIMITS",
     "AdaptationInProgressError",
     "AdaptationNotFailedError",
     "AdaptationOutput",
     "AdaptationState",
+    "AiUsage",
     "BaseCvMissingError",
     "BoundsError",
     "Conversion",
@@ -108,6 +119,8 @@ __all__ = [
     "PropositionPathError",
     "PropositionState",
     "TemplateLockedError",
+    "UsageQuota",
+    "UsageQuotaExceededError",
     "check_bounds",
     "coverage",
     "cv_hash",
@@ -116,6 +129,7 @@ __all__ = [
     "fold",
     "invented_figures",
     "is_well_formed",
+    "month_bounds",
     "propositions_from",
     "read",
     "validated_paragraph",

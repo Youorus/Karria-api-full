@@ -9,6 +9,7 @@ HTTP n'est inventé ici : la traduction reste dans `shared/errors`.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, ClassVar
 
 # Le sous-module, et non le paquet `karria.shared.errors` : son `__init__`
@@ -19,6 +20,7 @@ from karria.shared.errors.exceptions import (
     DomainError,
     ErrorCode,
     InvalidInputError,
+    RateLimitedError,
 )
 
 
@@ -50,6 +52,38 @@ class PhotoMissingError(BusinessRuleViolationError):
         super().__init__(
             "Ton CV n'a pas encore de photo : ajoute-en une d'abord.",
             details={"reason": "photo_missing"},
+        )
+
+
+#: Ce que la personne lit, par action (`domain/quotas.py`).
+_QUOTA_WORDS = {"portrait": "portraits", "import": "imports de CV"}
+
+
+class UsageQuotaExceededError(RateLimitedError):
+    """Le plafond mensuel d'une action d'IA est atteint (`domain/quotas.py`, ADR-0038).
+
+    `details.reason` vaut `portrait_quota_exceeded` ou `import_quota_exceeded`.
+    """
+
+    def __init__(
+        self, *, usage: str, limit: int, subscriber: bool, resets_at: datetime, retry_after: int
+    ) -> None:
+        words = _QUOTA_WORDS.get(usage, usage)
+        message = (
+            f"Tu as atteint la limite d'usage raisonnable de {limit} {words} ce mois-ci."
+            if subscriber
+            else f"Tu as utilisé tes {limit} {words} du mois. "
+            "Avec Karria sans pub, tu n'as plus de limite."
+        )
+        super().__init__(
+            message,
+            retry_after=retry_after,
+            details={
+                "reason": f"{usage}_quota_exceeded",
+                "limit": limit,
+                "subscriber": subscriber,
+                "resets_at": resets_at.isoformat(),
+            },
         )
 
 

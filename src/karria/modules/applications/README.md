@@ -15,6 +15,11 @@
   le reste attend ; le statut se déduit (`brouillon | pret | candidate`) ; la
   lettre a une forme bornée (1 à 6 paragraphes typés) ; la couverture est une
   règle sans modèle de langage.
+- **Les quotas d'IA du mois** (ADR-0038, `domain/quotas.py`) : 20 dossiers
+  ouverts, 30 lettres écrites, 100 paragraphes réécrits par mois civil UTC ;
+  100, 150 et 500 avec « Karria sans pub » (garde-fou d'usage raisonnable).
+  Registre `applications_ai_usages`, une ligne par action **rendue**,
+  indépendant des dossiers : supprimer un dossier ne rend rien.
 - **Les deux appels au modèle** (`cv_adapt`, `letter_draft`), leurs consignes
   et leurs schémas de sortie, et le travail de file `applications.adapt_cv`.
 
@@ -70,7 +75,12 @@
   (`domain/bounds.py`) et `CvValidator` avant toute écriture d'une proposition ;
   ce qui ne tient pas reste `proposee`.
 - **Garde-fous HTTP** : 30 appels au modèle par compte et par 10 minutes
-  (`429 ai_rate_limited`), corps de `PUT /cv` borné à 256 Kio (`422 cv_too_large`),
+  (`429 ai_rate_limited`, le frein de l'instant), puis les quotas du mois
+  (`429 dossier_quota_exceeded`, `letter_quota_exceeded`,
+  `paragraph_quota_exceeded`, avec `limit`, `subscriber`, `resets_at`) : vérifiés
+  avant le modèle, notés après lui ; rouvrir un dossier existant et relancer
+  une adaptation échouée ne comptent pas. L'abonnement se lit par le port
+  `SubscriptionReader` (`payments`, branché par `bootstrap`), corps de `PUT /cv` borné à 256 Kio (`422 cv_too_large`),
   plafonds des listes du CV par les chapitres de `cv` (et 30 expériences,
   20 formations, 20 projets).
 - **Les ports vers les autres modules refusent par défaut** (`offer_not_found`,

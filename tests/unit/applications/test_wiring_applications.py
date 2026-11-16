@@ -17,11 +17,13 @@ from karria.bootstrap.wiring import (
     CvModuleValidator,
     DocumentsTemplateChecker,
     OffersOfferReader,
+    PaymentsSubscriptionReader,
     applications_logo_url_from_offers,
     base_cv_reader_from_cv,
     cv_validator_from_cv,
     offer_reader_from_offers,
     subscribe_bridges,
+    subscription_reader_from_payments,
     template_checker_from_documents,
 )
 from karria.modules.applications import (
@@ -34,9 +36,15 @@ from karria.modules.applications import (
     get_offer_reader,
     get_template_checker,
 )
+from karria.modules.applications import (
+    get_subscription_reader as get_applications_subscription_reader,
+)
 from karria.modules.cv import CurriculumVitae, GetMyCv, Identity
+from karria.modules.cv import get_subscription_reader as get_cv_subscription_reader
 from karria.modules.documents import PremiumTemplate, TemplateShop
 from karria.modules.offers import GetOfferForUser
+from karria.modules.offers import get_subscription_reader as get_offers_subscription_reader
+from karria.modules.payments import GetBillingOverview
 from karria.shared.config import AppSettings, Environment, Settings, StorageSettings
 from karria.shared.errors import EntityNotFoundError
 from karria.shared.storage import InMemoryObjectStorage
@@ -52,6 +60,33 @@ def test_les_cinq_ports_sont_branches() -> None:
     assert app.dependency_overrides[get_base_cv_reader] is base_cv_reader_from_cv
     assert app.dependency_overrides[get_cv_validator] is cv_validator_from_cv
     assert app.dependency_overrides[get_template_checker] is template_checker_from_documents
+
+
+def test_les_quotas_lisent_l_abonnement_chez_payments() -> None:
+    app = create_app(Settings(app=AppSettings(environment=Environment.TEST)))
+
+    for port in (
+        get_applications_subscription_reader,
+        get_cv_subscription_reader,
+        get_offers_subscription_reader,
+    ):
+        assert app.dependency_overrides[port] is subscription_reader_from_payments
+
+
+async def test_abonne_signifie_sans_pub_actif() -> None:
+    class Overview:
+        def __init__(self, ad_free: bool) -> None:
+            self.ad_free = ad_free
+
+        async def execute(self, user_id: object) -> SimpleNamespace:
+            return SimpleNamespace(ad_free=self.ad_free)
+
+    assert await PaymentsSubscriptionReader(
+        cast("GetBillingOverview", Overview(True))
+    ).is_subscriber(uuid4())
+    assert not await PaymentsSubscriptionReader(
+        cast("GetBillingOverview", Overview(False))
+    ).is_subscriber(uuid4())
 
 
 class TestOfferReader:

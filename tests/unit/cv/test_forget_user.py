@@ -9,6 +9,7 @@ import pytest
 
 from doubles import (
     CV_NOW,
+    InMemoryAiUsageRepository,
     InMemoryCvRepository,
     InMemoryDraftRepository,
     InMemoryPhotoRepository,
@@ -17,8 +18,8 @@ from doubles import (
 )
 from karria.modules.cv.api.dependencies import build_forget_user
 from karria.modules.cv.application import ForgetOutcome, ForgetUser
-from karria.modules.cv.domain import CurriculumVitae, CvPhoto, Draft
-from karria.modules.cv.infrastructure import TortoiseCvRepository
+from karria.modules.cv.domain import AiUsage, CurriculumVitae, CvPhoto, Draft
+from karria.modules.cv.infrastructure import TortoiseAiUsageRepository, TortoiseCvRepository
 from karria.shared.database import NullUnitOfWork
 from karria.shared.storage import Bucket, InMemoryObjectStorage, StorageError
 
@@ -62,9 +63,15 @@ def _forget(
     cvs: InMemoryCvRepository,
     photos: InMemoryPhotoRepository,
     storage: InMemoryObjectStorage,
+    usage: InMemoryAiUsageRepository | None = None,
 ) -> ForgetUser:
     return ForgetUser(
-        drafts=drafts, cvs=cvs, photos=photos, storage=storage, unit_of_work=NullUnitOfWork()
+        drafts=drafts,
+        cvs=cvs,
+        photos=photos,
+        ai_usage=usage or InMemoryAiUsageRepository(),
+        storage=storage,
+        unit_of_work=NullUnitOfWork(),
     )
 
 
@@ -107,9 +114,13 @@ class TestForgetUser:
         await _cv(cvs, storage, "users/x/cv-photo/retenue.jpg")
         await _photo(photos, storage, "users/x/cv-photo/attente.jpg")
         # Ce qui appartient à quelqu'un d'autre reste.
-        autre = await _photo(photos, storage, "users/y/cv-photo/sienne.jpg", user=uuid4())
+        someone = uuid4()
+        autre = await _photo(photos, storage, "users/y/cv-photo/sienne.jpg", user=someone)
+        usage = InMemoryAiUsageRepository()
+        await usage.record(USER, AiUsage.PORTRAIT, CV_NOW)
+        await usage.record(someone, AiUsage.IMPORT, CV_NOW)
 
-        outcome = await _forget(drafts, cvs, photos, storage).execute(USER)
+        outcome = await _forget(drafts, cvs, photos, storage, usage).execute(USER)
 
         assert outcome == ForgetOutcome(
             draft_deleted=True, cv_deleted=True, photos_deleted=1, objects_deleted=2
@@ -119,6 +130,8 @@ class TestForgetUser:
         assert await cvs.find_by_user(USER) is None
         assert await photos.list_by_user(USER) == []
         assert list(storage.objects) == [(Bucket.MEDIA, autre.image_key)]
+        # Le registre des portraits est une donnée de la personne : il part aussi.
+        assert usage.records == [(someone, "import", CV_NOW)]
 
     async def test_est_idempotent_sur_une_personne_inconnue(
         self,
@@ -191,4 +204,5 @@ def test_loubli_hors_requete_recoit_les_adaptateurs_deployes(
     forget = build_forget_user(storage)
     assert isinstance(forget, ForgetUser)
     assert isinstance(forget._cvs, TortoiseCvRepository)
+    assert isinstance(forget._ai_usage, TortoiseAiUsageRepository)
     assert forget._storage is storage

@@ -138,7 +138,7 @@ class TestCasDUsage:
         assert isinstance(apply, ApplyCriteria)
         assert isinstance(
             deps.get_converse_search(
-                any_port, any_port, any_port, apply, any_port, any_port, any_port, search
+                any_port, any_port, any_port, apply, any_port, any_port, any_port, search, any_port
             ),
             ConverseSearch,
         )

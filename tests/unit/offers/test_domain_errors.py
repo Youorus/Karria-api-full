@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
         (CriteriaNotFoundError(), ErrorCode.NOT_FOUND, "criteria_not_found"),
         (CriteriaIncompleteError(["job"]), ErrorCode.INVALID_INPUT, "criteria_incomplete"),
         (
-            AssistantRateLimitedError(retry_after=60),
+            AssistantRateLimitedError(retry_after=60, limit=40, subscriber=False),
             ErrorCode.RATE_LIMITED,
             "assistant_rate_limited",
         ),

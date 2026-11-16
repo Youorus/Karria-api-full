@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,7 +18,9 @@ from doubles import (
     FakeExtractor,
     FakeInspector,
     FakeInterpreter,
+    FakeSubscriptions,
     FakeTranscriber,
+    InMemoryAiUsageRepository,
     InMemoryCvRepository,
     InMemoryDraftRepository,
     InMemoryPhotoRepository,
@@ -35,6 +37,7 @@ from karria.modules.cv.application import (
     GeneratedImage,
     GetDraft,
     GetMyCv,
+    GetUsageQuota,
     ImportCv,
     ImportSource,
     InterpretAnswer,
@@ -46,6 +49,10 @@ from karria.modules.cv.application import (
     ValidateChapter,
 )
 from karria.modules.cv.domain import (
+    MONTHLY_LIMITS,
+    MONTHLY_PORTRAIT_LIMIT,
+    SUBSCRIBER_MONTHLY_LIMITS,
+    AiUsage,
     Chapter,
     ChapterStatus,
     ChapterSubmission,
@@ -65,9 +72,13 @@ from karria.modules.cv.domain import (
     PhotoMissingError,
     ReceivedFile,
     UnsupportedUploadError,
+    UsageQuota,
+    UsageQuotaExceededError,
+    month_bounds,
 )
 from karria.shared.config import Environment, StorageSettings
 from karria.shared.database import NullUnitOfWork
+from karria.shared.errors import ErrorCode
 from karria.shared.storage import (
     Bucket,
     InMemoryObjectStorage,
@@ -463,7 +474,14 @@ class TestUploadPhoto:
         store = storage()
         photos = InMemoryPhotoRepository()
         enhancer = FakeEnhancer()
-        use_case = UploadPhoto(enhancer, store, photos, FakeClock())
+        use_case = UploadPhoto(
+            enhancer,
+            store,
+            photos,
+            FakeClock(),
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
+        )
 
         photo = await use_case.execute(
             USER, sample_image(300, 200, fmt="PNG"), "image/png", enhance=False
@@ -481,7 +499,14 @@ class TestUploadPhoto:
         store = storage()
         generated = GeneratedImage(sample_image(2_500, 3_000, fmt="PNG"), "image/png")
         enhancer = FakeEnhancer(result=generated)
-        use_case = UploadPhoto(enhancer, store, InMemoryPhotoRepository(), FakeClock())
+        use_case = UploadPhoto(
+            enhancer,
+            store,
+            InMemoryPhotoRepository(),
+            FakeClock(),
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
+        )
 
         photo = await use_case.execute(USER, sample_image(640, 480), "image/jpeg", enhance=True)
 
@@ -498,6 +523,8 @@ class TestUploadPhoto:
             storage(),
             InMemoryPhotoRepository(),
             FakeClock(),
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
         )
 
         with pytest.raises(PhotoEnhanceRefusedError) as excinfo:
@@ -509,10 +536,145 @@ class TestUploadPhoto:
         }
 
     async def test_ce_qui_nest_pas_une_image_est_refuse(self) -> None:
-        use_case = UploadPhoto(FakeEnhancer(), storage(), InMemoryPhotoRepository(), FakeClock())
+        use_case = UploadPhoto(
+            FakeEnhancer(),
+            storage(),
+            InMemoryPhotoRepository(),
+            FakeClock(),
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
+        )
 
         with pytest.raises(PayloadRejectedError):
             await use_case.execute(USER, b"%PDF-1.4", "image/jpeg", enhance=False)
+
+
+class TestQuotas:
+    """Portraits et imports : plafonds du gratuit, levés par l'abonnement (ADR-0038)."""
+
+    @staticmethod
+    def _upload(
+        enhancer: FakeEnhancer,
+        usage: InMemoryAiUsageRepository,
+        now: datetime,
+        subscriptions: FakeSubscriptions | None = None,
+    ) -> UploadPhoto:
+        return UploadPhoto(
+            enhancer,
+            storage(),
+            InMemoryPhotoRepository(),
+            FakeClock(now),
+            usage=usage,
+            subscriptions=subscriptions or FakeSubscriptions(),
+        )
+
+    async def test_le_quatrieme_portrait_du_mois_est_refuse_sans_appel_au_generateur(
+        self,
+    ) -> None:
+        now = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
+        usage = InMemoryAiUsageRepository()
+        enhancer = FakeEnhancer(result=GeneratedImage(sample_image(400, 500), "image/jpeg"))
+        upload = self._upload(enhancer, usage, now)
+
+        for _ in range(MONTHLY_PORTRAIT_LIMIT):
+            await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+        with pytest.raises(UsageQuotaExceededError) as excinfo:
+            await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+
+        assert len(enhancer.calls) == MONTHLY_PORTRAIT_LIMIT
+        assert excinfo.value.code is ErrorCode.RATE_LIMITED
+        # Du 16/11 à 15 h au 01/12 à minuit UTC : 14 jours et 9 heures.
+        assert excinfo.value.details == {
+            "reason": "portrait_quota_exceeded",
+            "limit": 3,
+            "subscriber": False,
+            "resets_at": "2026-12-01T00:00:00+00:00",
+            "retry_after": 1_242_000,
+        }
+        assert "sans pub" in excinfo.value.message
+
+    async def test_un_abonne_depasse_le_plafond_du_gratuit_jusqua_son_garde_fou(self) -> None:
+        now = datetime(2026, 11, 16, tzinfo=UTC)
+        usage = InMemoryAiUsageRepository()
+        for _ in range(SUBSCRIBER_MONTHLY_LIMITS[AiUsage.PORTRAIT] - 1):
+            await usage.record(USER, AiUsage.PORTRAIT, now)
+        enhancer = FakeEnhancer(result=GeneratedImage(sample_image(400, 500), "image/jpeg"))
+        upload = self._upload(enhancer, usage, now, FakeSubscriptions(USER))
+
+        await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+        with pytest.raises(UsageQuotaExceededError) as excinfo:
+            await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+
+        assert len(enhancer.calls) == 1
+        assert excinfo.value.details["subscriber"] is True
+        assert excinfo.value.details["limit"] == 30
+        assert "usage raisonnable" in excinfo.value.message
+
+    async def test_une_photo_sans_amelioration_ne_consomme_rien_et_reste_possible(
+        self,
+    ) -> None:
+        now = datetime(2026, 11, 16, tzinfo=UTC)
+        usage = InMemoryAiUsageRepository()
+        for _ in range(MONTHLY_PORTRAIT_LIMIT):
+            await usage.record(USER, AiUsage.PORTRAIT, now)
+        subscriptions = FakeSubscriptions()
+        upload = self._upload(FakeEnhancer(), usage, now, subscriptions)
+
+        photo = await upload.execute(USER, sample_image(), "image/jpeg", enhance=False)
+
+        assert not photo.enhanced
+        assert len(usage.records) == MONTHLY_PORTRAIT_LIMIT
+        # Rien à décider : l'abonnement n'est même pas lu.
+        assert subscriptions.calls == []
+
+    async def test_un_refus_du_generateur_ne_consomme_pas_de_portrait(self) -> None:
+        usage = InMemoryAiUsageRepository()
+        upload = self._upload(
+            FakeEnhancer(error=PhotoEnhanceRefusedError("SAFETY")),
+            usage,
+            datetime(2026, 11, 16, tzinfo=UTC),
+        )
+
+        with pytest.raises(PhotoEnhanceRefusedError):
+            await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+
+        assert usage.records == []
+
+    async def test_le_compteur_repart_au_premier_du_mois_par_personne_et_par_action(
+        self,
+    ) -> None:
+        usage = InMemoryAiUsageRepository()
+        for _ in range(MONTHLY_PORTRAIT_LIMIT):
+            await usage.record(USER, AiUsage.PORTRAIT, datetime(2026, 10, 31, 23, 59, tzinfo=UTC))
+        await usage.record(uuid4(), AiUsage.PORTRAIT, datetime(2026, 11, 1, 8, 0, tzinfo=UTC))
+        await usage.record(USER, AiUsage.IMPORT, datetime(2026, 11, 1, 8, 0, tzinfo=UTC))
+
+        quota = await GetUsageQuota(
+            usage, FakeSubscriptions(), FakeClock(datetime(2026, 11, 1, 9, 0, tzinfo=UTC))
+        ).execute(USER, AiUsage.PORTRAIT)
+
+        assert quota == UsageQuota(
+            usage=AiUsage.PORTRAIT,
+            subscriber=False,
+            limit=3,
+            used=0,
+            resets_at=datetime(2026, 12, 1, tzinfo=UTC),
+        )
+        assert quota.remaining == 3
+
+    def test_les_plafonds_du_gratuit_et_de_labonne(self) -> None:
+        assert MONTHLY_LIMITS == {AiUsage.PORTRAIT: 3, AiUsage.IMPORT: 5}
+        assert SUBSCRIBER_MONTHLY_LIMITS == {AiUsage.PORTRAIT: 30, AiUsage.IMPORT: 30}
+
+    def test_le_mois_civil_utc_et_decembre(self) -> None:
+        assert month_bounds(datetime(2026, 12, 31, 23, 59, tzinfo=UTC)) == (
+            datetime(2026, 12, 1, tzinfo=UTC),
+            datetime(2027, 1, 1, tzinfo=UTC),
+        )
+        # 1er décembre 00 h 30 à Paris = 30 novembre 23 h 30 UTC : encore novembre.
+        paris = timezone(timedelta(hours=1))
+        start, _ = month_bounds(datetime(2026, 12, 1, 0, 30, tzinfo=paris))
+        assert start == datetime(2026, 11, 1, tzinfo=UTC)
 
 
 class TestEnhanceCurrentPhoto:
@@ -520,7 +682,14 @@ class TestEnhanceCurrentPhoto:
         self, cvs: InMemoryCvRepository, store: InMemoryObjectStorage, enhancer: FakeEnhancer
     ) -> tuple[EnhanceCurrentPhoto, InMemoryPhotoRepository]:
         photos = InMemoryPhotoRepository()
-        upload = UploadPhoto(enhancer, store, photos, FakeClock())
+        upload = UploadPhoto(
+            enhancer,
+            store,
+            photos,
+            FakeClock(),
+            usage=InMemoryAiUsageRepository(),
+            subscriptions=FakeSubscriptions(),
+        )
         return EnhanceCurrentPhoto(cvs, store, upload), photos
 
     async def test_relit_la_photo_du_cv_et_range_lamelioree_en_attente(self) -> None:
@@ -598,6 +767,7 @@ def importer(
     cvs: InMemoryCvRepository | None = None,
     drafts: InMemoryDraftRepository | None = None,
     bus: CollectingBus | None = None,
+    usage: InMemoryAiUsageRepository | None = None,
 ) -> ImportCv:
     return ImportCv(
         extractor=extractor,
@@ -607,6 +777,8 @@ def importer(
         unit_of_work=NullUnitOfWork(),
         events=bus or CollectingBus(),
         clock=FakeClock(),
+        usage=usage or InMemoryAiUsageRepository(),
+        subscriptions=FakeSubscriptions(),
     )
 
 
@@ -707,6 +879,29 @@ class TestImportCv:
             await use_case.execute(USER, [ReceivedFile(b"p", "image/png")] * 11)
         assert excinfo.value.details["reason"] == "document_too_many_pages"
         assert extractor.calls == []
+
+    async def test_le_sixieme_import_du_mois_est_refuse_sans_appel_au_modele(self) -> None:
+        usage = InMemoryAiUsageRepository()
+        extractor = FakeExtractor(EXTRACTED)
+        use_case = importer(extractor, FakeInspector(pages=1), usage=usage)
+
+        for _ in range(MONTHLY_LIMITS[AiUsage.IMPORT]):
+            await use_case.execute(USER, pdf())
+        with pytest.raises(UsageQuotaExceededError) as excinfo:
+            await use_case.execute(USER, pdf())
+
+        assert len(extractor.calls) == MONTHLY_LIMITS[AiUsage.IMPORT]
+        assert excinfo.value.details["reason"] == "import_quota_exceeded"
+        assert [kind for _, kind, _ in usage.records] == ["import"] * 5
+
+    async def test_un_fichier_refuse_avant_le_modele_ne_compte_pas_dimport(self) -> None:
+        usage = InMemoryAiUsageRepository()
+        use_case = importer(FakeExtractor(EXTRACTED), FakeInspector(pages=11), usage=usage)
+
+        with pytest.raises(UnsupportedUploadError):
+            await use_case.execute(USER, pdf(b"%PDF"))
+
+        assert usage.records == []
 
     async def test_les_pages_des_photos_se_cumulent(self) -> None:
         extractor = FakeExtractor(EXTRACTED)

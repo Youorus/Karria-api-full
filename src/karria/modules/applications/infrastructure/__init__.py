@@ -10,7 +10,10 @@ from karria.modules.applications.infrastructure.queue import (
     TASK_ADAPT_CV,
     ProcrastinateDossierJobs,
 )
-from karria.modules.applications.infrastructure.repositories import TortoiseDossierRepository
+from karria.modules.applications.infrastructure.repositories import (
+    TortoiseAiUsageRepository,
+    TortoiseDossierRepository,
+)
 
 __all__ = [
     "TASK_ADAPT",
@@ -19,5 +22,6 @@ __all__ = [
     "LlmCvAdapter",
     "LlmLetterWriter",
     "ProcrastinateDossierJobs",
+    "TortoiseAiUsageRepository",
     "TortoiseDossierRepository",
 ]

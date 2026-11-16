@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,12 +10,16 @@ import pytest
 from doubles import sample_adaptation_output, sample_base_cv, sample_letter_json, sample_offer_card
 from karria.modules.applications.application import snapshot_of
 from karria.modules.applications.domain import (
+    AiUsage,
     Dossier,
     DossierNotFoundError,
     Letter,
     propositions_from,
 )
-from karria.modules.applications.infrastructure import TortoiseDossierRepository
+from karria.modules.applications.infrastructure import (
+    TortoiseAiUsageRepository,
+    TortoiseDossierRepository,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -106,3 +110,26 @@ async def test_un_dossier_supprime_ne_renait_pas_et_le_controle_optimiste_tient(
         await repository.save(touched)
     assert not await repository.save_if_unchanged(touched, expected_updated_at=later)
     assert await repository.find_any(dossier.id) is None
+
+
+@pytest.mark.usefixtures("clean_database")
+class TestAiUsage:
+    async def test_compte_par_personne_par_action_depuis_un_instant_puis_oublie(self) -> None:
+        repository = TortoiseAiUsageRepository()
+        me, someone = uuid4(), uuid4()
+        now = datetime(2026, 11, 16, 12, tzinfo=UTC)
+        await repository.record(me, AiUsage.DOSSIER, now - timedelta(days=40))
+        await repository.record(me, AiUsage.DOSSIER, now)
+        await repository.record(me, AiUsage.LETTER, now)
+        await repository.record(someone, AiUsage.DOSSIER, now)
+
+        # L'instant passé est celui compté, pas l'heure de l'écriture.
+        assert await repository.count_since(me, AiUsage.DOSSIER, now) == 1
+        assert await repository.count_since(me, AiUsage.LETTER, now) == 1
+        assert await repository.count_since(me, AiUsage.PARAGRAPH, now) == 0
+
+        await repository.delete_by_user(me)
+        await repository.delete_by_user(me)  # idempotent
+
+        assert await repository.count_since(me, AiUsage.DOSSIER, now - timedelta(days=41)) == 0
+        assert await repository.count_since(someone, AiUsage.DOSSIER, now) == 1

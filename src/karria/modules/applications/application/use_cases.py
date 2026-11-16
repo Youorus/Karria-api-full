@@ -25,6 +25,7 @@ from uuid import UUID
 
 from karria.modules.applications.application.events import DossierApplied, DossierUnapplied
 from karria.modules.applications.application.ports import (
+    AiUsageRepository,
     BaseCvReader,
     CvAdapter,
     CvValidator,
@@ -33,9 +34,11 @@ from karria.modules.applications.application.ports import (
     LetterWriter,
     OfferCard,
     OfferReader,
+    SubscriptionReader,
     TemplateChecker,
 )
 from karria.modules.applications.domain import (
+    AiUsage,
     BaseCvMissingError,
     Decision,
     Dossier,
@@ -49,7 +52,9 @@ from karria.modules.applications.domain import (
     OfferSnapshot,
     ParagraphNotFoundError,
     TemplateLockedError,
+    UsageQuota,
     extract_keywords,
+    month_bounds,
     propositions_from,
     validated_paragraph,
 )
@@ -67,6 +72,40 @@ ADAPTATION_INLINE_SECONDS: Final = 10.0
 EXCERPT_LENGTH: Final = 280
 #: Rejeux d'une écriture sous contrôle optimiste avant d'abandonner.
 SETTLE_ATTEMPTS: Final = 3
+
+
+class UsageGate:
+    """Le quota mensuel d'une action d'IA : vérifié avant le modèle, noté après lui (ADR-0038).
+
+    Deux demandes simultanées à la dernière unité du mois peuvent passer
+    toutes les deux : une de trop, assumée plutôt qu'un verrou.
+    """
+
+    def __init__(
+        self, usage: AiUsageRepository, subscriptions: SubscriptionReader, clock: Clock
+    ) -> None:
+        self._usage = usage
+        self._subscriptions = subscriptions
+        self._clock = clock
+
+    async def quota(self, user_id: UUID, usage: AiUsage) -> UsageQuota:
+        """Le plafond qui s'applique, ce qui est consommé, et quand le compteur repart."""
+        now = self._clock.now()
+        start, _ = month_bounds(now)
+        return UsageQuota.of(
+            usage,
+            used=await self._usage.count_since(user_id, usage, start),
+            subscriber=await self._subscriptions.is_subscriber(user_id),
+            now=now,
+        )
+
+    async def ensure(self, user_id: UUID, usage: AiUsage) -> None:
+        """Raises `UsageQuotaExceededError` si le plafond du mois est atteint."""
+        (await self.quota(user_id, usage)).ensure_available(self._clock.now())
+
+    async def record(self, user_id: UUID, usage: AiUsage) -> None:
+        """Note une action rendue."""
+        await self._usage.record(user_id, usage, self._clock.now())
 
 
 def excerpt_of(description: str) -> str:
@@ -236,6 +275,7 @@ class CreateDossierFromOffer:
         templates: TemplateChecker,
         adapt: AdaptCv,
         clock: Clock,
+        gate: UsageGate,
     ) -> None:
         self._dossiers = dossiers
         self._offers = offers
@@ -243,6 +283,7 @@ class CreateDossierFromOffer:
         self._templates = templates
         self._adapt = adapt
         self._clock = clock
+        self._gate = gate
 
     async def execute(
         self, user_id: UUID, offer_id: UUID, template_id: UUID | None
@@ -253,10 +294,13 @@ class CreateDossierFromOffer:
             BaseCvMissingError: Pas de CV de base.
             OfferNotFoundError: L'offre n'est pas dans l'index.
             TemplateLockedError: Modèle Premium non possédé.
+            UsageQuotaExceededError: Les dossiers du mois sont épuisés.
         """
         existing = await self._dossiers.find_by_offer(user_id, offer_id)
         if existing is not None:
             return CreationResult(existing, created=False)
+        # Rendre l'existant ne coûte rien : le quota ne joue qu'à l'ouverture.
+        await self._gate.ensure(user_id, AiUsage.DOSSIER)
         base = await self._base_cvs.read(user_id)
         if base is None:
             raise BaseCvMissingError()
@@ -273,6 +317,8 @@ class CreateDossierFromOffer:
             now=self._clock.now(),
         )
         await self._dossiers.insert(dossier)
+        # Compté à l'ouverture : l'adaptation part, sur la requête ou la file.
+        await self._gate.record(user_id, AiUsage.DOSSIER)
         logger.info(
             "applications.dossier_opened",
             dossier_id=str(dossier.id),
@@ -480,15 +526,21 @@ class ChangeDossierLetterStyle:
 class DraftLetter:
     """La première ébauche de la lettre, par Karria. Remplace la lettre existante."""
 
-    def __init__(self, dossiers: DossierRepository, writer: LetterWriter, clock: Clock) -> None:
+    def __init__(
+        self, dossiers: DossierRepository, writer: LetterWriter, clock: Clock, gate: UsageGate
+    ) -> None:
         self._dossiers = dossiers
         self._writer = writer
         self._clock = clock
+        self._gate = gate
 
     async def execute(self, user_id: UUID, dossier_id: UUID) -> Dossier:
+        """Raises `UsageQuotaExceededError` quand les lettres du mois sont épuisées."""
         dossier = await _owned(self._dossiers, dossier_id, user_id)
         dossier.ensure_not_adapting()
+        await self._gate.ensure(user_id, AiUsage.LETTER)
         letter = await self._writer.draft(dossier.offer, dossier.cv)
+        await self._gate.record(user_id, AiUsage.LETTER)
         updated = await _commit_after_model(
             self._dossiers,
             dossier,
@@ -521,10 +573,13 @@ class UpdateLetter:
 class RegenerateParagraph:
     """Un seul paragraphe réécrit par Karria, avec une consigne courte facultative."""
 
-    def __init__(self, dossiers: DossierRepository, writer: LetterWriter, clock: Clock) -> None:
+    def __init__(
+        self, dossiers: DossierRepository, writer: LetterWriter, clock: Clock, gate: UsageGate
+    ) -> None:
         self._dossiers = dossiers
         self._writer = writer
         self._clock = clock
+        self._gate = gate
 
     async def execute(
         self, user_id: UUID, dossier_id: UUID, index: int, instruction: str | None
@@ -534,11 +589,12 @@ class RegenerateParagraph:
             raise LetterMissingError(dossier_id)
         if index < 0 or index >= len(dossier.letter.paragraphs):
             raise ParagraphNotFoundError(index)
-        text = validated_paragraph(
-            await self._writer.rewrite_paragraph(
-                dossier.offer, dossier.cv, dossier.letter, index, instruction
-            )
+        await self._gate.ensure(user_id, AiUsage.PARAGRAPH)
+        rewritten = await self._writer.rewrite_paragraph(
+            dossier.offer, dossier.cv, dossier.letter, index, instruction
         )
+        await self._gate.record(user_id, AiUsage.PARAGRAPH)
+        text = validated_paragraph(rewritten)
         updated = await _commit_after_model(
             self._dossiers,
             dossier,
@@ -600,12 +656,14 @@ class ForgetUser:
     sont ceux de `documents`). Idempotent.
     """
 
-    def __init__(self, dossiers: DossierRepository) -> None:
+    def __init__(self, dossiers: DossierRepository, usage: AiUsageRepository) -> None:
         self._dossiers = dossiers
+        self._usage = usage
 
     async def execute(self, user_id: UUID) -> int:
-        """Rend le nombre de dossiers effacés."""
+        """Rend le nombre de dossiers effacés ; le registre des quotas part aussi."""
         count = await self._dossiers.delete_by_user(user_id)
+        await self._usage.delete_by_user(user_id)
         logger.info("applications.user_forgotten", user_id=str(user_id), dossiers=count)
         return count
 

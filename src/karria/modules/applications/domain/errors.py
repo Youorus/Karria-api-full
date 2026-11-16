@@ -9,6 +9,7 @@ n'est inventé ici : la traduction reste dans `shared/errors`.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from karria.shared.errors.exceptions import (
     DomainError,
     ErrorCode,
     InvalidInputError,
+    RateLimitedError,
 )
 
 
@@ -182,6 +184,43 @@ class LetterInvalidError(InvalidInputError):
         super().__init__(
             "La lettre envoyée est invalide.",
             details={"reason": "letter_invalid", "fields": list(fields)},
+        )
+
+
+#: Ce que la personne lit, par action (`domain/quotas.py`).
+_QUOTA_WORDS = {
+    "dossier": "dossiers de candidature",
+    "letter": "lettres écrites par Karria",
+    "paragraph": "paragraphes réécrits",
+}
+
+
+class UsageQuotaExceededError(RateLimitedError):
+    """Le plafond mensuel d'une action d'IA est atteint (`domain/quotas.py`, ADR-0038).
+
+    `details.reason` vaut `dossier_quota_exceeded`, `letter_quota_exceeded`
+    ou `paragraph_quota_exceeded`.
+    """
+
+    def __init__(
+        self, *, usage: str, limit: int, subscriber: bool, resets_at: datetime, retry_after: int
+    ) -> None:
+        words = _QUOTA_WORDS.get(usage, usage)
+        message = (
+            f"Tu as atteint la limite d'usage raisonnable de {limit} {words} ce mois-ci."
+            if subscriber
+            else f"Tu as utilisé tes {limit} {words} du mois. "
+            "Avec Karria sans pub, tu n'as plus de limite."
+        )
+        super().__init__(
+            message,
+            retry_after=retry_after,
+            details={
+                "reason": f"{usage}_quota_exceeded",
+                "limit": limit,
+                "subscriber": subscriber,
+                "resets_at": resets_at.isoformat(),
+            },
         )
 
 

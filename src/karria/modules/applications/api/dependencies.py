@@ -19,6 +19,7 @@ from fastapi import Depends, Request
 
 from karria.modules.applications.application import (
     AdaptCv,
+    AiUsageRepository,
     BaseCv,
     BaseCvReader,
     ChangeDossierColor,
@@ -42,10 +43,12 @@ from karria.modules.applications.application import (
     OfferReader,
     RegenerateParagraph,
     RetryAdaptation,
+    SubscriptionReader,
     TemplateChecker,
     UnmarkApplied,
     UpdateDossierCv,
     UpdateLetter,
+    UsageGate,
 )
 from karria.modules.applications.domain import (
     AI_RATE_LIMIT,
@@ -57,6 +60,7 @@ from karria.modules.applications.infrastructure import (
     LlmCvAdapter,
     LlmLetterWriter,
     ProcrastinateDossierJobs,
+    TortoiseAiUsageRepository,
     TortoiseDossierRepository,
 )
 from karria.shared.auth import AiConsentedPrincipalDep, Principal
@@ -159,6 +163,25 @@ class UnwiredTemplateChecker:
         return False
 
 
+class NoSubscription:
+    """Le défaut : personne n'est abonné — les plafonds du gratuit s'appliquent."""
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Rend faux."""
+        _ = user_id
+        return False
+
+
+def get_ai_usage_repository() -> AiUsageRepository:
+    """Le registre des actions d'IA rendues (quotas, ADR-0038)."""
+    return TortoiseAiUsageRepository()
+
+
+def get_subscription_reader() -> SubscriptionReader:
+    """Le port « est abonné ». `bootstrap/wiring.py` le branche sur `payments`."""
+    return NoSubscription()
+
+
 def get_offer_reader() -> OfferReader:
     """Le port « la fiche de cette offre ». `bootstrap/wiring.py` le branche sur `offers`."""
     return UnwiredOfferReader()
@@ -209,6 +232,18 @@ LogoUrlDep = Annotated[LogoUrl | None, Depends(get_logo_url)]
 CvAdapterDep = Annotated[CvAdapter, Depends(get_cv_adapter)]
 LetterWriterDep = Annotated[LetterWriter, Depends(get_letter_writer)]
 DossierJobsDep = Annotated[DossierJobs, Depends(get_dossier_jobs)]
+AiUsageDep = Annotated[AiUsageRepository, Depends(get_ai_usage_repository)]
+SubscriptionsDep = Annotated[SubscriptionReader, Depends(get_subscription_reader)]
+
+
+def get_usage_gate(
+    usage: AiUsageDep, subscriptions: SubscriptionsDep, clock: ClockDep
+) -> UsageGate:
+    """Les quotas mensuels des actions d'IA (ADR-0038)."""
+    return UsageGate(usage, subscriptions, clock)
+
+
+UsageGateDep = Annotated[UsageGate, Depends(get_usage_gate)]
 
 
 # --- Cas d'usage : assemblés, jamais remplacés ----------------------------
@@ -235,6 +270,7 @@ def get_create_dossier(  # noqa: PLR0917 - FastAPI injecte par position
     templates: TemplateCheckerDep,
     adapt: AdaptCvDep,
     clock: ClockDep,
+    gate: UsageGateDep,
 ) -> CreateDossierFromOffer:
     """« Adapter mon CV à cette offre »."""
     return CreateDossierFromOffer(
@@ -244,6 +280,7 @@ def get_create_dossier(  # noqa: PLR0917 - FastAPI injecte par position
         templates=templates,
         adapt=adapt,
         clock=clock,
+        gate=gate,
     )
 
 
@@ -295,9 +332,9 @@ def get_change_letter_style(dossiers: DossiersDep, clock: ClockDep) -> ChangeDos
 
 
 def get_draft_letter(
-    dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep
+    dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep, gate: UsageGateDep
 ) -> DraftLetter:
-    return DraftLetter(dossiers, writer, clock)
+    return DraftLetter(dossiers, writer, clock, gate)
 
 
 def get_update_letter(dossiers: DossiersDep, clock: ClockDep) -> UpdateLetter:
@@ -305,9 +342,9 @@ def get_update_letter(dossiers: DossiersDep, clock: ClockDep) -> UpdateLetter:
 
 
 def get_regenerate_paragraph(
-    dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep
+    dossiers: DossiersDep, writer: LetterWriterDep, clock: ClockDep, gate: UsageGateDep
 ) -> RegenerateParagraph:
-    return RegenerateParagraph(dossiers, writer, clock)
+    return RegenerateParagraph(dossiers, writer, clock, gate)
 
 
 def get_mark_applied(dossiers: DossiersDep, events: EventBusDep, clock: ClockDep) -> MarkApplied:
@@ -364,4 +401,4 @@ def build_adapt_cv(settings: Settings, validator: Callable[[], CvValidator]) -> 
 
 def build_forget_user() -> ForgetUser:
     """L'oubli d'un compte supprimé, branché sur `AccountDeleted` par `bootstrap/wiring.py`."""
-    return ForgetUser(get_dossier_repository())
+    return ForgetUser(get_dossier_repository(), get_ai_usage_repository())

@@ -172,6 +172,15 @@ l'app, qui lit ensuite `window.karriaFit`.
 
 ## Module `cv`
 
+### Les quotas d'IA laissent passer une course (ADR-0038)
+
+Deux demandes simultanées à la dernière unité du mois passent toutes les deux
+(vérification puis écriture, sans verrou) : une action de trop au pire. Un
+verrou consultatif PostgreSQL par personne le fermerait si l'abus devient
+réel. Les valeurs (gratuit et garde-fou de l'abonné) ne sont pas mesurées : à
+revoir avec les premiers chiffres d'usage. L'app n'affiche un compteur que
+pour les portraits ; les autres quotas ne se voient qu'au refus.
+
 ### L'édition directe est servie par une seule route (fait le 2026-11-04)
 
 `PUT /cv/me/chapters/{chapter}` remplace une section d'un bloc ; les routes

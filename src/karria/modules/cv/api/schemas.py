@@ -33,6 +33,7 @@ from karria.modules.cv.domain import (
     Language,
     Project,
     Skill,
+    UsageQuota,
 )
 from karria.shared.storage import Bucket, ObjectStorage
 
@@ -248,6 +249,33 @@ class PhotoRead(BaseModel):
             image_id=photo.id,
             image_url=await storage.presigned_get_url(Bucket.MEDIA, photo.image_key),
             enhanced=photo.enhanced,
+        )
+
+
+class PortraitQuotaRead(BaseModel):
+    """Les portraits générés du mois : de quoi afficher « 2 portraits restants »."""
+
+    subscriber: bool = Field(
+        description=(
+            "Vrai avec « Karria sans pub » : pas de limite affichée ; `limit` est alors "
+            "le garde-fou de l'usage raisonnable."
+        )
+    )
+    limit: int = Field(description="Portraits générés possibles par mois civil.")
+    used: int = Field(description="Portraits déjà rendus ce mois-ci.")
+    remaining: int = Field(description="Ce qui reste ce mois-ci, jamais négatif.")
+    resets_at: datetime = Field(
+        description="Début du mois suivant (UTC) : le compteur repart à zéro."
+    )
+
+    @classmethod
+    def present(cls, quota: UsageQuota) -> PortraitQuotaRead:
+        return cls(
+            subscriber=quota.subscriber,
+            limit=quota.limit,
+            used=quota.used,
+            remaining=quota.remaining,
+            resets_at=quota.resets_at,
         )
 
 

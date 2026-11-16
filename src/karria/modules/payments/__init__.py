@@ -13,6 +13,9 @@ Ce fichier est la **seule** porte d'entrée du module (règle 3).
 - `UserNotifier`, `get_user_notifier` — le port « préviens cette personne sur
   son téléphone », branché sur `devices` (le merci d'un paiement, ADR-0024
   § 2026-11-05) ;
+- `GetBillingOverview`, `get_billing_overview` — « cette personne a-t-elle
+  Karria sans pub ? », que `bootstrap/wiring.py` sert aux quotas d'IA de
+  `cv`, `applications` et `offers` (ADR-0038) ;
 - `build_forget_user` — la réaction à la suppression d'un compte (ADR-0015) ;
 - `build_thank_for_purchase`, `get_purchase_repository`, `get_webhook_ledger`,
   `ThankYou` — ce que `scripts/payments_thanks.py` assemble pour rejouer un merci.
@@ -22,6 +25,7 @@ from karria.modules.payments.api.dependencies import (
     build_forget_user,
     build_thank_for_purchase,
     get_account_directory,
+    get_billing_overview,
     get_purchase_repository,
     get_template_store,
     get_user_notifier,
@@ -31,6 +35,7 @@ from karria.modules.payments.api.routers import router
 from karria.modules.payments.application import (
     AccountDirectory,
     ForgetUser,
+    GetBillingOverview,
     TemplateStore,
     ThankForPurchase,
     UserNotifier,
@@ -48,6 +53,7 @@ __all__ = [
     "MODULE",
     "AccountDirectory",
     "ForgetUser",
+    "GetBillingOverview",
     "PremiumOffer",
     "TemplateStore",
     "ThankForPurchase",
@@ -56,6 +62,7 @@ __all__ = [
     "build_forget_user",
     "build_thank_for_purchase",
     "get_account_directory",
+    "get_billing_overview",
     "get_purchase_repository",
     "get_template_store",
     "get_user_notifier",

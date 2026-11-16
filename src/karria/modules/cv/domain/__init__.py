@@ -28,6 +28,7 @@ from karria.modules.cv.domain.errors import (
     PhotoEnhanceUnavailableError,
     PhotoMissingError,
     UnsupportedUploadError,
+    UsageQuotaExceededError,
 )
 from karria.modules.cv.domain.normalization import (
     LanguageLevel,
@@ -39,6 +40,14 @@ from karria.modules.cv.domain.normalization import (
     normalize_year_month,
 )
 from karria.modules.cv.domain.photo import CvPhoto
+from karria.modules.cv.domain.quotas import (
+    MONTHLY_LIMITS,
+    MONTHLY_PORTRAIT_LIMIT,
+    SUBSCRIBER_MONTHLY_LIMITS,
+    AiUsage,
+    UsageQuota,
+    month_bounds,
+)
 from karria.modules.cv.domain.schemas import (
     CHAPTER_SCHEMAS,
     Contact,
@@ -106,11 +115,15 @@ __all__ = [
     "MAX_AUDIO_SECONDS",
     "MAX_DOCUMENT_BYTES",
     "MAX_DOCUMENT_PAGES",
+    "MONTHLY_LIMITS",
+    "MONTHLY_PORTRAIT_LIMIT",
     "QUERY_MAX_LENGTH",
     "REFERENCE_KINDS",
+    "SUBSCRIBER_MONTHLY_LIMITS",
     "SUGGESTION_LIMIT",
     "SUPPORTED_AUDIO_TYPES",
     "SUPPORTED_DOCUMENT_TYPES",
+    "AiUsage",
     "AudioInfo",
     "Chapter",
     "ChapterState",
@@ -150,6 +163,8 @@ __all__ = [
     "SuggestionKind",
     "Summary",
     "UnsupportedUploadError",
+    "UsageQuota",
+    "UsageQuotaExceededError",
     "VocabularyEntry",
     "check_audio",
     "check_audio_size",
@@ -164,6 +179,7 @@ __all__ = [
     "coerce_language_level",
     "coerce_skill_level",
     "fold",
+    "month_bounds",
     "normalize_query",
     "normalize_year_month",
     "parse_reference",

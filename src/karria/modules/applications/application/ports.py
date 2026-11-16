@@ -24,7 +24,13 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from karria.modules.applications.domain import AdaptationOutput, Dossier, Letter, OfferSnapshot
+from karria.modules.applications.domain import (
+    AdaptationOutput,
+    AiUsage,
+    Dossier,
+    Letter,
+    OfferSnapshot,
+)
 
 # ---------------------------------------------------------------------
 # Persistance
@@ -83,6 +89,36 @@ class DossierRepository(Protocol):
 # ---------------------------------------------------------------------
 # Les autres modules
 # ---------------------------------------------------------------------
+
+
+class AiUsageRepository(Protocol):
+    """Le registre des actions d'IA rendues (dossier, lettre, paragraphe), pour les quotas.
+
+    Distinct des dossiers : supprimer un dossier ne rend pas ce qu'il a coûté.
+    """
+
+    async def record(self, user_id: UUID, usage: AiUsage, at: datetime) -> None:
+        """Note une action rendue à cet instant."""
+        ...
+
+    async def count_since(self, user_id: UUID, usage: AiUsage, since: datetime) -> int:
+        """Les actions de ce type rendues à la personne depuis `since` (inclus)."""
+        ...
+
+    async def delete_by_user(self, user_id: UUID) -> None:
+        """Oublie le registre de la personne. Idempotent."""
+        ...
+
+
+class SubscriptionReader(Protocol):
+    """La personne a-t-elle « Karria sans pub » ? (module `payments`, ADR-0024).
+
+    Branché par `bootstrap/wiring.py`. Par défaut, personne n'est abonné.
+    """
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Vrai si l'abonnement est actif (grâce comprise)."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

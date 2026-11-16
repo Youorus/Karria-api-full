@@ -72,6 +72,20 @@ class CvPhotoModel(BaseDBModel):
         table = "cv_photos"
 
 
+class CvAiUsageModel(BaseDBModel):
+    """Une action d'IA rendue (portrait, import) — le registre des quotas mensuels.
+
+    Une ligne par action réussie, jamais modifiée ; effacée avec le compte
+    (`ForgetUser`). `created_at` est l'instant compté.
+    """
+
+    user_id: UUID = fields.UUIDField(db_index=True, description="Compte bénéficiaire.")
+    kind = fields.CharField(max_length=16, description="portrait ou import.")
+
+    class Meta:
+        table = "cv_ai_usages"
+
+
 class CvSuggestionModel(BaseDBModel):
     """Un libellé proposé à la saisie, matérialisé depuis l'index d'offres.
 

@@ -6,9 +6,11 @@ from uuid import uuid4
 
 import pytest
 
+from doubles import FakeSubscriptions
 from karria.modules.offers.application import ApplyCriteria, ConverseSearch, SearchOffers
 from karria.modules.offers.domain import (
     ASSISTANT_DAILY_LIMIT,
+    ASSISTANT_SUBSCRIBER_DAILY_LIMIT,
     IDENTITY_REPLY,
     SAFE_REPLY,
     AssistantRateLimitedError,
@@ -101,6 +103,28 @@ class TestGardeFous:
         with pytest.raises(AssistantRateLimitedError):
             await env.converse.execute(USER, conversation_id=None, content="serveur à Paris")
         assert env.dialogue.calls == []
+
+    async def test_le_plafond_du_gratuit_se_leve_avec_l_abonnement(self, env: Env) -> None:
+        subscriptions = FakeSubscriptions(USER)
+        env.converse._subscriptions = subscriptions
+        env.conversations.turns_today = ASSISTANT_DAILY_LIMIT
+
+        await env.converse.execute(USER, conversation_id=None, content="serveur à Paris")
+        assert subscriptions.calls == [USER]
+
+        env.conversations.turns_today = ASSISTANT_SUBSCRIBER_DAILY_LIMIT
+        with pytest.raises(AssistantRateLimitedError) as excinfo:
+            await env.converse.execute(USER, conversation_id=None, content="serveur à Paris")
+        assert excinfo.value.details["limit"] == 150
+        assert excinfo.value.details["subscriber"] is True
+
+    async def test_sous_le_plafond_l_abonnement_n_est_pas_lu(self, env: Env) -> None:
+        subscriptions = FakeSubscriptions()
+        env.converse._subscriptions = subscriptions
+
+        await env.converse.execute(USER, conversation_id=None, content="serveur à Paris")
+
+        assert subscriptions.calls == []
 
     async def test_une_conversation_d_autrui_est_introuvable(self, env: Env) -> None:
         foreign = await env.conversations.create(uuid4(), at=FixedClock().now())

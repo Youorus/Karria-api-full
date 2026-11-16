@@ -2,6 +2,7 @@
 
 from karria.modules.applications.application.events import DossierApplied, DossierUnapplied
 from karria.modules.applications.application.ports import (
+    AiUsageRepository,
     BaseCv,
     BaseCvReader,
     CvAdapter,
@@ -12,6 +13,7 @@ from karria.modules.applications.application.ports import (
     LogoUrl,
     OfferCard,
     OfferReader,
+    SubscriptionReader,
     TemplateChecker,
 )
 from karria.modules.applications.application.use_cases import (
@@ -35,6 +37,7 @@ from karria.modules.applications.application.use_cases import (
     UnmarkApplied,
     UpdateDossierCv,
     UpdateLetter,
+    UsageGate,
     excerpt_of,
     snapshot_of,
 )
@@ -42,6 +45,7 @@ from karria.modules.applications.application.use_cases import (
 __all__ = [
     "ADAPTATION_INLINE_SECONDS",
     "AdaptCv",
+    "AiUsageRepository",
     "BaseCv",
     "BaseCvReader",
     "ChangeDossierColor",
@@ -69,10 +73,12 @@ __all__ = [
     "OfferReader",
     "RegenerateParagraph",
     "RetryAdaptation",
+    "SubscriptionReader",
     "TemplateChecker",
     "UnmarkApplied",
     "UpdateDossierCv",
     "UpdateLetter",
+    "UsageGate",
     "excerpt_of",
     "snapshot_of",
 ]

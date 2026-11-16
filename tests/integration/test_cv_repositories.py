@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 
 from doubles import CV_NOW, complete_draft
 from karria.modules.cv.domain import (
+    AiUsage,
     Chapter,
     CurriculumVitae,
     CvPhoto,
@@ -15,6 +17,7 @@ from karria.modules.cv.domain import (
     VocabularyEntry,
 )
 from karria.modules.cv.infrastructure import (
+    TortoiseAiUsageRepository,
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
@@ -98,6 +101,28 @@ class TestPhotos:
 
 def entry(label: str, folded: str, weight: int) -> VocabularyEntry:
     return VocabularyEntry(label=label, folded=folded, weight=weight)
+
+
+class TestAiUsage:
+    async def test_compte_depuis_un_instant_par_personne_puis_oublie(self) -> None:
+        repository = TortoiseAiUsageRepository()
+        me, someone = uuid4(), uuid4()
+        await repository.record(me, AiUsage.PORTRAIT, CV_NOW - timedelta(days=40))
+        await repository.record(me, AiUsage.PORTRAIT, CV_NOW)
+        await repository.record(me, AiUsage.PORTRAIT, CV_NOW + timedelta(minutes=1))
+        await repository.record(me, AiUsage.IMPORT, CV_NOW)
+        await repository.record(someone, AiUsage.PORTRAIT, CV_NOW)
+
+        # L'instant passé est celui compté, pas l'heure de l'écriture.
+        assert await repository.count_since(me, AiUsage.PORTRAIT, CV_NOW) == 2
+        assert await repository.count_since(me, AiUsage.IMPORT, CV_NOW) == 1
+        assert await repository.count_since(me, AiUsage.PORTRAIT, CV_NOW - timedelta(days=41)) == 3
+
+        await repository.delete_by_user(me)
+        await repository.delete_by_user(me)  # idempotent
+
+        assert await repository.count_since(me, AiUsage.PORTRAIT, CV_NOW - timedelta(days=41)) == 0
+        assert await repository.count_since(someone, AiUsage.PORTRAIT, CV_NOW) == 1
 
 
 class TestSuggestions:

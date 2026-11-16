@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from karria.modules.cv.application.events import CvFinalized
 from karria.modules.cv.application.ports import (
+    AiUsageRepository,
     AudioTranscriber,
     ChapterInterpreter,
     CvDocumentExtractor,
@@ -30,6 +31,7 @@ from karria.modules.cv.application.ports import (
     OfferVocabulary,
     PhotoRepository,
     PortraitEnhancer,
+    SubscriptionReader,
     SuggestionIndex,
     UploadInspector,
 )
@@ -40,6 +42,7 @@ from karria.modules.cv.domain import (
     MAX_DOCUMENT_PAGES,
     REFERENCE_KINDS,
     SUGGESTION_LIMIT,
+    AiUsage,
     Chapter,
     ChapterSubmission,
     ChapterSubmissionError,
@@ -55,12 +58,14 @@ from karria.modules.cv.domain import (
     ReceivedFile,
     SuggestionKind,
     UnsupportedUploadError,
+    UsageQuota,
     check_audio,
     check_audio_size,
     check_audio_type,
     check_document,
     check_documents,
     clean_vocabulary,
+    month_bounds,
     normalize_query,
     plain_content_type,
     suggest_from_reference,
@@ -368,8 +373,41 @@ class TranscribeVoice:
         return " ".join(text.split())
 
 
+class GetUsageQuota:
+    """Où en est la personne d'une action d'IA ce mois-ci (`domain/quotas.py`).
+
+    L'abonnement « sans pub » lève les plafonds du gratuit ; il reste le
+    garde-fou de l'usage raisonnable.
+    """
+
+    def __init__(
+        self, usage: AiUsageRepository, subscriptions: SubscriptionReader, clock: Clock
+    ) -> None:
+        self._usage = usage
+        self._subscriptions = subscriptions
+        self._clock = clock
+
+    async def execute(self, user_id: UUID, usage: AiUsage) -> UsageQuota:
+        """Le plafond qui s'applique, ce qui est consommé, et quand le compteur repart."""
+        now = self._clock.now()
+        start, _ = month_bounds(now)
+        return UsageQuota.of(
+            usage,
+            used=await self._usage.count_since(user_id, usage, start),
+            subscriber=await self._subscriptions.is_subscriber(user_id),
+            now=now,
+        )
+
+
 class UploadPhoto:
-    """Range une photo dans le bucket — améliorée d'abord si on le demande."""
+    """Range une photo dans le bucket — améliorée d'abord si on le demande.
+
+    L'amélioration est soumise au quota mensuel de portraits : vérifié
+    **avant** l'appel au générateur (un portrait refusé ne coûte rien), noté
+    **après** son succès (un refus ou une panne ne consomment rien). Deux
+    demandes simultanées au dernier portrait du mois peuvent passer toutes
+    les deux : un portrait de trop, assumé plutôt qu'un verrou.
+    """
 
     def __init__(
         self,
@@ -377,11 +415,16 @@ class UploadPhoto:
         storage: ObjectStorage,
         photos: PhotoRepository,
         clock: Clock,
+        *,
+        usage: AiUsageRepository,
+        subscriptions: SubscriptionReader,
     ) -> None:
         self._enhancer = enhancer
         self._storage = storage
         self._photos = photos
         self._clock = clock
+        self._usage = usage
+        self._quota = GetUsageQuota(usage, subscriptions, clock)
 
     async def execute(
         self, user_id: UUID, image: bytes, declared_content_type: str | None, *, enhance: bool
@@ -392,11 +435,17 @@ class UploadPhoto:
         l'entrée, pour ne pas envoyer au générateur 12 mégapixels et des
         coordonnées GPS ; à la sortie, parce que ce que rend le générateur
         n'échappe pas à la politique du bucket (ADR-0009).
+
+        Raises:
+            UsageQuotaExceededError: `enhance` demandé, quota du mois atteint.
         """
         prepared = prepare_upload(Bucket.MEDIA, image, declared_content_type or "")
         if enhance:
+            quota = await self._quota.execute(user_id, AiUsage.PORTRAIT)
+            quota.ensure_available(self._clock.now())
             generated = await self._enhancer.enhance(prepared.payload, prepared.content_type)
             prepared = prepare_upload(Bucket.MEDIA, generated.payload, generated.content_type)
+            await self._usage.record(user_id, AiUsage.PORTRAIT, self._clock.now())
 
         now = self._clock.now()
         key = build_key("users", str(user_id), "cv-photo", extension=prepared.extension, at=now)
@@ -440,6 +489,7 @@ class EnhanceCurrentPhoto:
         Raises:
             CvNotFoundError: La personne n'a pas de CV.
             PhotoMissingError: Le CV n'a pas de photo.
+            UsageQuotaExceededError: Les portraits du mois sont épuisés.
             PhotoEnhanceRefusedError: Le générateur refuse cette image.
             PhotoEnhanceUnavailableError: Panne, ou rien d'exploitable rendu.
         """
@@ -510,6 +560,8 @@ class ImportCv:
         unit_of_work: UnitOfWork,
         events: EventBus,
         clock: Clock,
+        usage: AiUsageRepository,
+        subscriptions: SubscriptionReader,
     ) -> None:
         self._extractor = extractor
         self._inspector = inspector
@@ -518,6 +570,8 @@ class ImportCv:
         self._uow = unit_of_work
         self._events = events
         self._clock = clock
+        self._usage = usage
+        self._quota = GetUsageQuota(usage, subscriptions, clock)
 
     async def execute(self, user_id: UUID, files: Sequence[ReceivedFile]) -> ImportResult:
         received = [
@@ -538,7 +592,13 @@ class ImportCv:
                 field="file",
             )
 
+        # Le quota se vérifie après les contrôles gratuits du fichier, avant le
+        # modèle ; l'import se compte dès que le modèle a lu, qu'il en sorte un
+        # CV ou non : la lecture est payée.
+        quota = await self._quota.execute(user_id, AiUsage.IMPORT)
+        quota.ensure_available(self._clock.now())
         extracted = await self._extractor.extract(documents)
+        await self._usage.record(user_id, AiUsage.IMPORT, self._clock.now())
 
         now = self._clock.now()
         existing = await self._cvs.find_by_user(user_id)
@@ -736,17 +796,19 @@ class ForgetUser:
         drafts: DraftRepository,
         cvs: CvRepository,
         photos: PhotoRepository,
+        ai_usage: AiUsageRepository,
         storage: ObjectStorage,
         unit_of_work: UnitOfWork,
     ) -> None:
         self._drafts = drafts
         self._cvs = cvs
         self._photos = photos
+        self._ai_usage = ai_usage
         self._storage = storage
         self._uow = unit_of_work
 
     async def execute(self, user_id: UUID) -> ForgetOutcome:
-        """Efface brouillon, CV, photos et objets de la personne."""
+        """Efface brouillon, CV, photos, registre des portraits et objets de la personne."""
         draft = await self._drafts.find_by_user(user_id)
         cv = await self._cvs.find_by_user(user_id)
         photos = await self._photos.list_by_user(user_id)
@@ -763,6 +825,7 @@ class ForgetUser:
                 await self._drafts.delete(draft.id)
             if photo_ids:
                 await self._photos.delete(photo_ids)
+            await self._ai_usage.delete_by_user(user_id)
             if forget_cv:
                 await self._cvs.delete_by_user(user_id)
 

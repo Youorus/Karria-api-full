@@ -58,6 +58,7 @@ from karria.modules.offers.application import (
     SearchDialogue,
     SearchOffers,
     SetAlertsEnabled,
+    SubscriptionReader,
     SuggestWidenings,
     SyncIndex,
     TextEmbedder,
@@ -335,6 +336,23 @@ def get_memory_repository() -> KarriaMemoryRepository:
 MemoryRepositoryDep = Annotated[KarriaMemoryRepository, Depends(get_memory_repository)]
 
 
+class NoSubscription:
+    """Le défaut : personne n'est abonné — le plafond du gratuit s'applique."""
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        """Rend faux."""
+        _ = user_id
+        return False
+
+
+def get_subscription_reader() -> SubscriptionReader:
+    """Le port « est abonné ». `bootstrap/wiring.py` le branche sur `payments`."""
+    return NoSubscription()
+
+
+SubscriptionReaderDep = Annotated[SubscriptionReader, Depends(get_subscription_reader)]
+
+
 def get_converse_search(  # noqa: PLR0917 - FastAPI injecte par position
     conversations: ConversationRepositoryDep,
     criteria: CriteriaRepositoryDep,
@@ -344,6 +362,7 @@ def get_converse_search(  # noqa: PLR0917 - FastAPI injecte par position
     queue: JobQueueDep,
     clock: ClockDep,
     search: SearchOffersDep,
+    subscriptions: SubscriptionReaderDep,
 ) -> ConverseSearch:
     """Un tour de conversation, sous la constitution courante."""
     return ConverseSearch(
@@ -356,6 +375,7 @@ def get_converse_search(  # noqa: PLR0917 - FastAPI injecte par position
         queue=queue,
         clock=clock,
         constitution_version=CONSTITUTION_VERSION,
+        subscriptions=subscriptions,
     )
 
 

@@ -76,11 +76,18 @@ class NearestSortUnavailableError(InvalidInputError):
 class AssistantRateLimitedError(RateLimitedError):
     """Trop de tours de conversation sur la journée."""
 
-    def __init__(self, *, retry_after: int) -> None:
+    def __init__(self, *, retry_after: int, limit: int, subscriber: bool) -> None:
+        message = (
+            f"Tu as atteint la limite d'usage raisonnable de {limit} messages sur 24 heures. "
+            "Réessaie un peu plus tard."
+            if subscriber
+            else f"Tu as envoyé {limit} messages à Karria en 24 heures. Réessaie un peu plus "
+            "tard, ou passe à Karria sans pub pour ne plus avoir de limite."
+        )
         super().__init__(
-            "Karria a beaucoup discuté aujourd'hui ; réessayez un peu plus tard.",
+            message,
             retry_after=retry_after,
-            details={"reason": "assistant_rate_limited"},
+            details={"reason": "assistant_rate_limited", "limit": limit, "subscriber": subscriber},
         )
 
 

@@ -13,6 +13,7 @@ from karria.modules.cv.infrastructure.interpreter import (
     interpretation_schema,
 )
 from karria.modules.cv.infrastructure.repositories import (
+    TortoiseAiUsageRepository,
     TortoiseCvRepository,
     TortoiseDraftRepository,
     TortoisePhotoRepository,
@@ -27,6 +28,7 @@ __all__ = [
     "LlmCvExtractor",
     "LlmPortraitEnhancer",
     "LlmTranscriber",
+    "TortoiseAiUsageRepository",
     "TortoiseCvRepository",
     "TortoiseDraftRepository",
     "TortoisePhotoRepository",

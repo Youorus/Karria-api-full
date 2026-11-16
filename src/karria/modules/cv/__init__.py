@@ -21,6 +21,10 @@ comptes (ADR-0015). Aucun autre module ne les appelle.
 `bootstrap/worker.py` inscrit le travail nocturne en lui passant le
 vocabulaire de l'index d'offres ; `scripts/suggestions.py` le lance à la
 demande. `SuggestionKind` nomme ce qu'on complète.
+
+`get_subscription_reader` est le port « cette personne a-t-elle Karria
+sans pub ? » des quotas d'IA (ADR-0038), branché sur `payments` par
+`bootstrap/wiring.py` ; par défaut, personne n'est abonné.
 """
 
 from karria.modules.cv.api import router
@@ -28,6 +32,7 @@ from karria.modules.cv.api.dependencies import (
     build_forget_user,
     build_refresh_suggestions,
     get_get_my_cv,
+    get_subscription_reader,
 )
 from karria.modules.cv.api.tasks import register_tasks, run_refresh
 from karria.modules.cv.application import (
@@ -96,6 +101,7 @@ __all__ = [
     "build_forget_user",
     "build_refresh_suggestions",
     "get_get_my_cv",
+    "get_subscription_reader",
     "register_tasks",
     "run_refresh",
 ]

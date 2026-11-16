@@ -46,6 +46,13 @@
 
 ## Les choix qu'on ne devine pas en lisant le code
 
+- **Le chat a un plafond sur 24 heures glissantes** (ADR-0038) : 40 messages
+  sans abonnement, 150 avec « Karria sans pub » (`ASSISTANT_DAILY_LIMIT`,
+  `ASSISTANT_SUBSCRIBER_DAILY_LIMIT` ; 120 pour tous avant le 2026-11-16).
+  L'abonnement (port `SubscriptionReader`, branché sur `payments`) n'est lu
+  qu'au plafond du gratuit. `429 assistant_rate_limited` porte `limit` et
+  `subscriber`.
+
 - **Une conversation ne cherche jamais en direct** sur une source externe :
   elle lit l'index, et au plus rend une cible de collecte due (ADR-0017 § 6).
 - **Une information absente n'élimine pas**, sauf trois cas où une annonce
