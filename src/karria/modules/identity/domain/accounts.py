@@ -24,6 +24,15 @@ Apple ne transmet l'adresse qu'à la **première** connexion ; ensuite, seul
 le `sub` arrive. Et une adresse change de mains — un relais Apple se
 désactive, un domaine se perd. Le `sub`, lui, est stable et signé : c'est
 par lui qu'on reconnaît une personne qui revient.
+
+D'où vient le compte, sans le demander
+--------------------------------------
+Le compte retient, **une fois**, le réglage « Région » du téléphone (code
+ISO 3166-1 alpha-2) et son fuseau horaire, tels que l'app les annonce à
+l'inscription (ADR-0042). C'est une statistique d'origine, pas une
+adresse : elle ne décide d'aucun droit, ne se corrige pas, et n'est jamais
+déduite d'une adresse IP. Une valeur hors forme est **ignorée**, jamais
+refusée — elle ne doit pas coûter une connexion.
 """
 
 from __future__ import annotations
@@ -45,6 +54,81 @@ EMAIL_MAX_LENGTH: Final = 254
 #: une expression plus savante refuserait des adresses légitimes sans
 #: jamais en garantir une seule.
 _EMAIL_PATTERN: Final = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+#: Un code de région : deux lettres majuscules, rien d'autre. `419`
+#: (« Amérique latine », que certaines langues portent) n'est pas un pays.
+SIGNUP_REGION_LENGTH: Final = 2
+_REGION_PATTERN: Final = re.compile(r"[A-Z]{2}")
+#: `ZZ` est le « région inconnue » d'Unicode : le garder compterait un pays.
+_UNKNOWN_REGION: Final = "ZZ"
+
+#: Un nom de fuseau IANA : `Europe/Brussels`, `America/Argentina/Buenos_Aires`,
+#: `UTC`, `Etc/GMT+1`. Le plus long nom publié fait 32 caractères.
+SIGNUP_TIMEZONE_MAX_LENGTH: Final = 64
+_TIMEZONE_PATTERN: Final = re.compile(r"[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+){0,2}")
+
+
+def parse_signup_region(raw: object) -> str | None:
+    """Le code de région s'il a exactement la forme attendue, sinon `None`.
+
+    Strict et sans réparation : ni mise en majuscules, ni blancs ôtés
+    (`fullmatch` : un saut de ligne final ne passe pas non plus). L'app
+    envoie la forme exacte ; tout le reste est une valeur qu'on ne comprend
+    pas, et une statistique fausse vaut moins qu'une statistique absente.
+    """
+    if not isinstance(raw, str) or not _REGION_PATTERN.fullmatch(raw) or raw == _UNKNOWN_REGION:
+        return None
+    return raw
+
+
+def parse_signup_timezone(raw: object) -> str | None:
+    """Le nom de fuseau s'il est borné et de forme IANA, sinon `None`."""
+    if (
+        not isinstance(raw, str)
+        or len(raw) > SIGNUP_TIMEZONE_MAX_LENGTH
+        or not _TIMEZONE_PATTERN.fullmatch(raw)
+    ):
+        return None
+    return raw
+
+
+@dataclass(frozen=True, slots=True)
+class SignupOrigin:
+    """D'où vient un compte, d'après l'appareil : région et fuseau, ou rien.
+
+    Les deux valeurs sont indépendantes — l'une peut manquer sans l'autre —
+    et chacune ne s'écrit qu'**une fois** : `completed_by` ne remplace
+    jamais une valeur déjà connue.
+    """
+
+    region: str | None = None
+    timezone: str | None = None
+
+    @classmethod
+    def parse(cls, *, region: object, timezone: object) -> SignupOrigin:
+        """Lit ce que l'app annonce ; ce qui sort du cadre devient `None`."""
+        return cls(region=parse_signup_region(region), timezone=parse_signup_timezone(timezone))
+
+    @property
+    def is_empty(self) -> bool:
+        """Rien n'est connu."""
+        return self.region is None and self.timezone is None
+
+    @property
+    def is_complete(self) -> bool:
+        """Tout est connu : plus rien ne s'y ajoutera."""
+        return self.region is not None and self.timezone is not None
+
+    def completed_by(self, other: SignupOrigin) -> SignupOrigin:
+        """Complète ce qui manque avec `other`, sans jamais écraser."""
+        return SignupOrigin(
+            region=self.region if self.region is not None else other.region,
+            timezone=self.timezone if self.timezone is not None else other.timezone,
+        )
+
+
+#: L'origine d'un compte dont on ne sait rien.
+UNKNOWN_ORIGIN: Final = SignupOrigin()
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +207,8 @@ class User:
             condition du rattachement d'une identité sociale.
         last_login_at: Dernière ouverture de session. Sert au support et à
             un futur nettoyage des comptes dormants, jamais à une règle.
+        signup_origin: Région et fuseau du téléphone à l'inscription, écrits
+            une seule fois (ADR-0042). Statistique, jamais une règle.
     """
 
     id: UUID
@@ -132,6 +218,7 @@ class User:
     created_at: datetime
     updated_at: datetime
     last_login_at: datetime | None = None
+    signup_origin: SignupOrigin = UNKNOWN_ORIGIN
 
     def signed_in(self, *, at: datetime) -> User:
         """Note une connexion."""
@@ -147,6 +234,13 @@ class User:
         if renewed is self.consent:
             return self
         return replace(self, consent=renewed, updated_at=at)
+
+    def with_signup_origin(self, origin: SignupOrigin) -> User:
+        """Complète l'origine du compte, sans jamais écraser ce qui est connu."""
+        completed = self.signup_origin.completed_by(origin)
+        if completed == self.signup_origin:
+            return self
+        return replace(self, signup_origin=completed)
 
 
 class SocialProvider(StrEnum):

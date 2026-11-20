@@ -2,7 +2,11 @@
 
 **$email** vient de créer son compte sur Karria, le $signed_up_at.
 
+- Pays, d'après la région du téléphone : **$country**
+- Fuseau horaire : **$timezone**
 - Comptes au total : **$total**
 - Inscrits depuis 24 heures : **$last_day**
 
 ~ Au-delà de $hourly_cap inscriptions dans l'heure, ces alertes s'arrêtent jusqu'à l'heure suivante, pour ne pas gêner l'envoi des codes de connexion : le compteur ci-dessus rattrape alors ce qui n'a pas été annoncé.
+
+~ Le pays est le réglage « Région » du téléphone, annoncé par l'application : ce n'est ni une géolocalisation ni une adresse IP. « pays inconnu » : l'application installée est d'une version qui ne l'annonce pas encore à l'inscription ; la région sera notée sur le compte à la déclaration de l'appareil, sans nouvelle alerte.

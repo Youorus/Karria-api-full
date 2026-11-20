@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from tortoise import connections
 from tortoise.expressions import F, Q
 
 from karria.modules.identity.domain import (
@@ -31,6 +32,7 @@ from karria.modules.identity.domain import (
     Session,
     SessionEndReason,
     SessionNotFoundError,
+    SignupOrigin,
     SocialProvider,
     User,
 )
@@ -62,6 +64,7 @@ def _to_user(row: UserModel) -> User:
         created_at=row.created_at,
         updated_at=row.updated_at,
         last_login_at=row.last_login_at,
+        signup_origin=SignupOrigin(region=row.signup_region, timezone=row.signup_timezone),
     )
 
 
@@ -97,12 +100,52 @@ class TortoiseUserRepository:
         return None if row is None else _to_user(row)
 
     async def add(self, user: User) -> None:
-        """Crée un compte."""
-        await UserModel.create(id=user.id, **_user_columns(user))
+        """Crée un compte, avec son origine si elle est connue."""
+        await UserModel.create(
+            id=user.id,
+            **_user_columns(user),
+            signup_region=user.signup_origin.region,
+            signup_timezone=user.signup_origin.timezone,
+        )
 
     async def save(self, user: User) -> None:
-        """Écrit l'état complet d'un compte."""
+        """Écrit l'état d'un compte — **sauf** son origine, qui ne s'écrit qu'une fois.
+
+        `_user_columns` ne porte pas `signup_region` / `signup_timezone` : une
+        connexion qui a lu le compte avant qu'un appareil ne renseigne
+        l'origine ne peut donc pas la remettre à NULL en l'enregistrant.
+        """
         await UserModel.filter(id=user.id).update(**_user_columns(user))
+
+    async def fill_signup_origin(self, user_id: UUID, origin: SignupOrigin) -> None:
+        """Écrit région et fuseau **là où la colonne est encore vide**.
+
+        La condition est dans la requête (`… AND signup_region IS NULL`), pas
+        dans une lecture préalable : deux écritures simultanées ne s'écrasent
+        pas, la première gagne.
+        """
+        if origin.region is not None:
+            await UserModel.filter(id=user_id, signup_region__isnull=True).update(
+                signup_region=origin.region
+            )
+        if origin.timezone is not None:
+            await UserModel.filter(id=user_id, signup_timezone__isnull=True).update(
+                signup_timezone=origin.timezone
+            )
+
+    async def signups_by_month(self) -> list[tuple[str, str | None, int]]:
+        """Inscrits par mois (UTC, `AAAA-MM`) et par région (lecture d'exploitation, hors port)."""
+        rows = await connections.get("default").execute_query_dict(
+            """
+            SELECT to_char(date_trunc('month', "created_at" AT TIME ZONE 'UTC'), 'YYYY-MM') AS month,
+                   "signup_region" AS region,
+                   COUNT(*) AS total
+            FROM "identity_users"
+            GROUP BY 1, 2
+            ORDER BY 1, 3 DESC, 2
+            """
+        )
+        return [(str(r["month"]), r["region"], int(r["total"])) for r in rows]
 
     async def delete(self, user_id: UUID) -> bool:
         """Efface physiquement le compte ; `False` s'il n'existait plus.

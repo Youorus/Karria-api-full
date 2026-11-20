@@ -16,6 +16,7 @@ Un test substitue n'importe lequel par `app.dependency_overrides`.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Final
@@ -40,6 +41,7 @@ from karria.modules.identity.application import (
     Logout,
     MainDeviceLookup,
     ProviderIdentityRepository,
+    RecordSignupOrigin,
     RefreshSession,
     ReplayForgets,
     ResendEmailLoginCode,
@@ -79,6 +81,7 @@ from karria.modules.identity.infrastructure import (
 from karria.shared.auth import Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import get_settings
+from karria.shared.database import TortoiseUnitOfWork
 from karria.shared.http import SlidingWindowLimiter, client_ip
 from karria.shared.http.dependencies import EventBusDep, SettingsDep, UnitOfWorkDep
 from karria.shared.i18n import Language, from_accept_language
@@ -520,15 +523,38 @@ RevokeAiConsentDep = Annotated[RevokeAiConsent, Depends(get_revoke_ai_consent)]
 EnsureAiConsentDep = Annotated[EnsureAiConsent, Depends(get_ensure_ai_consent)]
 
 
-class TortoiseSignupDirectory:
-    """Ce que l'alerte d'inscription lit des comptes (`bootstrap/wiring.SignupAlerts`)."""
+@dataclass(frozen=True, slots=True)
+class SignupAccount:
+    """Ce que l'alerte d'inscription dit d'un compte qui vient de naître."""
 
-    async def account(self, user_id: UUID) -> tuple[str | None, datetime]:
-        """L'adresse et la date de création du compte."""
+    email: str | None
+    created_at: datetime
+    #: Région du téléphone (ISO 3166-1 alpha-2), ou `None` si l'app ne l'a pas annoncée.
+    region: str | None = None
+    #: Fuseau horaire du téléphone (nom IANA), ou `None`.
+    timezone: str | None = None
+
+
+class TortoiseSignupDirectory:
+    """Ce que le suivi d'exploitation lit des comptes : l'alerte d'inscription
+    (`bootstrap/wiring.SignupAlerts`) et la répartition par pays (`scripts/signups.py`).
+    Lecture seule."""
+
+    async def account(self, user_id: UUID) -> SignupAccount:
+        """L'adresse, la date de création et l'origine du compte."""
         user = await TortoiseUserRepository().find_by_id(user_id)
         if user is None:
             raise UserNotFoundError
-        return user.email.value, user.created_at
+        return SignupAccount(
+            email=user.email.value,
+            created_at=user.created_at,
+            region=user.signup_origin.region,
+            timezone=user.signup_origin.timezone,
+        )
+
+    async def signups_by_month(self) -> list[tuple[str, str | None, int]]:
+        """`(mois « AAAA-MM » en UTC, région ou None, inscrits)`, du plus ancien au plus récent."""
+        return await TortoiseUserRepository().signups_by_month()
 
     async def counts(self) -> tuple[int, int]:
         """Comptes au total, et créés depuis vingt-quatre heures."""
@@ -538,6 +564,12 @@ class TortoiseSignupDirectory:
 def get_signup_directory() -> TortoiseSignupDirectory:
     """Le lecteur de comptes de l'alerte d'inscription, hors requête."""
     return TortoiseSignupDirectory()
+
+
+def build_record_signup_origin() -> RecordSignupOrigin:
+    """Le repli de l'origine du compte, hors requête : `bootstrap/wiring.py` l'abonne
+    aux appareils déclarés (ADR-0042)."""
+    return RecordSignupOrigin(users=TortoiseUserRepository(), uow=TortoiseUnitOfWork())
 
 
 __all__ = [
@@ -567,11 +599,13 @@ __all__ = [
     "ResolveSessionDep",
     "RevokeAiConsentDep",
     "SessionRepositoryDep",
+    "SignupAccount",
     "StartEmailLoginDep",
     "ThrottleDep",
     "TokenFactoryDep",
     "UserRepositoryDep",
     "VerifyEmailLoginCodeDep",
+    "build_record_signup_origin",
     "get_accept_ai_consent",
     "get_ai_consent_repository",
     "get_ai_consent_status",

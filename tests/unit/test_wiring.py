@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,6 +14,7 @@ from doubles import (
     CollectingBus,
     FakeClock,
     FakePushGateway,
+    IdentityEnv,
     InMemoryDeviceRepository,
     InMemoryPushTicketRepository,
     sample_device_info,
@@ -25,6 +27,7 @@ from karria.bootstrap.wiring import (
     DocumentsTemplateStore,
     IdentityAccountDirectory,
     IdentityTokenResolver,
+    SignupAlerts,
     account_directory_from_identity,
     ai_consent_gate_from_identity,
     build_user_notifier,
@@ -37,17 +40,27 @@ from karria.bootstrap.wiring import (
     user_notifier_from_devices,
 )
 from karria.modules.applications import DossierApplied, DossierUnapplied
+from karria.modules.devices import DeviceDeclared
 from karria.modules.devices.application import GetMainDevice, RegisterDevice, SendPushToUser
 from karria.modules.documents import PremiumTemplate, TemplateShop
 from karria.modules.identity import (
     AccountDeleted,
     GetCurrentUser,
     MainDeviceSnapshot,
+    RecordSignupOrigin,
     ResolveSession,
+    SignupAccount,
     UserNotFoundError,
+    UserRegistered,
     get_main_device_lookup,
 )
-from karria.modules.identity.domain import EmailAddress
+from karria.modules.identity.domain import (
+    UNKNOWN_ORIGIN,
+    Consent,
+    EmailAddress,
+    SignupOrigin,
+    User,
+)
 from karria.modules.offers import get_user_notifier
 from karria.modules.payments import (
     PremiumOffer,
@@ -61,6 +74,7 @@ from karria.modules.support import get_user_notifier as get_support_user_notifie
 from karria.shared.auth import get_ai_consent_gate, get_token_resolver, resolve_principal
 from karria.shared.config import AppSettings, Environment, Settings, StorageSettings
 from karria.shared.database import NullUnitOfWork
+from karria.shared.mail import OutgoingMail
 from karria.shared.push import PushKind, PushMessage
 from karria.shared.storage import InMemoryObjectStorage
 
@@ -111,7 +125,84 @@ def test_les_ponts_abonnent_sept_modules_a_la_suppression_de_compte() -> None:
         AccountDeleted.__name__: 7,
         DossierApplied.__name__: 1,
         DossierUnapplied.__name__: 1,
+        DeviceDeclared.__name__: 1,
     }
+
+
+async def test_le_pont_reprend_la_region_de_l_appareil_sur_le_compte(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-0042, le repli : `devices.DeviceDeclared` → `identity.RecordSignupOrigin`.
+
+    Un compte né d'une version de l'app qui n'annonce rien à la connexion
+    reçoit sa région quand l'appareil est déclaré ; une région déjà connue
+    n'est pas remplacée ; aucun courriel ne part de ce chemin.
+    """
+    env = IdentityEnv.build()
+    known = _account(
+        env, "connue@exemple.fr", SignupOrigin(region="BE", timezone="Europe/Brussels")
+    )
+    unknown = _account(env, "inconnue@exemple.fr", UNKNOWN_ORIGIN)
+    monkeypatch.setattr(
+        wiring,
+        "build_record_signup_origin",
+        lambda: RecordSignupOrigin(users=env.users, uow=env.uow),
+    )
+    bus = CollectingBus()
+    mailer = RecordingMailer()
+    subscribe_bridges(bus, storage=InMemoryObjectStorage(StorageSettings()))
+    bus.subscribe(
+        UserRegistered,
+        SignupAlerts(
+            users=_NoDirectory(), mailer=mailer, recipient="equipe@exemple.fr"
+        ).on_registered,
+    )
+    register = RegisterDevice(
+        devices=InMemoryDeviceRepository(), clock=FakeClock(), uow=NullUnitOfWork(), events=bus
+    )
+
+    for user in (known, unknown):
+        await register.execute(
+            user_id=user,
+            installation_id="i",
+            info=replace(sample_device_info(), region="CA", timezone="America/Toronto"),
+            country=None,
+        )
+
+    assert env.users.rows[unknown].signup_origin == SignupOrigin("CA", "America/Toronto")
+    assert env.users.rows[known].signup_origin == SignupOrigin("BE", "Europe/Brussels")
+    assert mailer.sent == []  # la région connue après coup ne déclenche aucun second courriel
+
+
+class RecordingMailer:
+    def __init__(self) -> None:
+        self.sent: list[OutgoingMail] = []
+
+    async def send(self, mail: OutgoingMail) -> None:
+        self.sent.append(mail)
+
+
+class _NoDirectory:
+    async def account(self, user_id: UUID) -> SignupAccount:
+        raise AssertionError("l'alerte ne doit pas être sollicitée par le repli")
+
+    async def counts(self) -> tuple[int, int]:
+        raise AssertionError("l'alerte ne doit pas être sollicitée par le repli")
+
+
+def _account(env: IdentityEnv, email: str, origin: SignupOrigin) -> UUID:
+    now = env.clock.now()
+    user = User(
+        id=uuid4(),
+        email=EmailAddress(email),
+        email_verified_at=now,
+        consent=Consent("2026-10", "2026-10", now),
+        created_at=now,
+        updated_at=now,
+        signup_origin=origin,
+    )
+    env.users.rows[user.id] = user
+    return user.id
 
 
 class TestUserNotifier:

@@ -71,6 +71,8 @@ CONTEXTE: Final[dict[str, Any]] = {
     "total": 37,
     "last_day": 4,
     "hourly_cap": 20,
+    "country": "Belgique",
+    "timezone": "Europe/Brussels",
     # Ce que `documents` passe pour transmettre des pièces jointes (ADR-0031).
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf\n- Lettre de motivation - Acme.pdf",
@@ -270,7 +272,7 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.WELCOME: "Bienvenue sur Karria, Awa",
     MailMessage.SMTP_TEST: "Test SMTP Karria",
     MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
-    MailMessage.SIGNUP_ALERT: "Karria — nouvelle inscription de awa@exemple.fr",
+    MailMessage.SIGNUP_ALERT: "Karria — nouvelle inscription de awa@exemple.fr — Belgique",
     MailMessage.DOCUMENTS_SENT: "Des documents envoyés depuis Karria",
     MailMessage.PURCHASE_COFFEE: "Merci pour le café",
     MailMessage.PURCHASE_TEMPLATE: "Votre modèle de CV est à vous",

@@ -213,8 +213,8 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
         # L'adresse dans l'objet : la liste des messages suffit à suivre les
         # inscriptions, sans en ouvrir aucun.
         subject={
-            Language.FR: "Karria — nouvelle inscription de $email",
-            Language.EN: "Karria — new sign-up from $email",
+            Language.FR: "Karria — nouvelle inscription de $email — $country",
+            Language.EN: "Karria — new sign-up from $email — $country",
         },
         template="signup_alert",
         category=MailCategory.ACTION,

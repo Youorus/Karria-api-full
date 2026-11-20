@@ -27,6 +27,8 @@ CONTEXTE = {
     "total": 37,
     "last_day": 4,
     "hourly_cap": 20,
+    "country": "Belgique",
+    "timezone": "Europe/Brussels",
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf",
     "count": 1,

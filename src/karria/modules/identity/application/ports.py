@@ -25,6 +25,7 @@ from karria.modules.identity.domain import (
     ProviderIdentity,
     Session,
     SessionEndReason,
+    SignupOrigin,
     SocialProvider,
     User,
     VerifiedSocialProfile,
@@ -52,11 +53,24 @@ class UserRepository(Protocol):
         ...
 
     async def add(self, user: User) -> None:
-        """Crée un compte."""
+        """Crée un compte, avec son origine (`signup_origin`) si elle est connue."""
         ...
 
     async def save(self, user: User) -> None:
-        """Écrit l'état complet d'un compte existant."""
+        """Écrit l'état d'un compte existant — **sauf** `signup_origin`.
+
+        L'origine ne s'écrit qu'à la création ou par `fill_signup_origin` :
+        `save` ne peut ni la changer ni l'effacer (ADR-0042).
+        """
+        ...
+
+    async def fill_signup_origin(self, user_id: UUID, origin: SignupOrigin) -> None:
+        """Renseigne région et fuseau **seulement là où rien n'est encore écrit**.
+
+        Chaque valeur est indépendante ; une valeur déjà enregistrée n'est
+        jamais remplacée, même par deux appels simultanés. Silencieux si le
+        compte n'existe pas.
+        """
         ...
 
     async def delete(self, user_id: UUID) -> bool:

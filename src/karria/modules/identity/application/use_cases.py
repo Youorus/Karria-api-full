@@ -70,6 +70,7 @@ from karria.modules.identity.domain import (
     MAX_OPENED_PER_EMAIL_HOUR,
     MAX_SESSIONS_PER_USER,
     REVIEW_THROTTLE_KEY,
+    UNKNOWN_ORIGIN,
     AiConsent,
     AiConsentRequiredError,
     AiConsentStatus,
@@ -88,6 +89,7 @@ from karria.modules.identity.domain import (
     Session,
     SessionEndReason,
     SessionNotFoundError,
+    SignupOrigin,
     SocialEmailMissingError,
     SocialEmailUnverifiedError,
     TooManyAttemptsError,
@@ -260,14 +262,38 @@ class _AccountResolver:
             return
         await self._ai_consent.at_sign_in(user.id, version=consent.ai_disclosure_version)
 
+    async def record_origin(self, user: User, origin: SignupOrigin) -> User:
+        """Complète l'origine d'un compte **existant**, là où elle manque encore.
+
+        C'est « la première occasion » de l'ADR-0042 : un compte né d'une
+        version de l'app qui n'annonçait rien reçoit sa région à la connexion
+        suivante. Une valeur déjà enregistrée n'est jamais remplacée — le
+        dépôt le garantit dans la requête, pas cette lecture.
+        """
+        completed = user.with_signup_origin(origin)
+        if completed is user:
+            return user
+        async with self._uow.atomic():
+            await self._users.fill_signup_origin(user.id, origin)
+        return completed
+
     async def resolve(
-        self, email: EmailAddress, *, consent: ConsentGiven, at: datetime
+        self,
+        email: EmailAddress,
+        *,
+        consent: ConsentGiven,
+        at: datetime,
+        origin: SignupOrigin = UNKNOWN_ORIGIN,
     ) -> tuple[User, bool]:
         """Rend `(compte, créé)`, le consentement consigné dans les deux cas.
 
         Un compte existant voit son consentement **renouvelé** seulement si
         une version a changé : une acceptation identique garde sa date
         d'origine, qui est ce qui en fait une preuve.
+
+        `origin` (région et fuseau du téléphone, ADR-0042) est écrite avec le
+        compte qui naît — **avant** `UserRegistered`, pour que l'alerte
+        d'inscription la lise — ou complète un compte existant qui n'en a pas.
         """
         existing = await self._users.find_by_email(email)
         if existing is not None:
@@ -278,6 +304,7 @@ class _AccountResolver:
             ).signed_in(at=at)
             async with self._uow.atomic():
                 await self._users.save(updated)
+            updated = await self.record_origin(updated, origin)
             await self.record_ai_consent(updated, consent)
             return updated, False
 
@@ -293,10 +320,13 @@ class _AccountResolver:
             created_at=at,
             updated_at=at,
             last_login_at=at,
+            signup_origin=origin,
         )
         async with self._uow.atomic():
             await self._users.add(user)
-        logger.info("identity.user_registered", user_id=str(user.id))
+        logger.info(
+            "identity.user_registered", user_id=str(user.id), region=origin.region or "unknown"
+        )
         await self.record_ai_consent(user, consent)
         if self._events is not None:
             await self._events.publish(UserRegistered(user_id=user.id))
@@ -550,8 +580,13 @@ class VerifyEmailLoginCode:
         code: str,
         throttle_key: str,
         user_agent: str | None = None,
+        origin: SignupOrigin = UNKNOWN_ORIGIN,
     ) -> LoginOutcome:
         """Confronte le code au parcours et, s'il est juste, connecte.
+
+        `origin` : région et fuseau du téléphone, annoncés par l'app avec le
+        code (ADR-0042). Elle voyage ici et non à `/auth/email/start` : c'est
+        cette requête qui crée le compte.
 
         Raises:
             TooManyAttemptsError: Trop d'essais depuis cette origine.
@@ -609,6 +644,7 @@ class VerifyEmailLoginCode:
                 ai_disclosure_version=challenge.ai_disclosure_version,
             ),
             at=now,
+            origin=origin,
         )
         async with self._uow.atomic():
             await self._challenges.save(
@@ -670,8 +706,12 @@ class SocialLogin:
         nonce: str | None,
         consent: ConsentGiven,
         user_agent: str | None = None,
+        origin: SignupOrigin = UNKNOWN_ORIGIN,
     ) -> LoginOutcome:
         """Vérifie, résout le compte, ouvre la session.
+
+        `origin` : région et fuseau du téléphone (ADR-0042), écrits avec le
+        compte s'il naît, ou complétés s'ils manquaient.
 
         Raises:
             InvalidSocialTokenError: Jeton refusé.
@@ -687,13 +727,15 @@ class SocialLogin:
             user = await self._users.find_by_id(identity.user_id)
             if user is not None:
                 return await self._returning(
-                    identity, user, consent=consent, now=now, ua=user_agent
+                    identity, user, consent=consent, origin=origin, now=now, ua=user_agent
                 )
             # Le compte a disparu mais le rattachement subsiste : première
             # venue plutôt qu'un échec que la personne ne pourrait corriger.
             logger.warning("social.orphan_identity", identity_id=str(identity.id))
 
-        return await self._first_time(profile, consent=consent, now=now, ua=user_agent)
+        return await self._first_time(
+            profile, consent=consent, origin=origin, now=now, ua=user_agent
+        )
 
     async def _returning(
         self,
@@ -701,6 +743,7 @@ class SocialLogin:
         user: User,
         *,
         consent: ConsentGiven,
+        origin: SignupOrigin,
         now: datetime,
         ua: str | None,
     ) -> LoginOutcome:
@@ -712,6 +755,7 @@ class SocialLogin:
         async with self._uow.atomic():
             await self._users.save(updated)
             await self._identities.touch(identity.id, now)
+        updated = await self._accounts.record_origin(updated, origin)
         await self._accounts.record_ai_consent(updated, consent)
         session = await self._issuer.open(updated, user_agent=ua, at=now)
         await _announce(self._events, updated, created_account=False)
@@ -723,6 +767,7 @@ class SocialLogin:
         profile: VerifiedSocialProfile,
         *,
         consent: ConsentGiven,
+        origin: SignupOrigin,
         now: datetime,
         ua: str | None,
     ) -> LoginOutcome:
@@ -737,7 +782,7 @@ class SocialLogin:
             raise SocialEmailUnverifiedError
 
         user, created = await self._accounts.resolve(
-            EmailAddress.parse(profile.email), consent=consent, at=now
+            EmailAddress.parse(profile.email), consent=consent, at=now, origin=origin
         )
         async with self._uow.atomic():
             await self._identities.add(
@@ -913,6 +958,40 @@ class GetCurrentUser:
         if user is None:
             raise UserNotFoundError
         return user
+
+
+class RecordSignupOrigin:
+    """Renseigne l'origine d'un compte qui n'en a pas encore — le repli de l'ADR-0042.
+
+    Les versions de l'app déjà installées n'annoncent ni région ni fuseau à
+    la connexion ; elles les déclarent juste après, avec l'appareil.
+    `bootstrap/wiring.py` appelle ce use case à chaque appareil déclaré :
+    il ne fait qu'une lecture tant qu'il n'y a rien à écrire, et n'écrase
+    jamais rien. Aucun événement n'est publié : l'alerte d'inscription est
+    déjà partie, et elle ne part qu'une fois.
+    """
+
+    def __init__(self, *, users: UserRepository, uow: UnitOfWork) -> None:
+        self._users = users
+        self._uow = uow
+
+    async def execute(self, user_id: UUID, *, region: object, timezone: object) -> bool:
+        """Complète ce qui manque ; rend vrai si quelque chose a été écrit.
+
+        Les valeurs sont celles qu'un autre module a reçues telles quelles :
+        elles passent ici par la même validation stricte que celles des
+        requêtes de connexion. Silencieux si le compte n'existe plus.
+        """
+        origin = SignupOrigin.parse(region=region, timezone=timezone)
+        if origin.is_empty:
+            return False
+        user = await self._users.find_by_id(user_id)
+        if user is None or user.with_signup_origin(origin) is user:
+            return False
+        async with self._uow.atomic():
+            await self._users.fill_signup_origin(user_id, origin)
+        logger.info("identity.signup_origin_recorded", user_id=str(user_id), source="device")
+        return True
 
 
 # ---------------------------------------------------------------------

@@ -90,13 +90,15 @@ modèles possédés et choix (ADR-0015), `payments` supprime le client Stripe (c
 qui résilie l'abonnement) et efface projection et achats (ADR-0024),
 `support` efface le fil avec l'équipe, fichiers compris, `applications`
 efface les dossiers de candidature ; `applications.DossierApplied` /
-`DossierUnapplied` → `offers` pose ou retire « candidaté » sur l'offre du fil.
+`DossierUnapplied` → `offers` pose ou retire « candidaté » sur l'offre du fil ;
+`devices.DeviceDeclared` → `identity` retient, une fois, la région et le
+fuseau du téléphone sur un compte qui n'en a pas encore (ADR-0042 : le repli
+pour les versions de l'app qui ne les annoncent pas à la connexion).
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -145,6 +147,7 @@ from karria.modules.cv import (
 )
 from karria.modules.cv import get_subscription_reader as get_cv_subscription_reader
 from karria.modules.devices import (
+    DeviceDeclared,
     GetMainDevice,
     SendPushToUser,
     build_forget_user_devices,
@@ -175,8 +178,10 @@ from karria.modules.identity import (
     MainDeviceLookup,
     MainDeviceSnapshot,
     ResolveSession,
+    SignupAccount,
     UserNotFoundError,
     UserRegistered,
+    build_record_signup_origin,
     get_current_user_reader,
     get_ensure_ai_consent,
     get_main_device_lookup,
@@ -234,6 +239,7 @@ from karria.shared.auth import (
     resolve_principal,
 )
 from karria.shared.config import Settings, get_settings
+from karria.shared.countries import country_name_fr
 from karria.shared.errors import EntityNotFoundError
 from karria.shared.http import SlidingWindowLimiter
 from karria.shared.i18n import Language
@@ -830,6 +836,15 @@ def wire_modules(app: FastAPI) -> None:
 #: campagne qui inscrit des centaines de personnes ne doit pas la saturer.
 SIGNUP_ALERTS_PER_HOUR: Final = 20
 _TEAM_TIMEZONE: Final = ZoneInfo("Europe/Paris")
+#: Ce que l'alerte écrit quand l'app n'a rien annoncé (version ancienne) ou
+#: que le code de région n'est pas un pays connu.
+UNKNOWN_COUNTRY: Final = "pays inconnu"
+UNKNOWN_TIMEZONE: Final = "fuseau inconnu"
+
+
+def country_label(region: str | None) -> str:
+    """« Belgique », ou « pays inconnu » — le nom français du code de région."""
+    return country_name_fr(region) or UNKNOWN_COUNTRY
 
 
 class SignupAlerts:
@@ -839,6 +854,12 @@ class SignupAlerts:
     qui croise le compte et le courriel. Le compte est **relu** — l'événement ne
     porte que l'identifiant. Une alerte qui échoue ne casse rien : le compte
     existe déjà, l'échec est journalisé.
+
+    Elle dit aussi **d'où vient** l'inscrit (ADR-0042) : le pays d'après la
+    région du téléphone, et son fuseau. Une version de l'app qui ne les
+    annonce pas à la connexion donne « pays inconnu » : la région arrive alors
+    après coup, par l'appareil déclaré, et **aucun second courriel ne part** —
+    l'alerte n'est abonnée qu'à `UserRegistered`, publié une fois par compte.
     """
 
     def __init__(
@@ -864,17 +885,19 @@ class SignupAlerts:
             logger.info("alerts.signup_alert_capped", user_id=str(event.user_id))
             return
         try:
-            email, created_at = await self._users.account(event.user_id)
+            account = await self._users.account(event.user_id)
             total, last_day = await self._users.counts()
             await self._mailer.send(
                 OutgoingMail(
                     message=MailMessage.SIGNUP_ALERT,
                     to=self._recipient,
                     context={
-                        "email": email or "(sans adresse)",
-                        "signed_up_at": created_at.astimezone(_TEAM_TIMEZONE).strftime(
+                        "email": account.email or "(sans adresse)",
+                        "signed_up_at": account.created_at.astimezone(_TEAM_TIMEZONE).strftime(
                             "%d/%m/%Y à %H:%M (heure de Paris)"
                         ),
+                        "country": country_label(account.region),
+                        "timezone": account.timezone or UNKNOWN_TIMEZONE,
                         "total": total,
                         "last_day": last_day,
                         "hourly_cap": SIGNUP_ALERTS_PER_HOUR,
@@ -891,8 +914,8 @@ class SignupAlerts:
 class SignupDirectory(Protocol):
     """Ce que l'alerte lit des comptes."""
 
-    async def account(self, user_id: UUID) -> tuple[str | None, datetime]:
-        """L'adresse et la date de création du compte."""
+    async def account(self, user_id: UUID) -> SignupAccount:
+        """L'adresse, la date de création et l'origine (région, fuseau) du compte."""
         ...
 
     async def counts(self) -> tuple[int, int]:
@@ -962,6 +985,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     forget_support = build_forget_user_support(storage)
     forget_applications = build_forget_user_applications()
     update_state = build_update_state()
+    record_origin = build_record_signup_origin()
 
     async def devices_forget(event: AccountDeleted) -> None:
         await forget_devices.execute(event.user_id)
@@ -990,6 +1014,9 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     async def offer_unapplied(event: DossierUnapplied) -> None:
         await update_state.execute(event.user_id, event.offer_id, StateChanges(applied=False))
 
+    async def origin_from_device(event: DeviceDeclared) -> None:
+        await record_origin.execute(event.user_id, region=event.region, timezone=event.timezone)
+
     # Sans ces lignes : un compte supprimé laisse ses appareils, son CV, ses
     # photos, ses critères et ses conversations — c'est-à-dire exactement
     # ce que la personne a demandé d'effacer.
@@ -1008,4 +1035,7 @@ def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:
     # la carte de l'offre dans le fil — dégradé, pas cassé.
     bus.subscribe(DossierApplied, offer_applied)
     bus.subscribe(DossierUnapplied, offer_unapplied)
-    logger.debug("bootstrap.bridges_subscribed", bridges=9)
+    # Sans cette ligne : un compte né d'une version de l'app qui n'annonce pas
+    # sa région à la connexion reste « pays inconnu » pour toujours (ADR-0042).
+    bus.subscribe(DeviceDeclared, origin_from_device)
+    logger.debug("bootstrap.bridges_subscribed", bridges=10)

@@ -99,6 +99,48 @@ class TestEmailLogin:
             {"id": "gemini", "name": "Google Gemini"}
         ]
 
+    async def test_la_region_et_le_fuseau_du_telephone_sont_notes_sur_le_compte(
+        self, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        """ADR-0042 : `region` et `timezone` voyagent avec la requête qui crée le compte."""
+        started = await client.post("/api/v1/auth/email/start", json={"email": EMAIL, **CONSENT})
+        verified = await client.post(
+            "/api/v1/auth/email/verify",
+            json={
+                "challenge_id": started.json()["challenge_id"],
+                "code": identity_env.sender.last_code_for(EMAIL),
+                "region": "BE",
+                "timezone": "Europe/Brussels",
+            },
+        )
+
+        assert verified.status_code == 200, verified.text
+        [user] = identity_env.users.rows.values()
+        assert (user.signup_origin.region, user.signup_origin.timezone) == (
+            "BE",
+            "Europe/Brussels",
+        )
+        # Le compte rendu à l'app ne change pas : l'origine ne se lit pas par l'API.
+        assert set(verified.json()["user"]) == {"id", "email"}
+
+    async def test_une_region_hors_forme_ne_refuse_jamais_la_connexion(
+        self, client: AsyncClient, identity_env: IdentityEnv
+    ) -> None:
+        started = await client.post("/api/v1/auth/email/start", json={"email": EMAIL, **CONSENT})
+        verified = await client.post(
+            "/api/v1/auth/email/verify",
+            json={
+                "challenge_id": started.json()["challenge_id"],
+                "code": identity_env.sender.last_code_for(EMAIL),
+                "region": "be-419",
+                "timezone": 7200,
+            },
+        )
+
+        assert verified.status_code == 200, verified.text
+        [user] = identity_env.users.rows.values()
+        assert user.signup_origin.is_empty
+
     async def test_l_acces_de_demonstration_se_reutilise_sans_courriel(
         self, app: FastAPI, client: AsyncClient, identity_env: IdentityEnv
     ) -> None:

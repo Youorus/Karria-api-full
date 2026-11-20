@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from karria.modules.identity.application import (
     ChallengeStarted,
@@ -32,7 +32,10 @@ from karria.modules.identity.domain import (
     AiDisclosure,
     AiPurpose,
     DepartureFeedback,
+    SignupOrigin,
     User,
+    parse_signup_region,
+    parse_signup_timezone,
     provider_name,
 )
 
@@ -86,6 +89,51 @@ class _WithConsent(BaseModel):
         )
 
 
+class _WithSignupOrigin(BaseModel):
+    """La région et le fuseau du téléphone voyagent avec la requête qui peut créer un compte.
+
+    Ce sont les réglages de l'appareil, lus par l'app sans permission —
+    jamais une géolocalisation, jamais une adresse IP (ADR-0042). Le serveur
+    les écrit **une fois** sur le compte (`signup_region`, `signup_timezone`),
+    pour savoir d'où viennent les inscrits sans le leur demander.
+
+    Facultatifs, et **jamais une cause de refus** : une valeur absente, mal
+    formée ou d'un autre type est ignorée (`null`), la connexion aboutit
+    quand même. La forme, elle, est stricte — voir chaque champ.
+    """
+
+    region: str | None = Field(
+        default=None,
+        description=(
+            "Le réglage « Région » de l'appareil : code ISO 3166-1 alpha-2, **exactement deux "
+            "lettres majuscules** (`FR`, `BE`). Toute autre forme (`fr`, `419`, `ZZ`, un "
+            "nombre) est ignorée sans erreur. Enregistré une seule fois sur le compte ; une "
+            "région déjà connue n'est jamais remplacée."
+        ),
+    )
+    timezone: str | None = Field(
+        default=None,
+        description=(
+            "Le fuseau horaire de l'appareil : nom IANA (`Europe/Brussels`), 64 caractères "
+            "au plus. Hors forme : ignoré sans erreur. Enregistré une seule fois."
+        ),
+    )
+
+    @field_validator("region", mode="before")
+    @classmethod
+    def _strict_region(cls, value: object) -> str | None:
+        return parse_signup_region(value)
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _bounded_timezone(cls, value: object) -> str | None:
+        return parse_signup_timezone(value)
+
+    def origin(self) -> SignupOrigin:
+        """Projette l'origine vers la couche application."""
+        return SignupOrigin(region=self.region, timezone=self.timezone)
+
+
 # ---------------------------------------------------------------------
 # Parcours par code e-mail
 # ---------------------------------------------------------------------
@@ -106,8 +154,8 @@ class EmailResendRequest(BaseModel):
     challenge_id: UUID
 
 
-class EmailVerifyRequest(BaseModel):
-    """`POST /auth/email/verify`."""
+class EmailVerifyRequest(_WithSignupOrigin):
+    """`POST /auth/email/verify` — la requête qui crée le compte, d'où `region` et `timezone`."""
 
     challenge_id: UUID
     #: Pas de motif à six chiffres imposé ici : un code mal formé est un
@@ -144,7 +192,7 @@ class ChallengeResponse(BaseModel):
 # ---------------------------------------------------------------------
 
 
-class GoogleLoginRequest(_WithConsent):
+class GoogleLoginRequest(_WithConsent, _WithSignupOrigin):
     """`POST /auth/social/google`."""
 
     id_token: str = Field(min_length=1, max_length=_TOKEN_MAX)
@@ -153,7 +201,7 @@ class GoogleLoginRequest(_WithConsent):
     nonce: str | None = Field(default=None, max_length=256)
 
 
-class AppleLoginRequest(_WithConsent):
+class AppleLoginRequest(_WithConsent, _WithSignupOrigin):
     """`POST /auth/social/apple`."""
 
     identity_token: str = Field(min_length=1, max_length=_TOKEN_MAX)

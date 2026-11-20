@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from karria.modules.identity.domain import (
     ProviderIdentity,
     SessionEndReason,
     SessionNotFoundError,
+    SignupOrigin,
     SocialProvider,
     User,
     open_challenge,
@@ -24,6 +26,7 @@ from karria.modules.identity.infrastructure import (
     TortoiseSessionRepository,
     TortoiseUserRepository,
 )
+from karria.modules.identity.infrastructure.models import UserModel
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("clean_database")]
 
@@ -42,6 +45,64 @@ def _user(email: str = "marc@exemple.fr") -> User:
 
 
 class TestUsers:
+    async def test_l_origine_s_ecrit_a_la_creation_et_jamais_par_save(self) -> None:
+        """ADR-0042, migration 29 : `save` ne peut ni changer ni effacer l'origine."""
+        repo = TortoiseUserRepository()
+        user = replace(_user(), signup_origin=SignupOrigin("BE", "Europe/Brussels"))
+        await repo.add(user)
+
+        await repo.save(replace(user, signup_origin=SignupOrigin("CA", "America/Toronto")))
+        await repo.save(replace(user, signup_origin=SignupOrigin()))
+
+        found = await repo.find_by_id(user.id)
+        assert found is not None
+        assert found.signup_origin == SignupOrigin("BE", "Europe/Brussels")
+
+    async def test_l_origine_se_complete_colonne_par_colonne_sans_jamais_ecraser(self) -> None:
+        repo = TortoiseUserRepository()
+        user = _user()
+        await repo.add(user)
+        fresh = await repo.find_by_id(user.id)
+        assert fresh is not None
+        assert fresh.signup_origin == SignupOrigin()
+
+        await repo.fill_signup_origin(user.id, SignupOrigin(region="BE"))
+        await repo.fill_signup_origin(user.id, SignupOrigin("CA", "America/Toronto"))
+        await repo.fill_signup_origin(user.id, SignupOrigin("FR", "Europe/Paris"))
+        await repo.fill_signup_origin(uuid4(), SignupOrigin("FR", "Europe/Paris"))  # compte disparu
+
+        found = await repo.find_by_id(user.id)
+        assert found is not None
+        assert found.signup_origin == SignupOrigin("BE", "America/Toronto")
+
+    async def test_les_inscrits_se_comptent_par_mois_et_par_region(self) -> None:
+        repo = TortoiseUserRepository()
+        november = datetime(2026, 11, 3, 8, 0, tzinfo=UTC)
+        for index, (created_at, region) in enumerate(
+            [(NOW, "FR"), (NOW, "FR"), (NOW, None), (november, "BE"), (november, "FR")]
+        ):
+            user = replace(_user(f"p{index}@exemple.fr"), signup_origin=SignupOrigin(region=region))
+            await repo.add(user)
+            # `created_at` est posé par la base à l'insertion : on le recale pour le test.
+            await UserModel.filter(id=user.id).update(created_at=created_at)
+
+        assert await repo.signups_by_month() == [
+            ("2026-10", "FR", 2),
+            ("2026-10", None, 1),
+            ("2026-11", "BE", 1),
+            ("2026-11", "FR", 1),
+        ]
+
+    async def test_supprimer_le_compte_emporte_son_origine(self) -> None:
+        repo = TortoiseUserRepository()
+        user = replace(_user(), signup_origin=SignupOrigin("BE", "Europe/Brussels"))
+        await repo.add(user)
+
+        assert await repo.delete(user.id) is True
+
+        assert await repo.find_by_id(user.id) is None
+        assert await repo.signups_by_month() == []
+
     async def test_cree_retrouve_et_met_a_jour(self) -> None:
         repo = TortoiseUserRepository()
         user = _user()

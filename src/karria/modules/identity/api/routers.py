@@ -124,6 +124,9 @@ async def resend_email_login_code(
         "Confronte le code au parcours. S'il est juste : le compte est "
         "retrouvé ou **créé** (`created_account`), le consentement consigné, "
         "la session ouverte.\n\n"
+        "`region` et `timezone` (facultatifs : les réglages de l'appareil, lus sans "
+        "permission) sont écrits **une fois** sur le compte, pour savoir d'où viennent les "
+        "inscrits (ADR-0042). Hors forme, ils sont ignorés : jamais une erreur.\n\n"
         "Erreurs : `auth_code_invalid` (422, `field: code`, "
         "`remaining_attempts`), `auth_code_exhausted` (429, `field: code`), "
         "`auth_login_challenge_expired` (410), `auth_too_many_attempts` (429)."
@@ -140,6 +143,7 @@ async def verify_email_login_code(
             code=body.code,
             throttle_key=context.throttle_key(str(body.challenge_id)),
             user_agent=context.user_agent,
+            origin=body.origin(),
         )
     )
 
@@ -157,6 +161,7 @@ async def verify_email_login_code(
         "Vérifie l'`id_token` (signature, émetteur, audience, expiration, "
         "nonce), retrouve ou crée le compte, ouvre la session. Aucun code "
         "n'est envoyé : Google vient d'attester l'adresse.\n\n"
+        "`region` et `timezone` (facultatifs) : comme pour `/auth/email/verify`.\n\n"
         "Erreurs : `auth_social_token_invalid` (401), "
         "`auth_social_email_unverified` (409), `auth_social_email_missing` (409), "
         "`auth_social_provider_unavailable` (503)."
@@ -175,6 +180,7 @@ async def login_with_google(
             nonce=body.nonce,
             consent=body.consent(),
             user_agent=context.user_agent,
+            origin=body.origin(),
         )
     )
 
@@ -190,6 +196,7 @@ async def login_with_google(
         "Apple ne transmet l'adresse — souvent un relais "
         "`@privaterelay.appleid.com` — qu'à la **première** connexion ; les "
         "suivantes sont reconnues par le `sub`.\n\n"
+        "`region` et `timezone` (facultatifs) : comme pour `/auth/email/verify`.\n\n"
         "Erreurs : `auth_social_token_invalid` (401), "
         "`auth_social_email_missing` (409), `auth_social_provider_unavailable` (503)."
     ),
@@ -207,6 +214,7 @@ async def login_with_apple(
             nonce=body.nonce,
             consent=body.consent(),
             user_agent=context.user_agent,
+            origin=body.origin(),
         )
     )
 

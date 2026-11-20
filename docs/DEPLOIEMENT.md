@@ -430,3 +430,18 @@ base. Vingt demandes jugées coûtent une vingtaine d'appels Gemini.
   `pages[1].label` ; `POST /documents/{id}/render` `{ "letter": …, "letter_style": "plain" }`
   → `letter_style_served: "plain"` ; `PUT /applications/{id}/letter-style`
   `{ "letter_style": "plain" }` → `letter_style: "plain"`.
+
+## Pays d'inscription (ADR-0042)
+
+- **Migration 29** (`pays_d_inscription` : colonnes `signup_region` VARCHAR(2) NULL et
+  `signup_timezone` VARCHAR(64) NULL sur `identity_users`) : `aerich upgrade` dans un
+  conteneur ponctuel, **avant** le code (sans les colonnes, toute lecture d'un compte —
+  donc toute requête authentifiée qui le relit, et toute connexion — répond 500).
+  Idempotente, sans reprise de données : les comptes existants restent à NULL.
+- Aucune variable nouvelle. L'alerte d'inscription garde `SUPPORT__TEAM_EMAIL`.
+- **Vérifier** : une inscription depuis une version de l'app qui envoie `region` /
+  `timezone` → l'alerte dit « … — Belgique » ; depuis une version antérieure → « pays
+  inconnu », puis `signup_region` rempli après le premier `PUT /devices/{id}`, sans second
+  courriel. `uv run python -m scripts.signups` dans un conteneur de l'API affiche la
+  répartition (lecture seule).
+

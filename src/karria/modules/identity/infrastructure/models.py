@@ -7,7 +7,9 @@ module — les repositories traduisent en objets du domaine (AGENTS.md §6.10).
 Ce que ces tables ne contiennent pas
 ------------------------------------
 Aucun jeton, aucun code en clair : des condensats. Aucune adresse IP. Aucun
-nom, prénom, téléphone : le contrat de l'app ne les collecte plus.
+nom, prénom, téléphone : le contrat de l'app ne les collecte plus. Le pays
+d'origine d'un compte (`signup_region`) est le réglage « Région » du
+téléphone, annoncé par l'app — jamais une géolocalisation (ADR-0042).
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from tortoise import fields
 from karria.modules.identity.domain import (
     DEPARTURE_DETAILS_MAX_LENGTH,
     EMAIL_MAX_LENGTH,
+    SIGNUP_REGION_LENGTH,
+    SIGNUP_TIMEZONE_MAX_LENGTH,
     DepartureReason,
     LoginChallengeStatus,
     SessionEndReason,
@@ -49,6 +53,18 @@ class UserModel(BaseDBModel):
         description="Horodatage du consentement donné « en continuant »."
     )
     last_login_at = fields.DatetimeField(null=True)
+    # Migration 29 (ADR-0042) : écrites une seule fois, à la création du compte
+    # ou à la première occasion ; `TortoiseUserRepository.save` ne les touche pas.
+    signup_region = fields.CharField(
+        max_length=SIGNUP_REGION_LENGTH,
+        null=True,
+        description="Région du téléphone à l'inscription (ISO 3166-1 alpha-2), ou NULL.",
+    )
+    signup_timezone = fields.CharField(
+        max_length=SIGNUP_TIMEZONE_MAX_LENGTH,
+        null=True,
+        description="Fuseau horaire du téléphone à l'inscription (nom IANA), ou NULL.",
+    )
 
     class Meta:
         table = "identity_users"

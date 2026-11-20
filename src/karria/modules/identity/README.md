@@ -11,6 +11,16 @@ d'authentification de `karria_app` (`src/features/auth/`) à l'identique :
   normalisée, le consentement donné « en continuant » (versions +
   horodatage), la dernière connexion. Rien d'autre — ni nom, ni téléphone
   (ADR-0010). Un seul type d'utilisateur, aucune permission.
+- **L'origine du compte** (`signup_region`, `signup_timezone`, migration 29,
+  ADR-0042) : le réglage « Région » du téléphone (deux lettres majuscules)
+  et son fuseau, annoncés par l'app dans `region` / `timezone` de
+  `/auth/email/verify` et `/auth/social/*`. Écrits **une fois** — à la
+  création, sinon à la première occasion (`RecordSignupOrigin`, que
+  `bootstrap` abonne aux appareils déclarés) — et jamais remplacés :
+  `UserRepository.save` ne les écrit pas, seul `fill_signup_origin` le fait,
+  là où la colonne est vide. Une valeur hors forme est ignorée, jamais
+  refusée. Statistique seulement : elle ne sort pas par l'API. Jamais une
+  adresse IP.
 - **Les rattachements Apple / Google** (`identity_provider_identities`) :
   `(provider, sub)` unique. C'est le `sub` qui reconnaît une personne qui
   revient, jamais l'adresse (ADR-0011).

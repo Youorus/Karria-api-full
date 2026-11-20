@@ -65,6 +65,7 @@ from karria.modules.identity.domain import (
     Session,
     SessionEndReason,
     SessionNotFoundError,
+    SignupOrigin,
     SocialProvider,
     TooManyAttemptsError,
     User,
@@ -203,7 +204,15 @@ class InMemoryUserRepository:
         self.rows[user.id] = user
 
     async def save(self, user: User) -> None:
-        self.rows[user.id] = user
+        # Comme le vrai dépôt : `save` n'écrit pas l'origine du compte (ADR-0042).
+        stored = self.rows.get(user.id)
+        origin = stored.signup_origin if stored is not None else user.signup_origin
+        self.rows[user.id] = replace(user, signup_origin=origin)
+
+    async def fill_signup_origin(self, user_id: UUID, origin: SignupOrigin) -> None:
+        stored = self.rows.get(user_id)
+        if stored is not None:
+            self.rows[user_id] = stored.with_signup_origin(origin)
 
     async def delete(self, user_id: UUID) -> bool:
         return self.rows.pop(user_id, None) is not None

@@ -23,10 +23,17 @@ Ce qu'il expose, et pour qui :
   consentement à l'IA, que `bootstrap/wiring.py` branche sur la porte
   `get_ai_consent_gate` de `shared/auth` (ADR-0025). Les modules `cv`,
   `offers` et `documents` dépendent de la porte, jamais d'`identity`.
+- `RecordSignupOrigin`, `build_record_signup_origin` — le repli de l'origine
+  du compte (région et fuseau du téléphone), que `bootstrap/wiring.py`
+  abonne à `devices.DeviceDeclared` (ADR-0042) ; `get_signup_directory`,
+  `SignupAccount` — ce que le suivi d'exploitation lit des comptes (alerte
+  d'inscription, `scripts/signups.py`).
 """
 
 from karria.modules.identity.api import router
 from karria.modules.identity.api.dependencies import (
+    SignupAccount,
+    build_record_signup_origin,
     build_replay_forgets,
     get_current_user_reader,
     get_ensure_ai_consent,
@@ -41,6 +48,7 @@ from karria.modules.identity.application import (
     GetCurrentUser,
     MainDeviceLookup,
     MainDeviceSnapshot,
+    RecordSignupOrigin,
     ResolveSession,
     UserRegistered,
     UserSignedIn,
@@ -62,10 +70,13 @@ __all__ = [
     "GetCurrentUser",
     "MainDeviceLookup",
     "MainDeviceSnapshot",
+    "RecordSignupOrigin",
     "ResolveSession",
+    "SignupAccount",
     "UserNotFoundError",
     "UserRegistered",
     "UserSignedIn",
+    "build_record_signup_origin",
     "build_replay_forgets",
     "get_current_user_reader",
     "get_ensure_ai_consent",
