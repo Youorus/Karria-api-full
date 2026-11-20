@@ -410,15 +410,15 @@ class TortoiseOfferRepository:
         if offer_ids is not None:
             return await self._count_options(offer_ids)
         kept = _all_filter_options
-        fresh = kept is not None and time.monotonic() - kept[0] <= FILTER_OPTIONS_TTL_SECONDS
+        fresh = kept is not None and _now() - kept[0] <= FILTER_OPTIONS_TTL_SECONDS
         if kept is not None and (fresh or _options_lock.locked()):
             # Périmées mais déjà en recalcul : on sert les précédentes, sans attendre.
             return dict(kept[1]), dict(kept[2])
         async with _options_lock:
             kept = _all_filter_options
-            if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
+            if kept is None or _now() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
                 contracts, cities = await self._count_options(None)
-                kept = (time.monotonic(), contracts, cities)
+                kept = (_now(), contracts, cities)
                 _remember_filter_options(kept)
         return dict(kept[1]), dict(kept[2])
 
@@ -516,12 +516,25 @@ FEED_TOTAL_MAX_CITIES: Final = 5
 #: Attente maximale d'un compte, le sien ou celui d'une autre requête.
 FEED_TOTAL_WAIT_SECONDS: Final = 5.0
 FEED_TOTAL_CONCURRENCY: Final = 2
+#: Calculs de filtres lancés ou en attente, au plus : au-delà, on ne lance rien et on
+#: rend la valeur de repli tout de suite (une file sans borne se remplissait de filtres
+#: inventés — revue de sécurité du 2026-11-20).
+FEED_TOTAL_PENDING_MAX: Final = 8
+
+
+def _now() -> float:
+    """L'horloge monotone des caches (un point d'entrée, pour les essais)."""
+    return time.monotonic()
+
+
 _FeedKey = tuple[tuple[str, ...], tuple[str, ...]]
 _UNFILTERED: Final[_FeedKey] = ((), ())
 _unfiltered_total: tuple[float, int] | None = None
 _feed_totals: OrderedDict[_FeedKey, tuple[float, int]] = OrderedDict()
 _feed_counts: dict[_FeedKey, asyncio.Task[int]] = {}
 _count_slots = asyncio.Semaphore(FEED_TOTAL_CONCURRENCY)
+#: Le total sans filtre a sa propre place : aucun filtre ne peut l'affamer.
+_unfiltered_slot = asyncio.Semaphore(1)
 #: Les options de filtre de tout le fil, gardées dix minutes (instant, contrats, villes).
 FILTER_OPTIONS_TTL_SECONDS: Final = 600.0
 _all_filter_options: tuple[float, dict[ContractType, int], dict[str, int]] | None = None
@@ -555,17 +568,17 @@ def _kept_total(key: _FeedKey) -> tuple[float, int] | None:
 def _keep_total(key: _FeedKey, total: int) -> None:
     global _unfiltered_total  # noqa: PLW0603 - un cache de processus, borné à une entrée
     if key == _UNFILTERED:
-        _unfiltered_total = (time.monotonic(), total)
+        _unfiltered_total = (_now(), total)
         return
-    _feed_totals[key] = (time.monotonic(), total)
+    _feed_totals[key] = (_now(), total)
     _feed_totals.move_to_end(key)
     while len(_feed_totals) > FEED_TOTAL_CACHE_SIZE:
         _feed_totals.popitem(last=False)
 
 
-async def _guarded_count(query: Any) -> int:
-    """Un compte, à son tour : deux à la fois au plus par processus."""
-    async with _count_slots:
+async def _guarded_count(query: Any, *, unfiltered: bool = False) -> int:
+    """Un compte, à son tour : deux à la fois au plus par processus, plus celui du fil sans filtre."""
+    async with _unfiltered_slot if unfiltered else _count_slots:
         return int(await query.count())
 
 
@@ -576,7 +589,7 @@ def _fallback_total(kept: tuple[float, int] | None) -> int:
     return _unfiltered_total[1] if _unfiltered_total is not None else 0
 
 
-async def _feed_total(query: Any, filters: OfferFilters) -> int:
+async def _feed_total(query: Any, filters: OfferFilters) -> int:  # noqa: PLR0911 - une sortie par règle de tenue
     """Le nombre d'offres du fil pour ces filtres, compté au plus toutes les deux minutes.
 
     Les offres écartées par la personne se retranchent du total gardé (sans
@@ -586,6 +599,9 @@ async def _feed_total(query: Any, filters: OfferFilters) -> int:
     """
     dismissed = len(filters.exclude_offer_ids or ())
     if filters.published_after is not None or len(filters.cities or ()) > FEED_TOTAL_MAX_CITIES:
+        if _count_slots.locked():
+            # Pas de place libre : on n'attend pas, on ne s'empile pas.
+            return max(0, _fallback_total(None) - dismissed)
         try:
             async with asyncio.timeout(FEED_TOTAL_WAIT_SECONDS):
                 return await _guarded_count(query)
@@ -596,9 +612,11 @@ async def _feed_total(query: Any, filters: OfferFilters) -> int:
         tuple(sorted(filters.cities or ())),
     )
     kept = _kept_total(key)
-    if kept is not None and time.monotonic() - kept[0] <= FEED_TOTAL_TTL_SECONDS:
+    if kept is not None and _now() - kept[0] <= FEED_TOTAL_TTL_SECONDS:
         return max(0, kept[1] - dismissed)
     running = _feed_counts.get(key)
+    if running is None and key != _UNFILTERED and len(_feed_counts) >= FEED_TOTAL_PENDING_MAX:
+        return max(0, _fallback_total(kept) - dismissed)  # file pleine : rien de plus n'est lancé
     if running is None:
         base = _apply_filters(
             OfferModel.filter(is_active=True, duplicate_of__isnull=True),
@@ -618,7 +636,7 @@ async def _feed_total(query: Any, filters: OfferFilters) -> int:
 
 
 async def _count_and_keep(key: _FeedKey, base: Any) -> int:
-    total = await _guarded_count(base)
+    total = await _guarded_count(base, unfiltered=key == _UNFILTERED)
     _keep_total(key, total)
     return total
 
