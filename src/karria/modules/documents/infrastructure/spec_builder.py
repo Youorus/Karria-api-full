@@ -34,6 +34,7 @@ from __future__ import annotations
 import itertools
 import re
 import statistics
+import unicodedata
 from collections import Counter, defaultdict
 from typing import Any, Final
 
@@ -57,8 +58,20 @@ RASTER_PATH_MM: Final = 8.0
 #: barre de niveau (mm) ; une puce (1 mm) n'en est pas une.
 LEVEL_BAR_MAX_H_MM: Final = 3.0
 LEVEL_BAR_MIN_W_MM: Final = 5.0
-#: Les rôles dont l'exemple garde les retours à la ligne de la source (intitulés), pas les paragraphes.
-KEEP_BREAKS: Final = frozenset({"item_title", "item_subtitle"})
+#: Les rôles dont l'exemple garde les retours à la ligne de la source (intitulés, adresse
+#: écrite « rue » puis « ville »), pas les paragraphes.
+KEEP_BREAKS: Final = frozenset({"item_title", "item_subtitle", "address"})
+#: Le cadre d'une entrée de liste (un cercle autour d'une compétence) : ni une puce,
+#: ni un fond de rubrique (mm).
+CELL_MIN_MM: Final = 8.0
+CELL_MAX_MM: Final = 60.0
+#: Blanc gardé autour d'une étiquette en pictogrammes rastérisée, en part de sa hauteur.
+PICTOGRAM_PAD: Final = 0.35
+#: Des lignes centrées partagent leur axe à cette tolérance (mm), avec des gauches
+#: écartées d'au moins autant que `CENTERED_MIN_SPREAD_MM` ; il en faut trois.
+CENTERED_AXIS_MM: Final = 1.5
+CENTERED_MIN_SPREAD_MM: Final = 2.0
+CENTERED_MIN_LINES: Final = 3
 #: Espacement des mots retenu d'un paragraphe justifié : ni le bruit de mesure, ni une aberration.
 WORD_SPACING_MIN_MM: Final = 0.1
 WORD_SPACING_MAX_MM: Final = 1.5
@@ -122,6 +135,16 @@ def reference(values: list[float]) -> float:
     if len(values) == 2:  # noqa: PLR2004
         return float(values[0])
     return med(values)
+
+
+def is_pictogram_text(text: str) -> bool:
+    """Un texte fait seulement de glyphes à usage privé (une police de pictogrammes : Font Awesome…).
+
+    Ces codes n'ont de dessin que dans leur police ; aucune police de
+    remplacement ne les porte, et un ATS n'y lit rien.
+    """
+    glyphs = [ch for ch in text if not ch.isspace()]
+    return bool(glyphs) and all(unicodedata.category(ch) == "Co" for ch in glyphs)
 
 
 def collapse_spaced(text: str) -> str:
@@ -410,7 +433,14 @@ class SpecBuilder:
         elements = self.elements(lines, markers)
         labels = self.attach_labels(self.elements(label_lines, {}), elements) if label_lines else {}
         side_elements = self.elements(side_lines, {}) if side_lines else []
-        bottom = max([title_bottom] + [e["bottom"] for e in elements + side_elements])
+        # Les entrées d'une liste écrites chacune dans un cadre (un cercle par
+        # compétence) : le cadre appartient à l'entrée, pas à la rubrique.
+        frames = self.cell_frames(elements) if kind in LIST_KINDS else []
+        bottom = max(
+            [title_bottom]
+            + [e["bottom"] for e in elements + side_elements]
+            + [d["y"] + d["h"] for d in frames]
+        )
         s["bottom"] = bottom
         s["elements"] = elements
         spec: Json = {
@@ -525,10 +555,9 @@ class SpecBuilder:
                     slot["margins"].append(row["top"] - prev)
                 slot.setdefault("xs", []).append(row["elems"][0]["x"])
                 label = labels.get(id(row["elems"][0]))
-                if label is not None:
-                    slot.setdefault(
-                        "label", self.label_spec(label[0], row["elems"][0], label[1], origin_x)
-                    )
+                if label is not None and "label" not in slot:
+                    slot["label"] = self.label_spec(label[0], row["elems"][0], label[1], origin_x)
+                    self.pictogram_label(kind, row["elems"][0]["role"], label[0], slot["label"])
                 slot["dx"].append(
                     (label[0]["x"] if label is not None and label[1] else row["elems"][0]["x"])
                     - origin_x
@@ -581,6 +610,17 @@ class SpecBuilder:
             for k, v in slots.items()
         ]
         spec["slot_order"] = list(slots.keys())
+        if frames:
+            self.apply_cells(spec, frames, col_x, title_bottom)
+        axis = None if frames or side_elements else self.centered_axis(elements, col_x)
+        if axis is not None:
+            # Une rubrique centrée (des coordonnées sous une photo) : chaque ligne
+            # se centre dans la boîte que l'axe dessine depuis la colonne, quelle que
+            # soit sa longueur — le courriel d'une personne n'a pas celle de l'exemple.
+            spec["centered"] = True
+            spec["width_mm"] = round(2 * (axis - col_x), 2)
+            for slot in spec["slots"]:
+                slot.update(align="center", dx_mm=0.0)
         spec["side"] = self.side_spec(side_groups, groups, col_x) if side_elements else None
         spec["marker"] = self.marker_spec(markers, lines)
         spec["icons"] = self.icons_for(lines) if kind == "contact" else {}
@@ -691,6 +731,141 @@ class SpecBuilder:
             "columns": len(columns),
             "column_pitch_mm": round(med([b - a for a, b in itertools.pairwise(columns)]), 2),
         }
+
+    def cell_frames(self, elements: list[Json]) -> list[Json]:
+        """Les cadres des entrées d'une liste : une forme par entrée, toutes de même taille.
+
+        Deux rangées de cercles avec une compétence au centre de chacun : ancrés
+        à la rubrique, les cercles restaient huit quand une personne a douze
+        compétences, et les libellés coulaient à côté. Rend les formes dans
+        l'ordre des entrées (et les réserve), ou rien si une entrée n'a pas son
+        cadre, si un cadre porte deux entrées ou si les cadres diffèrent.
+        """
+        entries = [e for e in elements if e["role"] in LIST_ROLES]
+        if len(entries) < 2 or any(e["role"] not in LIST_ROLES for e in elements):  # noqa: PLR2004
+            return []
+        candidates = [
+            (i, d)
+            for i, d in enumerate(self.drawings)
+            if i not in self.used
+            and d["kind"] in ("rect", "curve")
+            and (d.get("stroke") or d.get("fill"))
+            and min(d["w"], d["h"]) >= CELL_MIN_MM
+            and max(d["w"], d["h"]) <= CELL_MAX_MM
+        ]
+        found: list[tuple[int, Json]] = []
+        for e in entries:
+            around = [
+                (i, d)
+                for i, d in candidates
+                if d["x"] - 0.5 <= e["x"]
+                and e["right"] <= d["x"] + d["w"] + 0.5
+                and d["y"] - 0.5 <= e["top"]
+                and e["bottom"] <= d["y"] + d["h"] + 0.5
+            ]
+            if len(around) != 1:
+                return []
+            found.append(around[0])
+        first = found[0][1]
+        if len({i for i, _ in found}) != len(found) or any(
+            abs(d["w"] - first["w"]) > 0.5 or abs(d["h"] - first["h"]) > 0.5  # noqa: PLR2004
+            for _, d in found
+        ):
+            return []
+        self.used.update(i for i, _ in found)
+        return [d for _, d in found]
+
+    def apply_cells(
+        self, spec: Json, frames: list[Json], col_x: float, title_bottom: float
+    ) -> None:
+        """Écrit la grille de cadres dans l'emplacement de la liste (`cell`).
+
+        Le pas des colonnes et des rangées est celui des cadres ; le libellé se
+        centre dans le sien ; l'écart sous le titre se compte jusqu'au cadre.
+        """
+        first = frames[0]
+        xs: list[float] = []
+        for x in sorted(d["x"] for d in frames):
+            if not xs or x - xs[-1] > 2.0:  # noqa: PLR2004
+                xs.append(x)
+        ys: list[float] = []
+        for y in sorted(d["y"] for d in frames):
+            if not ys or y - ys[-1] > 2.0:  # noqa: PLR2004
+                ys.append(y)
+        column_pitch = med([b - a for a, b in itertools.pairwise(xs)], first["w"] + 2.0)
+        row_pitch = med([b - a for a, b in itertools.pairwise(ys)], column_pitch)
+        slot = next(sl for sl in spec["slots"] if sl["roles"][0] in LIST_ROLES)
+        slot.update(
+            dx_mm=round(xs[0] - col_x, 2),
+            align="center",
+            columns=len(xs),
+            column_pitch_mm=round(column_pitch, 2),
+            repeat_margin_mm=None,
+            cell={
+                "kind": first["kind"],
+                "w_mm": round(first["w"], 2),
+                "h_mm": round(first["h"], 2),
+                "fill": first.get("fill"),
+                "stroke": first.get("stroke"),
+                "stroke_pt": first.get("stroke_width_pt"),
+                "row_gap_mm": round(max(row_pitch - first["h"], 0.0), 2),
+            },
+        )
+        spec["first_gap_mm"] = round(ys[0] - title_bottom, 2)
+
+    @staticmethod
+    def centered_axis(elements: list[Json], col_x: float) -> float | None:
+        """L'axe d'une rubrique dont les lignes sont centrées les unes sous les autres, ou rien.
+
+        Trois lignes au moins partagent leur milieu avec des gauches dispersées
+        (des coordonnées de longueurs différentes) ; une ligne hors de l'axe
+        n'est admise que si elle part de la colonne et déborde de la boîte
+        centrée (une adresse de site trop longue pour elle, écrite sans coupure).
+        """
+        lines = [ln for e in elements for ln in e["lines"]]
+        if len(lines) < CENTERED_MIN_LINES:
+            return None
+        axis = med([ln.x + ln.w / 2 for ln in lines])
+        on_axis = [ln for ln in lines if abs(ln.x + ln.w / 2 - axis) < CENTERED_AXIS_MM]
+        if (
+            len(on_axis) < CENTERED_MIN_LINES
+            or max(ln.x for ln in on_axis) - min(ln.x for ln in on_axis) < CENTERED_MIN_SPREAD_MM
+        ):
+            return None
+        box = 2 * (axis - col_x)
+        for ln in lines:
+            if ln in on_axis:
+                continue
+            if abs(ln.x - col_x) > 1.0 or ln.w <= box:
+                return None
+        return float(axis)
+
+    def pictogram_label(self, kind: str, role: str, label: Json, spec_label: Json) -> None:
+        """Une étiquette en pictogrammes (« ● ● ● » de Font Awesome) se rend en image de la source.
+
+        Ses glyphes n'existent que dans la police du modèle : écrits avec la
+        police de remplacement, ils sortaient en carrés vides. Rastérisée, avec
+        un blanc autour (un glyphe de pictogramme déborde la boîte de sa ligne),
+        l'étiquette garde son dessin et ne laisse aucun caractère illisible dans
+        le texte du PDF.
+        """
+        lines: list[Line] = label["lines"]
+        if not all(is_pictogram_text(ln.text) for ln in lines):
+            return
+        pad = PICTOGRAM_PAD * max(ln.h for ln in lines)
+        x0 = min(ln.x for ln in lines) - pad
+        y0 = min(ln.y for ln in lines) - pad
+        x1 = max(ln.right for ln in lines) + pad
+        y1 = max(ln.bottom for ln in lines) + pad
+        name = f"label_{re.sub(r'[^a-z0-9]+', '-', kind.lower())}_{role}.png"
+        self.assets[name] = self.doc.render_png(dpi=600, box_mm=(x0, y0, x1 - x0, y1 - y0))
+        spec_label.update(
+            text="",
+            asset=name,
+            w_mm=round(x1 - x0, 2),
+            h_mm=round(y1 - y0, 2),
+            pad_mm=round(pad, 2),
+        )
 
     @staticmethod
     def attach_labels(

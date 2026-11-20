@@ -32,6 +32,7 @@ from karria.modules.documents.infrastructure.spec_builder import (
     Line,
     SpecBuilder,
     collapse_spaced,
+    is_pictogram_text,
     majority_alignment,
     med,
     reference,
@@ -1325,3 +1326,245 @@ class TestCorpsPropreDunElement:
         assert second["sizes"] == {"bullet": 6.0}
         # Sans style connu pour le rôle, rien à comparer.
         assert SpecBuilder.item_sizes("experiences", [{"role": "x", "lines": []}], {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# Listes en cadres, rubrique centrée, étiquettes en pictogrammes
+# ---------------------------------------------------------------------------
+
+CV_PERSONNE: Json = {
+    "identity": {"first_name": "Awa", "last_name": "Diallo", "headline": "Vendeuse"},
+    "skills": [
+        {"name": name}
+        for name in ("Vente", "Caisse", "Visualisation de données", "Stock", "Accueil")
+    ],
+    "languages": [{"language": "Anglais", "level": "B2"}],
+}
+
+
+class TestListeEnCadres:
+    """Deux rangées de cercles, une compétence au centre de chacun."""
+
+    FRAMES = ((20.0, 60.0), (44.0, 60.0), (20.0, 84.0), (44.0, 84.0))
+
+    def _builder(self, frames: tuple[tuple[float, float], ...] = FRAMES) -> SpecBuilder:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "COMPETENCES", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "HTML", 25, 68.2, w=10),
+            raw_line("L4", "CSS", 50, 68.2, w=8),
+            raw_line("L5", "Python", 24, 92.2, w=12),
+            raw_line("L6", "Docker", 48, 92.2, w=12),
+        ]
+        roles = [("full_name", "header", 0), ("section_title", "skills", 0)]
+        roles += [("skill", "skills", 0)] * 4
+        return builder(
+            lines,
+            roles,
+            drawings=[drawing("curve", x, y, 20, 20, stroke="#333333") for x, y in frames],
+        )
+
+    def test_chaque_entree_porte_son_cadre_au_pas_mesure(self) -> None:
+        spec, sample, _ = self._builder().build()
+        skills = sections(spec)["skills"]
+        sl = slot(skills, "skill")
+        assert sl["cell"] == {
+            "kind": "curve",
+            "w_mm": 20.0,
+            "h_mm": 20.0,
+            "fill": None,
+            "stroke": "#333333",
+            "stroke_pt": 0.75,
+            "row_gap_mm": 4.0,
+        }
+        assert (sl["columns"], sl["column_pitch_mm"], sl["align"]) == (2, 24.0, "center")
+        assert sl["dx_mm"] == 0.0
+        # L'écart sous le titre se compte jusqu'au cadre, plus jusqu'au libellé.
+        assert skills["first_gap_mm"] == pytest.approx(60 - (50 + 3.6), abs=0.5)
+        # Les cadres ne sont plus des ornements de la rubrique ni de la page.
+        assert skills["decorations"] == []
+        assert spec["page_decorations"] == []
+        assert [s["name"] for s in sample["skills"]] == ["HTML", "CSS", "Python", "Docker"]
+
+    def test_une_entree_sans_cadre_laisse_les_formes_a_la_rubrique(self) -> None:
+        spec, _, _ = self._builder(self.FRAMES[:3]).build()
+        skills = sections(spec)["skills"]
+        assert "cell" not in slot(skills, "skill")
+        assert len(skills["decorations"]) + len(spec["page_decorations"]) == 3
+
+    def test_des_cadres_de_tailles_differentes_ne_font_pas_une_grille(self) -> None:
+        b = self._builder()
+        b.drawings[3]["w"] = 26.0
+        spec, _, _ = b.build()
+        assert "cell" not in slot(sections(spec)["skills"], "skill")
+
+    def test_lexemple_se_rend_avec_un_cadre_par_entree(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import (  # noqa: PLC0415
+            HtmlRenderer,
+            estimate,
+        )
+
+        spec, sample, _ = self._builder().build()
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert html.count("border-radius:50%;border:0.75pt solid #333333") == 4
+        # Deux cadres par rangée ; la seconde rangée est à l'écart mesuré.
+        assert "width:48.00mm" in html
+        assert html.count("margin-top:calc(4.00mm*var(--k))") == 2
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+        skills = sections(spec)["skills"]
+        sec = next(x for x in view["sections"] if x["kind"] == "skills")
+        # Titre, écart, deux rangées de 20 mm et leur écart de 4 mm.
+        assert estimate(spec["styles"], skills, sec, 80.0, cv_font_set()) == pytest.approx(
+            skills["margin_top_mm"] + 3.6 + skills["first_gap_mm"] + 44.0, abs=0.1
+        )
+
+    def test_une_personne_a_autant_de_cadres_que_de_competences(self) -> None:
+        from karria.modules.documents.domain.view import from_cv  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        spec, _, _ = self._builder().build()
+        html = HtmlRenderer(spec, from_cv(spec, CV_PERSONNE), cv_font_set(), photo=None).render()
+        # Cinq compétences, cinq cadres ; les langues, empruntées, n'en ont pas.
+        assert html.count("border-radius:50%;border:0.75pt solid #333333") == 5
+        assert "Anglais (B2)" in html
+        # « Visualisation » ne tient pas dans 20 mm en 9 pt : tous les libellés
+        # prennent le même corps réduit.
+        assert html.count("font-size:calc(") - html.count("font-size:calc(9.0pt") >= 5
+
+    def test_un_libelle_trop_long_reduit_son_corps(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import (  # noqa: PLC0415
+            cell_inner_width,
+            cell_text_scale,
+            cell_text_width,
+        )
+
+        spec, _, _ = self._builder().build()
+        sl = slot(sections(spec)["skills"], "skill")
+        st = spec["styles"]["skills.skill"]
+        fonts = cv_font_set()
+        assert cell_text_scale(fonts, "HTML", st, sl["cell"]) == 1.0
+        assert cell_text_scale(fonts, "Visualisation de données", st, sl["cell"]) < 1.0
+        # Un mot que rien ne fait tenir prend le plus petit corps essayé.
+        assert cell_text_scale(fonts, "Anticonstitutionnellement" * 3, st, sl["cell"]) == 0.6
+        assert cell_text_width(fonts, "Anticonstitutionnellement" * 3, st, sl["cell"], 0.6) is None
+        # Dans un rond, la corde se resserre avec le nombre de lignes ; un cadre
+        # droit garde sa largeur, moins un millimètre de chaque côté.
+        one, three = (cell_inner_width(sl["cell"], n, 3.6) for n in (1, 3))
+        assert 14.0 < three < one < 18.0
+        square = {**sl["cell"], "kind": "rect"}
+        assert cell_inner_width(square, 3, 3.6) == 18.0
+        assert cell_text_width(fonts, "HTML", st, square, 1.0) == 18.0
+
+
+class TestRubriqueCentree:
+    """Des coordonnées centrées les unes sous les autres, sous une photo."""
+
+    def _lines(self, website: tuple[float, float] = (20.0, 60.0)) -> list[Json]:
+        return [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "CONTACT", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "jean@mail.fr", 28, 60, w=34),
+            raw_line("L4", "0612", 39, 67, w=12),
+            raw_line("L5", "1 rue Haute", 34, 74, w=22),
+            raw_line("L6", "Paris", 40, 78, w=10),
+            raw_line("L7", "https://exemple.fr/jean", website[0], 85, w=website[1]),
+        ]
+
+    ROLES = (
+        ("full_name", "header", 0),
+        ("section_title", "contact", 0),
+        ("email", "contact", 0),
+        ("phone", "contact", 0),
+        ("address", "contact", 0),
+        ("address", "contact", 0),
+        ("website", "contact", 0),
+    )
+
+    def test_les_lignes_centrees_se_rendent_centrees_dans_la_boite_de_laxe(self) -> None:
+        spec, sample, _ = builder(self._lines(), list(self.ROLES)).build()
+        contact = sections(spec)["contact"]
+        assert contact["centered"] is True
+        # L'axe est à 45 mm, la colonne commence à 20 mm : une boîte de 50 mm.
+        assert contact["width_mm"] == pytest.approx(50.0)
+        assert {(sl["align"], sl["dx_mm"]) for sl in contact["slots"]} == {("center", 0.0)}
+        # Une adresse écrite « rue » puis « ville » garde son retour à la ligne.
+        assert sample["contact"]["city"] == "1 rue Haute\nParis"
+
+    def test_une_ligne_hors_de_laxe_qui_ne_deborde_pas_interdit_le_centrage(self) -> None:
+        spec, _, _ = builder(self._lines(website=(20.0, 40.0)), list(self.ROLES)).build()
+        assert "centered" not in sections(spec)["contact"]
+
+    def test_des_lignes_alignees_a_gauche_ne_sont_pas_centrees(self, spec: Json) -> None:
+        assert all("centered" not in s for s in sections(spec).values())
+
+    def test_dans_lexemple_un_mot_trop_large_deborde_sans_se_couper(self) -> None:
+        from karria.modules.documents.domain.view import from_cv, from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        spec, sample, _ = builder(self._lines(), list(self.ROLES)).build()
+        # L'adresse du site, plus large que la boîte une fois rendue.
+        sample["contact"]["website"] = "https://exemple.fr/jean-dupont-developpeur"
+        html = HtmlRenderer(spec, from_sample(spec, sample), cv_font_set(), photo=None).render()
+        assert 'white-space:nowrap">https://exemple.fr/jean-dupont-developpeur' in html
+        assert "text-align:center" in html
+        # Une personne : son adresse se réduit avant de se couper, elle ne déborde pas.
+        cv = {
+            "identity": {"first_name": "Awa", "last_name": "Diallo"},
+            "contact": {
+                "email": "awa@example.com",
+                "links": [{"url": "https://exemple.fr/jean-dupont-developpeur"}],
+            },
+        }
+        person = HtmlRenderer(spec, from_cv(spec, cv), cv_font_set(), photo=None).render()
+        assert 'white-space:nowrap">exemple.fr' not in person
+
+
+class TestEtiquetteEnPictogrammes:
+    def _spec(self) -> tuple[Json, Json, dict[str, bytes]]:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "CONTACT", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "a@b.fr", 20, 57, w=14),
+            raw_line("L4", "  ", 22, 63, w=10, h=2.0),
+            raw_line("L5", "0612", 20, 68, w=12),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "contact", 0),
+            ("email", "contact", 0),
+            ("label", "contact", 0),
+            ("phone", "contact", 0),
+        ]
+        return builder(lines, roles).build()
+
+    def test_un_texte_de_glyphes_prives_est_un_pictogramme(self) -> None:
+        assert is_pictogram_text(" ")
+        assert not is_pictogram_text("Phone")
+        assert not is_pictogram_text(" 0612")
+        assert not is_pictogram_text("  ")
+
+    def test_letiquette_devient_une_image_de_la_source(self) -> None:
+        spec, _, assets = self._spec()
+        label = slot(sections(spec)["contact"], "phone")["label"]
+        assert label["text"] == ""
+        assert label["asset"] == "label_contact_phone.png"
+        assert label["asset"] in assets
+        # La boîte de la ligne (10 × 2 mm) et 35 % de sa hauteur de chaque côté.
+        assert (label["w_mm"], label["h_mm"], label["pad_mm"]) == (11.4, 3.4, 0.7)
+        assert label["pitch_mm"] == pytest.approx(5.0)
+
+    def test_le_rendu_pose_limage_et_necrit_aucun_glyphe_prive(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        spec, sample, _ = self._spec()
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert '<img src="label_contact_phone.png"' in html
+        assert "left:-0.70mm" in html
+        assert "" not in html
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")

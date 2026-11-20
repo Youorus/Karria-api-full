@@ -71,6 +71,12 @@ NAME_FIELDS: Final = frozenset({"first_name", "last_name", "full_name"})
 #: Un poste visé aussi : sur une ligne à 50 % plutôt que replié sur deux en 60 %
 #: (14/11, « Développeur full-stack & data », 1,7 fois l'exemple de Croisée Graphite).
 HEADLINE_SIZE_STEPS: Final = (*FIELD_SIZE_STEPS, 0.55, 0.5)
+#: Blanc gardé de chaque côté d'un libellé dans son cadre (mm).
+CELL_PADDING_MM: Final = 1.0
+#: Un tracé courbe aussi large que haut, à cette tolérance (mm), se dessine en rond.
+ROUND_TOLERANCE_MM: Final = 0.5
+#: Un libellé se replie sur trois lignes au plus dans son cadre.
+CELL_MAX_LINES: Final = 3
 
 
 def identity_url(name: str) -> str:
@@ -321,6 +327,81 @@ def deco_css(d: Json, left: float, top: float, extra: str = "") -> str:
     )
 
 
+def cell_inner_width(cell: Json, lines: int, line_mm: float) -> float:
+    """La largeur utile d'un cadre pour un libellé de `lines` lignes centré dedans (mm).
+
+    Dans un rond, c'est la corde à la hauteur du haut du bloc de texte : un
+    mot seul dispose de presque tout le diamètre, trois lignes de bien moins.
+    Un blanc est gardé de chaque côté du trait.
+    """
+    width = float(cell["w_mm"])
+    if cell["kind"] == "curve" and abs(width - float(cell["h_mm"])) < ROUND_TOLERANCE_MM:
+        radius = width / 2
+        half_block = min(lines * line_mm / 2, radius)
+        width = 2 * math.sqrt(radius**2 - half_block**2)
+    return max(width - 2 * CELL_PADDING_MM, 0.0)
+
+
+def cell_text_width(fonts: FontSet, val: str, st: Json, cell: Json, k: float) -> float | None:
+    """La largeur où un libellé se replie dans son cadre au corps réduit de `k`, ou rien s'il n'y tient pas.
+
+    Le libellé est essayé sur une, deux puis trois lignes (repli glouton, aux
+    métriques de la police servie) : chaque ligne doit tenir dans la largeur
+    utile du cadre pour ce nombre de lignes.
+    """
+    size = float(st["size_pt"]) * k
+    space = fonts.width_mm(" ", st, size_pt=size)
+    widths = [fonts.width_mm(w, st, size_pt=size) for w in val.split()]
+    for allowed in range(1, CELL_MAX_LINES + 1):
+        inner = cell_inner_width(cell, allowed, lh(st) * k)
+        lines, used = 1, 0.0
+        for w in widths:
+            if used and used + space + w > inner:
+                lines, used = lines + 1, w
+            else:
+                used = used + space + w if used else w
+        if max(widths, default=0.0) <= inner and lines <= allowed:
+            return inner
+    return None
+
+
+def cell_text_scale(fonts: FontSet, val: str, st: Json, cell: Json) -> float:
+    """La réduction de corps qui fait tenir un libellé dans son cadre (1 pour l'exemple, qui tient déjà)."""
+    for k in (1.0, *FIELD_SIZE_STEPS):
+        if cell_text_width(fonts, val, st, cell, k) is not None:
+            return k
+    return FIELD_SIZE_STEPS[-1]
+
+
+def unframed(spec: Json, slots: list[Json]) -> Json:
+    """Une liste empruntée à une liste en cadres se rend sans eux : une entrée par ligne.
+
+    Les cadres sont le dessin d'une rubrique du modèle (ses compétences) ;
+    répétés pour les langues et les centres d'intérêt, ils prenaient un tiers
+    de page et serraient « Français (langue maternelle) » dans un cercle. La
+    liste empruntée garde le style du libellé, à gauche, sous son titre à
+    l'écart titre → contenu le plus serré du modèle.
+    """
+    gaps = [
+        float(x["first_gap_mm"])
+        for b in spec["bands"]
+        for c in b["columns"]
+        for x in c["sections"]
+        if not x.get("untitled") and not any(sl.get("cell") for sl in x["slots"])
+    ]
+    plain = [
+        {
+            **{k: v for k, v in sl.items() if k not in ("cell", "columns", "column_pitch_mm")},
+            "dx_mm": 0.0,
+            "align": "left",
+        }
+        if sl.get("cell")
+        else sl
+        for sl in slots
+    ]
+    return {"slots": plain, "first_gap_mm": min(gaps) if gaps else 4.0}
+
+
 def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
     """Chaque rubrique de la vue à sa place dans le modèle.
 
@@ -375,6 +456,8 @@ def placement(spec: Json, view: Json, fonts: FontSet) -> list[Json]:
                 "margin_top_mm": max(gaps) if gaps else 10.0,
                 "decorations": [d for d in s["decorations"] if d.get("anchor") != "after"],
             }
+            if any(sl.get("cell") for sl in slots):
+                clone.update(unframed(spec, slots))
             bands[bi]["columns"][ci].append((clone, sec, True))
             break
     order = {k: i for i, k in enumerate(spec_secs)}
@@ -421,6 +504,12 @@ def estimate(styles: dict[str, Json], s: Json, sec: Json, col_w: float, fonts: F
                 val = item.get(role)
                 vals = val if isinstance(val, list) else ([val] if val else [])
                 st = styles[style_key(styles, kind, role)]
+                if sl.get("cell") and vals:
+                    # Une grille de cadres : des rangées au pas des cadres.
+                    cell = sl["cell"]
+                    count = -(-len(vals) // int(sl["columns"]))
+                    h += count * cell["h_mm"] + (count - 1) * cell["row_gap_mm"]
+                    continue
                 for v in vals:
                     lines = max(1, -(-fonts.width_mm(v, st) // max(width, 10)))
                     h += sl["margin_top_mm"] + lh(st) * lines
@@ -590,6 +679,21 @@ class HtmlRenderer:
         # La boîte de texte de la rubrique, si ses paragraphes repliés l'ont dite.
         box_w = min(col_w, float(s["width_mm"])) if s.get("width_mm") else col_w
         slots, order = extra_contact_slots(s, sec)
+        # Les libellés d'une liste en cadres partagent un même corps : celui du
+        # plus long d'entre eux (un cercle en 10 pt à côté d'un autre en 7 se voit).
+        cell_scale = min(
+            (
+                cell_text_scale(
+                    self.fonts, v, self.styles[style_key(self.styles, kind, r)], sl["cell"]
+                )
+                for sl in slots.values()
+                if sl.get("cell")
+                for r in sl["roles"]
+                for item in sec["items"]
+                for v in (item.get(r) if isinstance(item.get(r), list) else [])
+            ),
+            default=1.0,
+        )
         # Des éléments côte à côte (deux références) : une grille au pas mesuré,
         # chaque élément dans sa colonne, les rangées à l'écart des éléments.
         grid_items = int(s.get("item_columns") or 0)
@@ -645,7 +749,10 @@ class HtmlRenderer:
             first_st = self.styles[style_key(self.styles, kind, rows[0][1][0][0])]
             if not grid_items or i % grid_items == 0:
                 row_prev_half = prev_half
-            item_margin = gap - row_prev_half - half(first_st)
+            # Un cadre (un cercle autour d'une compétence) n'est pas une ligne de
+            # texte : l'écart se compte jusqu'à son bord, sans demi-blanc à reprendre.
+            framed = bool(rows[0][0].get("cell"))
+            item_margin = gap - row_prev_half - (0.0 if framed else half(first_st))
             # Avec une colonne latérale (frise), l'élément est une rangée : la
             # colonne latérale, une gouttière, le contenu ; sa hauteur est celle
             # du plus haut des deux, comme dans la source.
@@ -725,10 +832,17 @@ class HtmlRenderer:
                     # Une liste en colonnes : les entrées se rangent côte à côte, au
                     # pas mesuré, et passent à la ligne quand la colonne est pleine.
                     role, v, path = vals[0]
+                    frame = sl.get("cell")
+                    per_row = int(sl["columns"])
                     if grid_open is None:
                         # Le conteneur tient `columns` entrées au pas mesuré ; la
                         # dernière peut dépasser la colonne de quelques millimètres.
-                        grid_w = max(width, sl["column_pitch_mm"] * sl["columns"])
+                        # Des cadres tiennent dans leur grille mesurée, sans s'étirer.
+                        grid_w = (
+                            sl["column_pitch_mm"] * per_row
+                            if frame
+                            else max(width, sl["column_pitch_mm"] * sl["columns"])
+                        )
                         out.append(
                             f'<div style="display:flex;flex-wrap:wrap;margin-left:{sl["dx_mm"]:.2f}mm;'
                             f'width:{grid_w:.2f}mm;margin-top:calc({margin_row:.2f}mm*var(--k))">'
@@ -736,10 +850,15 @@ class HtmlRenderer:
                         grid_open = sl
                         grid_count = 0
                         margin_row = 0.0
-                    elif grid_count % int(sl["columns"]):
+                    elif grid_count % per_row:
                         # Une entrée de la même rangée : pas de marge (la rangée en a une).
                         margin_row = 0.0
                     grid_count += 1
+                    if frame:
+                        gap_row = frame["row_gap_mm"] if grid_count > per_row else 0.0
+                        out.append(self.framed_entry(sl, key0, st0, v, path, gap_row, cell_scale))
+                        last_half = 0.0
+                        continue
                     out.append(
                         self.text(
                             key0,
@@ -769,7 +888,11 @@ class HtmlRenderer:
                     )
                 elif len(vals) == 1:
                     role, v, path = vals[0]
-                    extra = ";white-space:nowrap" if role == "item_dates" else ""
+                    extra = (
+                        ";white-space:nowrap"
+                        if role == "item_dates"
+                        else self.unbroken(v, st0, width)
+                    )
                     size = (item.get("sizes") or {}).get(role)
                     if size and self.view.get("sample"):
                         # L'exemple garde le corps propre de cet élément (un modèle
@@ -832,6 +955,45 @@ class HtmlRenderer:
             if d["anchor"] == "after"
         )
         return "".join(out)
+
+    def framed_entry(  # noqa: PLR0917 - un libellé, son style, son cadre et sa place
+        self,
+        sl: Json,
+        key: str,
+        st: Json,
+        value: str,
+        path: str | None,
+        gap_mm: float,
+        scale: float,
+    ) -> str:
+        """Une entrée de liste dans son cadre : la forme, et le libellé centré dedans.
+
+        Chaque entrée porte son cadre : une personne qui a douze compétences a
+        douze cercles, pas les huit de l'exemple. Le libellé garde la classe
+        `t` (l'ajustement de page mesure son bas) et son chemin.
+        """
+        cell = sl["cell"]
+        shape = deco_css(cell, 0.0, 0.0)
+        shrink = (
+            f";font-size:calc({float(st['size_pt']) * scale:.2f}pt*var(--f));"
+            f"line-height:calc({lh(st) * scale:.3f}mm*var(--f))"
+            if scale < 1.0
+            else ""
+        )
+        # Le navigateur replie là où la mesure l'a prévu : à la largeur utile du
+        # cadre pour ce nombre de lignes, pas à son diamètre.
+        inner = cell_text_width(self.fonts, value, st, cell, scale) or cell_inner_width(
+            cell, CELL_MAX_LINES, lh(st) * scale
+        )
+        return (
+            f'<div style="flex:none;position:relative;width:{sl["column_pitch_mm"]:.2f}mm;'
+            f'height:{cell["h_mm"]:.2f}mm;margin-top:calc({gap_mm:.2f}mm*var(--k))">'
+            f'<div style="{shape}"></div>'
+            f'<div style="position:absolute;left:0;top:0;width:{cell["w_mm"]:.2f}mm;height:{cell["h_mm"]:.2f}mm;'
+            'display:flex;align-items:center;justify-content:center">'
+            f'<div class="t {esc(css_class(key))}"{self.anchor(path)} style="position:relative;text-align:center;'
+            f'max-width:{inner + 0.2:.2f}mm{shrink}">{esc(value)}</div></div></div>'
+        )
 
     def page_shape(self, d: Json) -> str:
         """Un ornement fixe de la page : une forme, ou l'image d'un tracé rastérisé."""
@@ -986,10 +1148,16 @@ class HtmlRenderer:
                 margin=margin + half(st0) - half(label_st),
                 dx=label["dx_mm"],
                 width=width,
+                extra=f";height:{lh(label_st):.3f}mm" if label.get("asset") else "",
             )
+            + self.pictogram(label, label_st)
             + "</div>"
         )
         value_margin = label["pitch_mm"] - float(label_st["box_h_mm"]) - half(label_st) - half(st0)
+        extra = ";white-space:nowrap" if role == "item_dates" else self.unbroken(value, st0, width)
+        if role in CONTACT_ROLES and not self.view.get("sample"):
+            # Comme une coordonnée sans étiquette : réduite avant d'être coupée.
+            extra = self.fit_header_text(value, st0, width)
         return above + self.text(
             style_key(self.styles, kind, role),
             value,
@@ -997,9 +1165,33 @@ class HtmlRenderer:
             dx=sl["dx_mm"],
             width=width,
             align=sl["align"],
-            extra=";white-space:nowrap" if role == "item_dates" else "",
+            extra=extra,
             path=path,
         )
+
+    def pictogram(self, label: Json, label_st: Json) -> str:
+        """Une étiquette en pictogrammes : l'image rastérisée de la source, à sa place.
+
+        Le bloc garde la hauteur de la ligne d'étiquette (les pas mesurés ne
+        bougent pas) ; l'image le déborde du blanc gardé autour d'elle.
+        """
+        if not label.get("asset"):
+            return ""
+        pad = float(label["pad_mm"])
+        return (
+            f'<img src="{esc(self.url(label["asset"]))}" alt="" style="position:absolute;left:{-pad:.2f}mm;'
+            f'top:{half(label_st) - pad:.2f}mm;width:{label["w_mm"]}mm;height:{label["h_mm"]}mm">'
+        )
+
+    def unbroken(self, value: str, st: Json, width: float) -> str:
+        """Dans l'exemple, un mot seul plus large que sa boîte la déborde, comme dans la source.
+
+        `overflow-wrap:anywhere` le couperait au milieu (une adresse de site
+        écrite d'un trait sous une photo) : la source, elle, l'a laissé dépasser.
+        """
+        if not self.view.get("sample") or " " in value or "\n" in value:
+            return ""
+        return ";white-space:nowrap" if self.fonts.width_mm(value, st) > width else ""
 
     def joined_row(
         self,
