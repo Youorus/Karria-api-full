@@ -49,10 +49,7 @@ class _Temoin:
 
 
 class _GardeOuverte:
-    async def ensure_allowed(self, *args: object) -> None:
-        return None
-
-    async def record(self, *args: object) -> None:
+    async def reserve(self, *args: object) -> None:
         return None
 
 

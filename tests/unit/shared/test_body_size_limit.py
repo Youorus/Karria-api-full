@@ -91,10 +91,17 @@ class TestPlafond:
 
     async def test_un_televersement_a_le_plafond_general(self) -> None:
         upload = {"content-type": "multipart/form-data; boundary=x"}
-        status, body, _ = await call(chunks=[b"x" * 500], headers=upload)
+        route = "/api/v1/cv/import"
+        status, body, _ = await call(chunks=[b"x" * 500], headers=upload, path=route)
         assert status == 200
         assert json.loads(body) == {"size": 500}
-        status, _, _ = await call(chunks=[b"x" * 600] * 2, headers=upload)
+        status, _, _ = await call(chunks=[b"x" * 600] * 2, headers=upload, path=route)
+        assert status == 413
+
+    async def test_se_declarer_multipart_ne_donne_pas_le_grand_plafond(self) -> None:
+        # Le plafond se choisit sur le chemin, pas sur ce que le client annonce.
+        spoofed = {"content-type": "multipart/form-data; boundary=x"}
+        status, _, _ = await call(chunks=[b"x" * 500], headers=spoofed)
         assert status == 413
 
     async def test_les_lots_du_collecteur_gardent_le_plafond_general(self) -> None:

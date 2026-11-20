@@ -317,8 +317,14 @@ class InMemoryLoginChallengeRepository:
         self.rows[challenge_id] = replace(row, attempts=row.attempts + 1)
         return True
 
-    async def opened_for_email(self, email: str, *, since: datetime) -> int:
-        return sum(1 for c in self.rows.values() if c.email == email and c.created_at >= since)
+    async def opened_for_email(
+        self, email: str, *, since: datetime, failed_only: bool = False
+    ) -> int:
+        return sum(
+            1
+            for c in self.rows.values()
+            if c.email == email and c.created_at >= since and (c.attempts > 0 or not failed_only)
+        )
 
     async def purge_before(self, moment: datetime) -> int:
         doomed = [c.id for c in self.rows.values() if c.expires_at < moment]

@@ -139,10 +139,20 @@ class SecurityHeadersMiddleware:
 #: Corps maximal d'une requête, tous types confondus : au-dessus du plus gros
 #: téléversement légitime (25 Mio, `shared/storage/uploads.py`).
 MAX_BODY_BYTES: Final = 26 * 1024 * 1024
-#: Corps maximal d'une requête JSON : le plus gros corps légitime est un CV
-#: (256 Kio) ; les lots du collecteur, sous `/internal/`, gardent le plafond général.
+#: Corps maximal partout ailleurs que sur les routes de téléversement : le plus
+#: gros corps légitime y est un CV (256 Kio).
 MAX_JSON_BODY_BYTES: Final = 2 * 1024 * 1024
-_UNBOUNDED_JSON_PREFIX: Final = "/api/v1/internal/"
+#: Les routes qui reçoivent des fichiers (ou les lots du collecteur) ont le plafond
+#: général. Le choix se fait sur le **chemin**, jamais sur le `Content-Type`
+#: annoncé : un client qui se déclarait « multipart » sur une route JSON obtenait
+#: le grand plafond (revue de sécurité du 2026-11-20).
+UPLOAD_PATH_PREFIXES: Final = (
+    "/api/v1/cv/photo",
+    "/api/v1/cv/import",
+    "/api/v1/voice/",
+    "/api/v1/support/",
+    "/api/v1/internal/",
+)
 _TOO_LARGE_BODY: Final = (
     b'{"error":{"code":"invalid_input","message":"La requ\\u00eate est trop volumineuse.",'
     b'"details":{"reason":"body_too_large"}}}'
@@ -175,12 +185,9 @@ class BodySizeLimitMiddleware:
         self._max_json_bytes = max_json_bytes
 
     def _limit(self, scope: Scope) -> int:
-        headers = Headers(scope=scope)
-        kind = headers.get("content-type", "").split(";")[0].strip().lower()
-        is_json = kind.endswith("json") or not kind
-        if is_json and not str(scope.get("path", "")).startswith(_UNBOUNDED_JSON_PREFIX):
-            return min(self._max_json_bytes, self._max_bytes)
-        return self._max_bytes
+        if str(scope.get("path", "")).startswith(UPLOAD_PATH_PREFIXES):
+            return self._max_bytes
+        return min(self._max_json_bytes, self._max_bytes)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":

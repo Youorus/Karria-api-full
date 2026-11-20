@@ -318,9 +318,14 @@ class TortoiseLoginChallengeRepository:
         )
         return claimed > 0
 
-    async def opened_for_email(self, email: str, *, since: datetime) -> int:
+    async def opened_for_email(
+        self, email: str, *, since: datetime, failed_only: bool = False
+    ) -> int:
         """Compte en base : vaut pour tous les processus et toutes les origines."""
-        return await LoginChallengeModel.filter(email=email, created_at__gte=since).count()
+        query = LoginChallengeModel.filter(email=email, created_at__gte=since)
+        if failed_only:
+            query = query.filter(attempts__gt=0)
+        return await query.count()
 
     async def purge_before(self, moment: datetime) -> int:
         """Supprime les parcours périmés avant cet instant."""

@@ -223,8 +223,13 @@ class LoginChallengeRepository(Protocol):
         """
         ...
 
-    async def opened_for_email(self, email: str, *, since: datetime) -> int:
-        """Parcours ouverts pour cette adresse depuis `since`, toutes origines confondues."""
+    async def opened_for_email(
+        self, email: str, *, since: datetime, failed_only: bool = False
+    ) -> int:
+        """Parcours ouverts pour cette adresse depuis `since`, toutes origines confondues.
+
+        `failed_only` : seulement ceux où au moins un code faux a été essayé.
+        """
         ...
 
     async def purge_before(self, moment: datetime) -> int:

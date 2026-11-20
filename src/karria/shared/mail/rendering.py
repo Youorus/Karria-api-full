@@ -282,6 +282,10 @@ def _read(name: str, language: Language) -> str:
     return (TEMPLATES_DIR / language.value / f"{name}.html").read_text(encoding="utf-8")
 
 
+#: Le crochet ouvrant d'une directive (`[code]`, `[button:…]`, `[app:…]` et leurs fermetures).
+_DIRECTIVE_IN_VALUE: Final = re.compile(r"\[(?=/?(?:code|button|app)\b)", re.IGNORECASE)
+
+
 def _escape(value: Any) -> str:
     """Échappe une valeur destinée au HTML.
 
@@ -289,7 +293,13 @@ def _escape(value: Any) -> str:
     inadvertance. Sans échappement, ils casseraient la mise en page — et
     une valeur venue d'une source moins sûre y injecterait du balisage.
     """
-    return html.escape(str(value), quote=True)
+    # Une valeur ne porte jamais de directive de gabarit : elle tient sur une
+    # ligne, et un « [button:…]…[/button] » qu'elle contiendrait reste du texte.
+    # Le compositeur passe **après** la substitution : sans cela, le message
+    # d'une personne à l'équipe posait un vrai bouton Karria, vers l'adresse de
+    # son choix, dans le courriel reçu par l'équipe (audit du 2026-11-20).
+    flat = " ".join(str(value).splitlines())
+    return html.escape(_DIRECTIVE_IN_VALUE.sub("(", flat), quote=True)
 
 
 #: Mention de pied par défaut, quand un message n'en fournit pas.

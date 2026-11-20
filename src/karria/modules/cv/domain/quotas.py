@@ -39,6 +39,8 @@ class AiUsage(StrEnum):
     #: Comptées pour le garde-fou journalier seulement (voir `DAILY_GUARDS`).
     INTERPRET = "interpret"
     TRANSCRIBE = "transcribe"
+    #: Une tentative d'import : l'analyse du fichier, avant tout appel au modèle.
+    IMPORT_TRY = "import_try"
 
 
 #: Par mois civil (UTC), sans abonnement.
@@ -57,7 +59,14 @@ MONTHLY_PORTRAIT_LIMIT: Final = MONTHLY_LIMITS[AiUsage.PORTRAIT]
 #: sans plafond pour un compte en boucle (audit de sécurité du 2026-11-20). Ce ne
 #: sont pas des quotas de produit : l'usage normal (une trentaine de réponses pour
 #: écrire un CV) n'en approche pas.
-DAILY_GUARDS: Final[dict[AiUsage, int]] = {AiUsage.INTERPRET: 200, AiUsage.TRANSCRIBE: 80}
+#: `IMPORT_TRY` borne l'**analyse** d'un fichier importé (PDF, Word, image) : elle
+#: coûte du processeur avant même le quota d'import, et un fichier piégé ne
+#: s'interrompt pas en cours de page.
+DAILY_GUARDS: Final[dict[AiUsage, int]] = {
+    AiUsage.INTERPRET: 200,
+    AiUsage.TRANSCRIBE: 80,
+    AiUsage.IMPORT_TRY: 25,
+}
 
 
 def day_start(now: datetime) -> datetime:

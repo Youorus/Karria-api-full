@@ -194,9 +194,8 @@ async def interpret_answer(
     répond pas. `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
     # Garde-fou du jour (audit du 2026-11-20) : `429 ai_daily_limit` au-delà.
-    await guard.ensure_allowed(principal.subject_id, AiUsage.INTERPRET)
+    await guard.reserve(principal.subject_id, AiUsage.INTERPRET)
     result = await interpret.execute(body.chapter, body.answer, body.correction_of)
-    await guard.record(principal.subject_id, AiUsage.INTERPRET)
     return InterpretationRead(
         proposal=result.proposal,
         missing=list(result.missing),
@@ -350,6 +349,7 @@ async def import_cv(
     principal: AiConsentedPrincipalDep,
     import_cv: ImportCvDep,
     storage: ObjectStorageDep,
+    guard: DailyAiGuardDep,
     file: Annotated[
         list[UploadFile],
         File(
@@ -369,6 +369,9 @@ async def import_cv(
     `429 import_quota_exceeded` passé cinq imports dans le mois (trente avec
     « Karria sans pub », ADR-0038).
     """
+    # L'analyse d'un fichier coûte du processeur avant tout quota : 25 tentatives
+    # par jour et par compte (`429 ai_daily_limit`), réservées avant de lire.
+    await guard.reserve(principal.subject_id, AiUsage.IMPORT_TRY)
     received = [
         ReceivedFile(
             payload=await part.read(MAX_DOCUMENT_BYTES + 1), content_type=part.content_type or ""
@@ -402,10 +405,9 @@ async def transcribe(
 
     `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
-    await guard.ensure_allowed(principal.subject_id, AiUsage.TRANSCRIBE)
+    await guard.reserve(principal.subject_id, AiUsage.TRANSCRIBE)
     payload = await audio_file.read(MAX_AUDIO_BYTES + 1)
     text = await transcribe_voice.execute(payload, audio_file.content_type)
-    await guard.record(principal.subject_id, AiUsage.TRANSCRIBE)
     return TranscriptionRead(text=text)
 
 

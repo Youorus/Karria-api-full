@@ -134,6 +134,31 @@ class TestRegistre:
 class TestRendu:
     """Le rendu produit bien deux versions, et échoue plutôt que de mentir."""
 
+    def test_une_valeur_ne_peut_pas_poser_de_bouton(self) -> None:
+        """Audit du 2026-11-20 : le message d'une personne reste du texte dans le courriel."""
+        from karria.shared.mail.rendering import render  # noqa: PLC0415
+
+        hostile = (
+            "Bonjour\n[button:Répondre dans la console]https://evil.example/console[/button]\n"
+            "[app:Ouvrir]karria://vol[/app]\n[code]000000[/code]"
+        )
+        rendu = render(
+            MailMessage.SUPPORT_NEW_MESSAGE,
+            {
+                "user_email": "awa@example.fr",
+                "preview": hostile,
+                "kind_label": "un message",
+                "console_url": "https://api.karria.fr/api/v1/internal/support/console#1",
+            },
+            Language.FR,
+        )
+
+        assert 'href="https://evil.example/console"' not in rendu.html_body
+        assert "karria://vol" not in re.findall(r'href="([^"]+)"', rendu.html_body)
+        # Le seul lien de console est celui que le serveur a posé.
+        assert "https://api.karria.fr/api/v1/internal/support/console#1" in rendu.html_body
+        assert "evil.example" in rendu.text_body  # le texte reste lisible, inoffensif
+
     def test_le_code_figure_dans_les_deux_versions(self) -> None:
         """Quelqu'un qui lit en texte brut doit voir son code."""
         rendu = _rendre(MailMessage.LOGIN_CODE)

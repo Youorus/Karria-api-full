@@ -73,6 +73,16 @@ MAX_CODE_ATTEMPTS: Final = 5
 #: la devinette à 240 essais par jour, soit 0,024 % de chance.
 MAX_CHALLENGES_PER_EMAIL_HOUR: Final = 5
 MAX_CHALLENGES_PER_EMAIL_DAY: Final = 12
+#: Ces deux plafonds ne comptent que les parcours **où un code faux a été
+#: essayé** — le signe d'une devinette. Redemander un code sans se tromper ne
+#: verrouille personne. Les ouvertures seules ont un plafond plus haut, qui
+#: borne l'envoi de courriels à une adresse (revue de sécurité du 2026-11-20).
+#: Limite connue et assumée : quelqu'un qui connaît une adresse peut encore en
+#: bloquer la connexion par code pendant une heure en multipliant les codes
+#: faux ; la connexion Apple ou Google reste ouverte, et c'est le prix d'un
+#: code à six chiffres qui ne se devine pas.
+MAX_OPENED_PER_EMAIL_HOUR: Final = 10
+MAX_OPENED_PER_EMAIL_DAY: Final = 30
 
 
 class LoginChallengeStatus(StrEnum):

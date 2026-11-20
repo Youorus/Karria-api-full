@@ -25,9 +25,9 @@ from karria.modules.identity.application import (
 )
 from karria.modules.identity.domain import (
     LOGIN_CODE_RESEND_DELAY,
-    MAX_CHALLENGES_PER_EMAIL_DAY,
     MAX_CHALLENGES_PER_EMAIL_HOUR,
     MAX_CODE_ATTEMPTS,
+    MAX_OPENED_PER_EMAIL_HOUR,
     AiDisclosure,
     InvalidEmailError,
     LoginChallengeExpiredError,
@@ -371,34 +371,45 @@ class TestAccordIaALInscription:
 class TestDevinetteDuCode:
     """Audit du 2026-11-20 : un code à six chiffres ne se devine pas à force d'essais."""
 
-    async def test_les_parcours_sont_plafonnes_par_adresse_quelle_que_soit_lorigine(
+    async def test_les_ouvertures_sont_plafonnees_par_adresse_quelle_que_soit_lorigine(
         self, start: StartEmailLogin, env: IdentityEnv
     ) -> None:
-        for n in range(MAX_CHALLENGES_PER_EMAIL_HOUR):
+        for n in range(MAX_OPENED_PER_EMAIL_HOUR):
             # Une origine différente à chaque fois : le frein par origine ne voit rien.
             await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"origine-{n}")
 
         with pytest.raises(TooManyAttemptsError):
             await start.execute(email=EMAIL, consent=CONSENT, throttle_key="encore-une-autre")
 
-        assert len(env.sender.sent) == MAX_CHALLENGES_PER_EMAIL_HOUR  # aucun courriel de plus
+        assert len(env.sender.sent) == MAX_OPENED_PER_EMAIL_HOUR  # aucun courriel de plus
         # Une autre adresse n'est pas touchée.
         await start.execute(email="autre@exemple.fr", consent=CONSENT, throttle_key="k")
 
-    async def test_le_plafond_horaire_se_leve_le_plafond_du_jour_tient(
-        self, start: StartEmailLogin, env: IdentityEnv
+    async def test_la_devinette_est_plafonnee_plus_bas_que_la_simple_redemande(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
     ) -> None:
-        opened = 0
-        while opened < MAX_CHALLENGES_PER_EMAIL_DAY:
-            for _ in range(MAX_CHALLENGES_PER_EMAIL_HOUR):
-                if opened == MAX_CHALLENGES_PER_EMAIL_DAY:
-                    break
-                await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"o-{opened}")
-                opened += 1
-            env.clock.advance(timedelta(hours=1, minutes=1))
+        for n in range(MAX_CHALLENGES_PER_EMAIL_HOUR):
+            started = await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"o-{n}")
+            good = env.sender.last_code_for("marc@exemple.fr")
+            wrong = "000000" if good != "000000" else "111111"
+            with pytest.raises(LoginCodeInvalidError):
+                await verify.execute(
+                    challenge_id=started.challenge_id, code=wrong, throttle_key=f"o-{n}"
+                )
 
+        # Cinq parcours avec un code faux : la devinette s'arrête là, bien avant
+        # le plafond des simples ouvertures.
+        assert MAX_CHALLENGES_PER_EMAIL_HOUR < MAX_OPENED_PER_EMAIL_HOUR
         with pytest.raises(TooManyAttemptsError):
             await start.execute(email=EMAIL, consent=CONSENT, throttle_key="o-fin")
+
+    async def test_redemander_un_code_sans_se_tromper_ne_verrouille_pas(
+        self, start: StartEmailLogin, env: IdentityEnv
+    ) -> None:
+        for n in range(MAX_CHALLENGES_PER_EMAIL_HOUR + 2):
+            await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"o-{n}")
+
+        assert len(env.sender.sent) == MAX_CHALLENGES_PER_EMAIL_HOUR + 2
 
     async def test_des_essais_simultanes_ne_depassent_pas_cinq(
         self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv

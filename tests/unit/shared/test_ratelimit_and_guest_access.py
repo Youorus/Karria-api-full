@@ -95,10 +95,13 @@ class TestAllowAnonymous:
     async def test_un_anonyme_passe_puis_est_compte_par_origine(self) -> None:
         app = _app(SlidingWindowLimiter(max_hits=1, window_seconds=60, monotonic=_Horloge()))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
-            first = await client.get(
-                "/public", headers={"X-Forwarded-For": "203.0.113.9, 10.0.0.1"}
+            # Le mandataire de confiance ajoute à droite l'adresse qui lui a parlé ;
+            # ce qui est à gauche, c'est le client qui l'a écrit (audit du 2026-11-20).
+            first = await client.get("/public", headers={"X-Forwarded-For": "1.1.1.1, 203.0.113.9"})
+            # Même origine réelle, autre adresse inventée : pas de compteur neuf.
+            second = await client.get(
+                "/public", headers={"X-Forwarded-For": "2.2.2.2, 203.0.113.9"}
             )
-            second = await client.get("/public", headers={"X-Forwarded-For": "203.0.113.9"})
             other = await client.get("/public", headers={"X-Forwarded-For": "203.0.113.10"})
 
         assert first.status_code == 200
@@ -132,7 +135,7 @@ class TestAllowAnonymous:
         assert empty.status_code == 200
         assert empty.json() == {"anonymous": True}
 
-    def test_l_origine_est_le_premier_relais_sinon_le_client(self) -> None:
+    def test_l_origine_est_celle_que_le_mandataire_de_confiance_a_vue(self) -> None:
         class Requete:
             def __init__(self, headers: dict[str, str], client: object) -> None:
                 self.headers = headers
@@ -141,7 +144,8 @@ class TestAllowAnonymous:
         class Client:
             host = "10.1.1.1"
 
-        assert client_ip(Requete({"x-forwarded-for": " 1.2.3.4 , 5.6.7.8"}, Client())) == "1.2.3.4"  # type: ignore[arg-type]
+        # « 1.2.3.4 » est ce que le client prétend ; « 5.6.7.8 » est ce que Traefik a vu.
+        assert client_ip(Requete({"x-forwarded-for": " 1.2.3.4 , 5.6.7.8"}, Client())) == "5.6.7.8"  # type: ignore[arg-type]
         assert client_ip(Requete({}, Client())) == "10.1.1.1"  # type: ignore[arg-type]
         assert client_ip(Requete({}, None)) == ""  # type: ignore[arg-type]
 

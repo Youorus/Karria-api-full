@@ -1116,17 +1116,31 @@ class TestGardeFouDuJour:
         guard = DailyAiGuard(InMemoryAiUsageRepository(), FakeClock())
         limit = DAILY_GUARDS[AiUsage.TRANSCRIBE]
         for _ in range(limit):
-            await guard.ensure_allowed(USER, AiUsage.TRANSCRIBE)
-            await guard.record(USER, AiUsage.TRANSCRIBE)
+            await guard.reserve(USER, AiUsage.TRANSCRIBE)
 
         with pytest.raises(AiDailyLimitError) as raised:
-            await guard.ensure_allowed(USER, AiUsage.TRANSCRIBE)
+            await guard.reserve(USER, AiUsage.TRANSCRIBE)
 
         assert raised.value.details["reason"] == "ai_daily_limit"
         assert raised.value.details["limit"] == limit
         # L'autre action et une autre personne ne sont pas touchées.
-        await guard.ensure_allowed(USER, AiUsage.INTERPRET)
-        await guard.ensure_allowed(uuid4(), AiUsage.TRANSCRIBE)
+        await guard.reserve(USER, AiUsage.INTERPRET)
+        await guard.reserve(uuid4(), AiUsage.TRANSCRIBE)
+
+    async def test_des_requetes_simultanees_ne_depassent_pas_le_plafond(self) -> None:
+        guard = DailyAiGuard(InMemoryAiUsageRepository(), FakeClock())
+        limit = DAILY_GUARDS[AiUsage.IMPORT_TRY]
+
+        async def attempt() -> bool:
+            try:
+                await guard.reserve(USER, AiUsage.IMPORT_TRY)
+            except AiDailyLimitError:
+                return False
+            return True
+
+        passed = await asyncio.gather(*(attempt() for _ in range(limit * 3)))
+
+        assert sum(passed) == limit  # réservé avant de compter : jamais un de plus
 
     def test_les_garde_fous_laissent_ecrire_un_cv_entier(self) -> None:
         assert DAILY_GUARDS[AiUsage.INTERPRET] >= 100

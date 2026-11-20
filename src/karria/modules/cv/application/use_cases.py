@@ -410,8 +410,13 @@ class DailyAiGuard:
         self._usage = usage
         self._clock = clock
 
-    async def ensure_allowed(self, user_id: UUID, usage: AiUsage) -> None:
-        """Refuse l'action de trop pour aujourd'hui.
+    async def reserve(self, user_id: UUID, usage: AiUsage) -> None:
+        """Inscrit l'action **puis** compte : des requêtes simultanées ne passent pas toutes.
+
+        L'inscription précède le compte et l'appel au modèle : lire, appeler
+        puis noter laissait passer cent requêtes parallèles sous un plafond de
+        deux cents (revue de sécurité du 2026-11-20). Une action refusée ou en
+        panne reste comptée : c'est un garde-fou d'abus, pas un quota de produit.
 
         Raises:
             AiDailyLimitError: Plafond du jour atteint.
@@ -419,13 +424,10 @@ class DailyAiGuard:
         now = self._clock.now()
         start = day_start(now)
         limit = DAILY_GUARDS[usage]
-        if await self._usage.count_since(user_id, usage, start) >= limit:
+        await self._usage.record(user_id, usage, now)
+        if await self._usage.count_since(user_id, usage, start) > limit:
             retry_after = max(int((start + timedelta(days=1) - now).total_seconds()), 1)
             raise AiDailyLimitError(usage=usage.value, limit=limit, retry_after=retry_after)
-
-    async def record(self, user_id: UUID, usage: AiUsage) -> None:
-        """Note une action rendue (le modèle a été appelé)."""
-        await self._usage.record(user_id, usage, self._clock.now())
 
 
 class UploadPhoto:

@@ -64,6 +64,8 @@ from karria.modules.identity.domain import (
     MAX_CHALLENGES_PER_EMAIL_DAY,
     MAX_CHALLENGES_PER_EMAIL_HOUR,
     MAX_CODE_ATTEMPTS,
+    MAX_OPENED_PER_EMAIL_DAY,
+    MAX_OPENED_PER_EMAIL_HOUR,
     MAX_SESSIONS_PER_USER,
     REVIEW_THROTTLE_KEY,
     AiConsent,
@@ -411,11 +413,16 @@ class StartEmailLogin:
         now = self._clock.now()
         # Le plafond par adresse, compté en base : il vaut quelle que soit
         # l'origine et quel que soit le processus qui répond.
-        for window, limit in (
-            (timedelta(hours=1), MAX_CHALLENGES_PER_EMAIL_HOUR),
-            (timedelta(days=1), MAX_CHALLENGES_PER_EMAIL_DAY),
+        for window, limit, failed_only in (
+            (timedelta(hours=1), MAX_CHALLENGES_PER_EMAIL_HOUR, True),
+            (timedelta(days=1), MAX_CHALLENGES_PER_EMAIL_DAY, True),
+            (timedelta(hours=1), MAX_OPENED_PER_EMAIL_HOUR, False),
+            (timedelta(days=1), MAX_OPENED_PER_EMAIL_DAY, False),
         ):
-            if await self._challenges.opened_for_email(address.value, since=now - window) >= limit:
+            opened = await self._challenges.opened_for_email(
+                address.value, since=now - window, failed_only=failed_only
+            )
+            if opened >= limit:
                 logger.warning(
                     "auth.login_start_capped", window_hours=window.total_seconds() / 3600
                 )

@@ -73,7 +73,7 @@ from karria.modules.identity.infrastructure import (
 from karria.shared.auth import Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import get_settings
-from karria.shared.http import SlidingWindowLimiter
+from karria.shared.http import SlidingWindowLimiter, client_ip
 from karria.shared.http.dependencies import EventBusDep, SettingsDep, UnitOfWorkDep
 from karria.shared.i18n import Language, from_accept_language
 from karria.shared.mail import Mailer, build_mailer
@@ -236,11 +236,10 @@ class RequestContext:
 
 def get_request_context(request: Request) -> RequestContext:
     """Extrait de la requête ce qui sert à tracer et à limiter."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "")
     agent = request.headers.get("user-agent", "")
     return RequestContext(
-        ip=client_ip,
+        # L'adresse vue par le mandataire de confiance, pas celle que le client annonce.
+        ip=client_ip(request),
         user_agent=agent[:255] or None,
         language=from_accept_language(request.headers.get("accept-language")),
     )

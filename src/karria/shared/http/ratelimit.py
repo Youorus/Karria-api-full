@@ -107,13 +107,13 @@ def client_ip_behind(request: Request, *, proxy_hops: int) -> str:
 
 
 def client_ip(request: Request) -> str:
-    """L'origine d'une requête : le premier `X-Forwarded-For`, sinon l'adresse du client.
+    """L'origine d'une requête, telle que le mandataire **de confiance** l'a vue.
 
-    Même lecture que le contexte de requête d'`identity` : derrière le
-    mandataire de Dokploy, l'adresse du client est dans l'en-tête.
+    Jamais le premier `X-Forwarded-For` : c'est le client qui l'écrit, et un
+    en-tête inventé à chaque requête donnait un compteur neuf à chaque fois —
+    donc aucun frein (audit de sécurité du 2026-11-20). L'adresse fiable est
+    celle que Traefik a ajoutée (`SECURITY__TRUSTED_PROXY_HOPS`, un par défaut).
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    first = forwarded.split(",")[0].strip()
-    if first:
-        return first
-    return request.client.host if request.client else ""
+    from karria.shared.config import get_settings  # noqa: PLC0415 - lu à l'appel, pas à l'import
+
+    return client_ip_behind(request, proxy_hops=get_settings().security.trusted_proxy_hops)
