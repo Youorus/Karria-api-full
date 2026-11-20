@@ -528,6 +528,16 @@ class ExportAllowanceRead(BaseModel):
     remaining: int = Field(description="CV sans filigrane encore offerts ce mois-ci.")
     watermark_next: bool = Field(description="Le prochain export portera le filigrane.")
     resets_at: datetime = Field(description="Début du mois suivant (UTC) : le compteur repart.")
+    optimizations_per_month: int = Field(
+        default=3, description="Optimisations pour les ATS offertes par mois civil (UTC)."
+    )
+    optimizations_used: int = Field(default=0, description="Optimisations faites ce mois-ci.")
+    optimizations_remaining: int = Field(
+        default=3, description="Optimisations encore offertes ; sans objet pour un abonné."
+    )
+    can_optimize: bool = Field(
+        default=True, description="Une optimisation de plus passera (toujours vrai pour un abonné)."
+    )
 
 
 class LetterExportRequest(BaseModel):

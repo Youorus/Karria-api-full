@@ -363,6 +363,10 @@ async def read_export_allowance(
         remaining=state.remaining,
         watermark_next=state.watermark,
         resets_at=(start + timedelta(days=32)).replace(day=1),
+        optimizations_per_month=state.optimizations_per_month,
+        optimizations_used=state.optimizations_used,
+        optimizations_remaining=state.optimizations_remaining,
+        can_optimize=state.can_optimize,
     )
 
 

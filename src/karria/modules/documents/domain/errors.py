@@ -156,6 +156,29 @@ class SendQuotaExceededError(DomainError):
         self.scope = scope
 
 
+class OptimizationQuotaExceededError(DomainError):
+    """Trois optimisations pour les ATS par mois sans abonnement (décision de Marc, 2026-11-20).
+
+    Le CV s'exporte toujours sans l'optimisation : seule celle-ci est refusée.
+    `subscriber: false` dit à l'app de proposer « Karria sans pub ».
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
+
+    def __init__(self, *, limit: int, retry_after: int, resets_at: str) -> None:
+        super().__init__(
+            f"Tu as utilisé tes {limit} optimisations du mois. "
+            "Karria sans pub les rend illimitées.",
+            details={
+                "reason": "optimization_quota_exceeded",
+                "limit": limit,
+                "subscriber": False,
+                "resets_at": resets_at,
+                "retry_after": retry_after,
+            },
+        )
+
+
 class AccountEmailUnknownError(BusinessRuleViolationError):
     """`to: null` demande l'adresse du compte, et personne ne la fournit."""
 

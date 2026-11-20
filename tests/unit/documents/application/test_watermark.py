@@ -14,10 +14,12 @@ from documents.infrastructure.fakes import cv_font_set
 from documents.infrastructure.test_header_layout import a_spec, a_view, stacked_right
 from doubles import FakeClock
 from karria.modules.documents.application import ExportCv, ReadExportAllowance
+from karria.modules.documents.domain.errors import OptimizationQuotaExceededError
 from karria.modules.documents.domain.templates import DocumentKind, GeneratedCv
 from karria.modules.documents.domain.watermark import (
     ALWAYS_WATERMARKED,
     FREE_CLEAN_EXPORTS_PER_MONTH,
+    FREE_OPTIMIZATIONS_PER_MONTH,
     GENERATION_WINDOW,
     ExportAllowance,
     generation_starts,
@@ -222,3 +224,63 @@ class TestPiedDePage:
         assert line not in clean
         assert line in marked
         assert line in default  # une vue qui ne dit rien garde le filigrane
+
+
+async def optimized(
+    env: Env, template_id: UUID, subscriptions: Subscriptions | None = None, *, wait: int = 60
+) -> GeneratedCv:
+    """Un export optimisé pour les ATS, `wait` minutes après le précédent."""
+    later(env, minutes=wait)
+    return await export(env, subscriptions).execute(
+        env.user, template_id=template_id, formats=["pdf"], ats_safe=True, offer_id=None
+    )
+
+
+class TestOptimisations:
+    """Trois optimisations pour les ATS par mois sans abonnement (Marc, 2026-11-20)."""
+
+    async def test_la_quatrieme_optimisation_du_mois_est_refusee(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+
+        for _ in range(FREE_OPTIMIZATIONS_PER_MONTH):
+            assert (await optimized(env, template.id)).ats_safe is True
+        with pytest.raises(OptimizationQuotaExceededError) as refused:
+            await optimized(env, template.id)
+
+        assert refused.value.details["reason"] == "optimization_quota_exceeded"
+        assert refused.value.details["subscriber"] is False
+        assert refused.value.details["limit"] == FREE_OPTIMIZATIONS_PER_MONTH
+        # Le CV, lui, s'exporte toujours sans l'optimisation.
+        plain = await one(env, template.id)
+        assert plain.pdf_key is not None
+
+    async def test_refaire_la_meme_optimisation_nen_consomme_quune(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+
+        for _ in range(5):
+            await optimized(env, template.id, wait=4)
+        state = await allowance(env).execute(env.user)
+
+        assert state.optimizations_used == 1
+        assert state.optimizations_remaining == FREE_OPTIMIZATIONS_PER_MONTH - 1
+
+    async def test_un_abonne_optimise_sans_limite(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+
+        done = [await optimized(env, template.id, Subscriptions(env.user)) for _ in range(6)]
+
+        assert all(g.ats_safe for g in done)
+
+    async def test_le_compteur_des_optimisations_repart_au_mois_suivant(self, env: Env) -> None:
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+        for _ in range(FREE_OPTIMIZATIONS_PER_MONTH):
+            await optimized(env, template.id)
+
+        later(env, minutes=60 * 24 * 32)
+
+        assert (await allowance(env).execute(env.user)).can_optimize is True
+        assert (await optimized(env, template.id)).ats_safe is True

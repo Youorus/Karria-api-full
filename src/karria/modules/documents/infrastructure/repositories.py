@@ -301,6 +301,21 @@ class TortoiseGeneratedCvRepository:
             watermarked=generated.watermarked,
         )
 
+    async def optimized_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
+        """Les instants des CV exportés optimisés pour les ATS depuis `since`, bornés à 500."""
+        rows = (
+            await GeneratedCvModel.filter(
+                user_id=user_id,
+                kind=DocumentKind.CV.value,
+                ats_safe=True,
+                created_at__gte=since,
+            )
+            .order_by("created_at")
+            .limit(500)
+            .only("created_at")
+        )
+        return [row.created_at for row in rows]
+
     async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
         """Les instants des CV exportés sans filigrane depuis `since` (ADR-0040), bornés à 500."""
         rows = (

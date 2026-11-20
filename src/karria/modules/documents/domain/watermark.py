@@ -38,6 +38,13 @@ from typing import Final
 
 #: CV exportés sans filigrane offerts à un compte gratuit, par mois civil (UTC).
 FREE_CLEAN_EXPORTS_PER_MONTH: Final = 3
+#: Optimisations pour les ATS offertes à un compte gratuit, par mois civil (UTC)
+#: (décision de Marc, 2026-11-20 : « tout ce qui concerne les CV, c'est trois
+#: fois par mois ; pour plus, l'abonnement »). Au-delà, l'optimisation est
+#: **refusée** (`429 optimization_quota_exceeded`) : le CV, lui, s'exporte
+#: toujours sans elle. Comme pour le filigrane, les optimisations faites dans la
+#: demi-heure qui suit la première comptent pour une seule.
+FREE_OPTIMIZATIONS_PER_MONTH: Final = 3
 #: Les exports faits dans cette fenêtre après le premier sont le même CV, retouché.
 GENERATION_WINDOW: Final = timedelta(minutes=30)
 
@@ -68,13 +75,42 @@ class ExportAllowance:
     #: Une génération sans filigrane est en cours (moins d'une demi-heure) :
     #: un nouvel export en fait partie, il ne porte pas le filigrane.
     continuing: bool = False
+    #: Optimisations pour les ATS (générations) depuis le début du mois.
+    optimizations_used: int = 0
+    optimizations_per_month: int = FREE_OPTIMIZATIONS_PER_MONTH
+    #: Une optimisation est en cours (moins d'une demi-heure) : la refaire n'en est pas une autre.
+    optimizing: bool = False
 
     @classmethod
-    def at(cls, now: datetime, *, subscriber: bool, exports: Iterable[datetime]) -> ExportAllowance:
-        """L'état à `now`, d'après les instants des CV exportés sans filigrane ce mois-ci."""
+    def at(
+        cls,
+        now: datetime,
+        *,
+        subscriber: bool,
+        exports: Iterable[datetime],
+        optimizations: Iterable[datetime] = (),
+    ) -> ExportAllowance:
+        """L'état à `now`, d'après les instants des CV exportés sans filigrane, et optimisés, ce mois-ci."""
         starts = generation_starts(exports)
         continuing = bool(starts) and now - starts[-1] <= GENERATION_WINDOW
-        return cls(subscriber=subscriber, used=len(starts), continuing=continuing)
+        optimized = generation_starts(optimizations)
+        return cls(
+            subscriber=subscriber,
+            used=len(starts),
+            continuing=continuing,
+            optimizations_used=len(optimized),
+            optimizing=bool(optimized) and now - optimized[-1] <= GENERATION_WINDOW,
+        )
+
+    @property
+    def optimizations_remaining(self) -> int:
+        """Optimisations encore offertes ce mois-ci (un abonné n'a pas de compteur)."""
+        return max(0, self.optimizations_per_month - self.optimizations_used)
+
+    @property
+    def can_optimize(self) -> bool:
+        """Une optimisation de plus est-elle permise ? Toujours pour un abonné."""
+        return self.subscriber or self.optimizing or self.optimizations_remaining > 0
 
     @property
     def remaining(self) -> int:
@@ -88,4 +124,7 @@ class ExportAllowance:
 
 
 #: Sans compteur branché (un script, un essai) : le filigrane, comme avant cette règle.
-ALWAYS_WATERMARKED: Final = ExportAllowance(subscriber=False, used=FREE_CLEAN_EXPORTS_PER_MONTH)
+#: Rien n'y borne l'optimisation : sans compteur, on ne refuse pas.
+ALWAYS_WATERMARKED: Final = ExportAllowance(
+    subscriber=False, used=FREE_CLEAN_EXPORTS_PER_MONTH, optimizing=True
+)

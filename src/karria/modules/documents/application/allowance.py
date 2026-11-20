@@ -29,6 +29,10 @@ class CleanExportCounter(Protocol):
         """Les instants des CV exportés sans filigrane depuis `since`."""
         ...
 
+    async def optimized_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
+        """Les instants des CV exportés optimisés pour les ATS depuis `since`."""
+        ...
+
 
 class ReadExportAllowance:
     """Où en est la personne : abonnée ? combien de CV sans filigrane ce mois-ci ?"""
@@ -42,5 +46,9 @@ class ReadExportAllowance:
         """L'état du compte, lu à chaque fois : un abonnement pris à l'instant compte."""
         now = self._clock.now()
         subscriber = await self._subscriptions.is_subscriber(user_id)
-        exports = await self._generated.clean_cv_times(user_id, since=month_start(now))
-        return ExportAllowance.at(now, subscriber=subscriber, exports=exports)
+        since = month_start(now)
+        exports = await self._generated.clean_cv_times(user_id, since=since)
+        optimizations = await self._generated.optimized_cv_times(user_id, since=since)
+        return ExportAllowance.at(
+            now, subscriber=subscriber, exports=exports, optimizations=optimizations
+        )

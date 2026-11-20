@@ -33,7 +33,7 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID, uuid4
@@ -64,6 +64,7 @@ from karria.modules.documents.domain.errors import (
     CvMissingError,
     DocumentFileMissingError,
     GeneratedCvNotFoundError,
+    OptimizationQuotaExceededError,
     RenderingUnavailableError,
     RenderTooLargeError,
     SendNotFoundError,
@@ -126,7 +127,11 @@ from karria.modules.documents.domain.templates import (
     slugify,
 )
 from karria.modules.documents.domain.view import from_cv, from_sample
-from karria.modules.documents.domain.watermark import ALWAYS_WATERMARKED, ExportAllowance
+from karria.modules.documents.domain.watermark import (
+    ALWAYS_WATERMARKED,
+    ExportAllowance,
+    month_start,
+)
 from karria.shared.clock import Clock
 from karria.shared.database import NullUnitOfWork, UnitOfWork
 from karria.shared.errors.exceptions import InvalidInputError
@@ -581,12 +586,23 @@ class ExportCv:
                 primary_color = selection.primary_color
         safe = bool(ats_safe)
         started = time.monotonic()
+        allowance = await export_allowance(self._allowance, user_id)
+        if safe and not allowance.can_optimize:
+            # Trois optimisations par mois sans abonnement : refusée avant tout
+            # rendu. Le CV s'exporte toujours sans elle.
+            now = self._clock.now()
+            resets_at = (month_start(now) + timedelta(days=32)).replace(day=1)
+            raise OptimizationQuotaExceededError(
+                limit=allowance.optimizations_per_month,
+                retry_after=max(int((resets_at - now).total_seconds()), 1),
+                resets_at=resets_at.isoformat(),
+            )
         template, version, spec, view, snapshot, photo, assets = await self._renderer.prepare(
             user_id, template_id, ats_safe=safe, cv=cv, primary_color=primary_color
         )
         # Le filigrane (ADR-0040) : pas les trois premiers CV du mois, jamais chez
         # un abonné. Il se lit dans la vue ; les deux moteurs le posent ou non.
-        watermark = (await export_allowance(self._allowance, user_id)).watermark
+        watermark = allowance.watermark
         view = {**view, "watermark": watermark}
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
         # Ce que la personne a finalisé dans l'atelier est ce qu'elle obtient :
