@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import uuid4
 
@@ -28,6 +29,7 @@ class CountedQuery:
 
     async def count(self) -> int:
         self.counts += 1
+        await asyncio.sleep(0)  # laisse passer les autres requêtes, comme une vraie base
         return self.total
 
 
@@ -43,6 +45,13 @@ class TestTotalDuFil:
     async def test_le_total_se_compte_une_fois_par_fenetre(self, query: CountedQuery) -> None:
         for _ in range(50):
             assert await _feed_total(query, OfferFilters()) == 540_000
+        assert query.counts == 1
+
+    async def test_trente_requetes_simultanees_ne_comptent_quune_fois(
+        self, query: CountedQuery
+    ) -> None:
+        totals = await asyncio.gather(*(_feed_total(query, OfferFilters()) for _ in range(30)))
+        assert set(totals) == {540_000}
         assert query.counts == 1
 
     async def test_les_offres_ecartees_se_retranchent_sans_recompter(

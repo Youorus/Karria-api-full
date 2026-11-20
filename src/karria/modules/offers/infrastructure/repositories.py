@@ -7,6 +7,7 @@ les options de filtre (agrégats). Tout le reste est l'ORM.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -401,13 +402,23 @@ class TortoiseOfferRepository:
         offres actives : ils sont gardés dix minutes par processus (les options
         d'un filtre ne changent pas d'une ouverture d'écran à l'autre).
         """
-        global _all_filter_options  # noqa: PLW0603 - un cache de processus, borné à une entrée
+        if offer_ids is not None:
+            return await self._count_options(offer_ids)
+        kept = _all_filter_options
+        if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
+            async with _recount:
+                kept = _all_filter_options
+                if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
+                    contracts, cities = await self._count_options(None)
+                    kept = (time.monotonic(), contracts, cities)
+                    _remember_filter_options(kept)
+        return dict(kept[1]), dict(kept[2])
+
+    @staticmethod
+    async def _count_options(
+        offer_ids: Sequence[UUID] | None,
+    ) -> tuple[dict[ContractType, int], dict[str, int]]:
         base = OfferModel.filter(is_active=True, duplicate_of__isnull=True)
-        whole = offer_ids is None
-        if whole:
-            kept = _all_filter_options
-            if kept is not None and time.monotonic() - kept[0] <= FILTER_OPTIONS_TTL_SECONDS:
-                return dict(kept[1]), dict(kept[2])
         if offer_ids is not None:
             if not offer_ids:
                 return {}, {}
@@ -426,13 +437,10 @@ class TortoiseOfferRepository:
             .limit(200)
             .values("city", "n")
         )
-        found = (
+        return (
             {ContractType(str(row["contract_type"])): int(row["n"]) for row in contracts},
             {str(row["city"]): int(row["n"]) for row in cities},
         )
-        if whole:
-            _all_filter_options = (time.monotonic(), dict(found[0]), dict(found[1]))
-        return found
 
 
 class TortoiseIndexOutbox:
@@ -486,11 +494,18 @@ def distance_sql(latitude: str, longitude: str, near: tuple[float, float]) -> st
 FEED_TOTAL_TTL_SECONDS: Final = 120.0
 FEED_TOTAL_CACHE_SIZE: Final = 256
 _feed_totals: dict[tuple[tuple[str, ...], tuple[str, ...]], tuple[float, int]] = {}
+#: Un seul recalcul à la fois par processus (total du fil, options de filtre).
+_recount = asyncio.Lock()
 
 
 #: Les options de filtre de tout le fil, gardées dix minutes (instant, contrats, villes).
 FILTER_OPTIONS_TTL_SECONDS: Final = 600.0
 _all_filter_options: tuple[float, dict[ContractType, int], dict[str, int]] | None = None
+
+
+def _remember_filter_options(kept: tuple[float, dict[ContractType, int], dict[str, int]]) -> None:
+    global _all_filter_options  # noqa: PLW0603 - un cache de processus, borné à une entrée
+    _all_filter_options = kept
 
 
 def forget_feed_totals() -> None:
@@ -509,17 +524,21 @@ async def _feed_total(query: Any, filters: OfferFilters) -> int:
     if filters.published_after is not None:
         return int(await query.count())
     key = (tuple(sorted(filters.contract_types or ())), tuple(sorted(filters.cities or ())))
-    now = time.monotonic()
     kept = _feed_totals.get(key)
-    if kept is None or now - kept[0] > FEED_TOTAL_TTL_SECONDS:
-        base = _apply_filters(
-            OfferModel.filter(is_active=True, duplicate_of__isnull=True),
-            OfferFilters(contract_types=filters.contract_types, cities=filters.cities),
-        )
-        if len(_feed_totals) >= FEED_TOTAL_CACHE_SIZE:
-            _feed_totals.clear()
-        kept = (now, int(await base.count()))
-        _feed_totals[key] = kept
+    if kept is None or time.monotonic() - kept[0] > FEED_TOTAL_TTL_SECONDS:
+        # Un seul compte à la fois : à l'expiration, trente requêtes simultanées
+        # recomptaient toutes (mesuré le 2026-11-20) ; les autres attendent le résultat.
+        async with _recount:
+            kept = _feed_totals.get(key)
+            if kept is None or time.monotonic() - kept[0] > FEED_TOTAL_TTL_SECONDS:
+                base = _apply_filters(
+                    OfferModel.filter(is_active=True, duplicate_of__isnull=True),
+                    OfferFilters(contract_types=filters.contract_types, cities=filters.cities),
+                )
+                if len(_feed_totals) >= FEED_TOTAL_CACHE_SIZE:
+                    _feed_totals.clear()
+                kept = (time.monotonic(), int(await base.count()))
+                _feed_totals[key] = kept
     return max(0, kept[1] - len(filters.exclude_offer_ids or ()))
 
 
