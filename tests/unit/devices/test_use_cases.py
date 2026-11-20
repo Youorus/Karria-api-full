@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 
 from doubles import (
+    CollectingBus,
     FakeClock,
     FakePushGateway,
     InMemoryDeviceRepository,
@@ -17,6 +19,7 @@ from doubles import (
 from karria.modules.devices.application import (
     RECEIPT_DELAY,
     CheckPushReceipts,
+    DeviceDeclared,
     RegisterDevice,
     SendPushToUser,
     UnregisterDevice,
@@ -370,3 +373,55 @@ class TestCheckPushReceiptsSansRecu:
 
         assert gateway.receipt_queries == [["ticket-1"]]
         assert len(await tickets.pending(before=clock.now(), limit=10)) == 1
+
+
+class TestAppareilDeclare:
+    """`DeviceDeclared` : ce que le module des comptes retient de l'appareil (ADR-0042)."""
+
+    async def test_chaque_declaration_annonce_la_region_et_le_fuseau(
+        self, devices: InMemoryDeviceRepository, clock: FakeClock
+    ) -> None:
+        bus = CollectingBus()
+        register = RegisterDevice(devices=devices, clock=clock, uow=NullUnitOfWork(), events=bus)
+        user = uuid4()
+
+        # Première déclaration, puis redéclaration au démarrage suivant.
+        for _ in range(2):
+            await register.execute(
+                user_id=user, installation_id="i", info=sample_device_info(), country=None
+            )
+
+        events = bus.of_type(DeviceDeclared)
+        assert [(e.user_id, e.region, e.timezone) for e in events] == [
+            (user, "FR", "Europe/Paris")
+        ] * 2
+        # Rien d'autre ne voyage : ni jeton, ni modèle, ni installation.
+        assert set(DeviceDeclared.model_fields) == {
+            "event_id",
+            "occurred_at",
+            "user_id",
+            "region",
+            "timezone",
+        }
+
+    async def test_sans_region_ni_fuseau_rien_n_est_annonce(
+        self, devices: InMemoryDeviceRepository, clock: FakeClock
+    ) -> None:
+        bus = CollectingBus()
+        register = RegisterDevice(devices=devices, clock=clock, uow=NullUnitOfWork(), events=bus)
+
+        await register.execute(
+            user_id=uuid4(),
+            installation_id="i",
+            info=replace(sample_device_info(), region=None, timezone=None),
+            country=None,
+        )
+
+        assert bus.of_type(DeviceDeclared) == []
+
+    async def test_sans_bus_la_declaration_aboutit(self, register: RegisterDevice) -> None:
+        device = await register.execute(
+            user_id=uuid4(), installation_id="i", info=sample_device_info(), country=None
+        )
+
+        assert device.info.region == "FR"

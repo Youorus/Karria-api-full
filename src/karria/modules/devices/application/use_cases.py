@@ -23,6 +23,7 @@ from datetime import timedelta
 from typing import Final
 from uuid import UUID, uuid4
 
+from karria.modules.devices.application.events import DeviceDeclared
 from karria.modules.devices.application.ports import (
     DeviceRepository,
     PushGateway,
@@ -39,6 +40,7 @@ from karria.modules.devices.domain import (
 )
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
+from karria.shared.events import EventBus
 from karria.shared.logging import get_logger
 from karria.shared.push import PushMessage
 
@@ -59,12 +61,32 @@ class RegisterDevice:
     Idempotent par `(compte, installation)` : l'app l'appelle à chaque
     démarrage et à chaque changement de permission ou de jeton. Une
     déclaration identique ne fait qu'avancer `last_seen_at`.
+
+    Publie `DeviceDeclared` après l'écriture, quand l'app annonce une région
+    ou un fuseau : la fiche de l'appareil part à la déconnexion, et c'est le
+    seul moment où un compte né d'une ancienne version de l'app peut retenir
+    d'où il vient (ADR-0042).
     """
 
-    def __init__(self, *, devices: DeviceRepository, clock: Clock, uow: UnitOfWork) -> None:
+    def __init__(
+        self,
+        *,
+        devices: DeviceRepository,
+        clock: Clock,
+        uow: UnitOfWork,
+        events: EventBus | None = None,
+    ) -> None:
         self._devices = devices
         self._clock = clock
         self._uow = uow
+        self._events = events
+
+    async def _announce(self, user_id: UUID, info: DeviceInfo) -> None:
+        if self._events is None or (info.region is None and info.timezone is None):
+            return
+        await self._events.publish(
+            DeviceDeclared(user_id=user_id, region=info.region, timezone=info.timezone)
+        )
 
     async def execute(
         self, *, user_id: UUID, installation_id: str, info: DeviceInfo, country: str | None
@@ -92,12 +114,14 @@ class RegisterDevice:
                 platform=info.platform.value,
                 push_enabled=device.push_enabled,
             )
+            await self._announce(user_id, info)
             return device
 
         device = existing.declared(info, country=country, at=now)
         async with self._uow.atomic():
             await self._devices.save(device)
         logger.debug("devices.seen", user_id=str(user_id), push_enabled=device.push_enabled)
+        await self._announce(user_id, info)
         return device
 
 

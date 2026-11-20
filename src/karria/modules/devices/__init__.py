@@ -17,7 +17,10 @@ Ce qu'il expose, et pour qui :
   principal d'un compte, que `bootstrap/wiring.py` branche sur le port du
   module des comptes pour la trace de départ (ADR-0015) ;
 - `ForgetUserDevices`, `build_forget_user_devices` — la réaction à la
-  suppression d'un compte, abonnée au bus par `bootstrap/wiring.py`.
+  suppression d'un compte, abonnée au bus par `bootstrap/wiring.py` ;
+- `DeviceDeclared` — le fait publié à chaque appareil déclaré, avec la
+  région et le fuseau annoncés ; `bootstrap/wiring.py` y abonne le module
+  des comptes (ADR-0042).
 """
 
 from karria.modules.devices.api import router
@@ -29,6 +32,7 @@ from karria.modules.devices.api.dependencies import (
 )
 from karria.modules.devices.application import (
     CheckPushReceipts,
+    DeviceDeclared,
     ForgetUserDevices,
     GetMainDevice,
     MainDeviceSummary,
@@ -46,6 +50,7 @@ MODULE = ModuleDescriptor(
 __all__ = [
     "MODULE",
     "CheckPushReceipts",
+    "DeviceDeclared",
     "ForgetUserDevices",
     "GetMainDevice",
     "MainDeviceSummary",

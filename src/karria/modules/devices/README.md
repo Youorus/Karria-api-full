@@ -29,6 +29,12 @@ Le contexte **« par où joindre cette personne »**. Il sert le contrat
 - **L'oubli d'un compte supprimé** (`ForgetUserDevices`) : toutes les
   installations du compte partent, jetons compris. Abonné à
   `AccountDeleted` par `bootstrap/wiring.py` ; idempotent.
+- **Le fait `DeviceDeclared`** (`user_id`, `region`, `timezone`), publié
+  après chaque déclaration qui porte l'une des deux valeurs. C'est par lui
+  que le module des comptes retient le pays d'origine d'un compte né d'une
+  version de l'app qui ne l'annonce pas à la connexion (ADR-0042). Les
+  valeurs y voyagent telles que reçues : `devices` ne les valide pas au-delà
+  de leur longueur.
 
 ## Ce qu'il ne possède pas, et où ça vit
 

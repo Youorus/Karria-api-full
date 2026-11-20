@@ -23,7 +23,12 @@ from karria.modules.devices.infrastructure import (
     TortoisePushTicketRepository,
 )
 from karria.shared.clock import Clock, SystemClock
-from karria.shared.http.dependencies import SettingsDep, UnitOfWorkDep, get_unit_of_work
+from karria.shared.http.dependencies import (
+    EventBusDep,
+    SettingsDep,
+    UnitOfWorkDep,
+    get_unit_of_work,
+)
 
 #: En-tête posé par le mandataire de confiance (Cloudflare) avec le pays de
 #: l'appelant. Lu tel quel, jamais déduit d'une adresse IP ici. Les valeurs
@@ -84,10 +89,10 @@ InstallationIdPath = Annotated[
 
 
 def get_register_device(
-    devices: DeviceRepositoryDep, clock: ClockDep, uow: UnitOfWorkDep
+    devices: DeviceRepositoryDep, clock: ClockDep, uow: UnitOfWorkDep, events: EventBusDep
 ) -> RegisterDevice:
-    """Assemble la déclaration d'un appareil."""
-    return RegisterDevice(devices=devices, clock=clock, uow=uow)
+    """Assemble la déclaration d'un appareil — avec le bus, pour `DeviceDeclared` (ADR-0042)."""
+    return RegisterDevice(devices=devices, clock=clock, uow=uow, events=events)
 
 
 def get_unregister_device(devices: DeviceRepositoryDep, uow: UnitOfWorkDep) -> UnregisterDevice:

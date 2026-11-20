@@ -1,5 +1,6 @@
 """Cas d'usage et ports du module `devices`."""
 
+from karria.modules.devices.application.events import DeviceDeclared
 from karria.modules.devices.application.ports import (
     DeviceRepository,
     PushGateway,
@@ -21,6 +22,7 @@ from karria.modules.devices.application.use_cases import (
 __all__ = [
     "RECEIPT_DELAY",
     "CheckPushReceipts",
+    "DeviceDeclared",
     "DeviceRepository",
     "ForgetUserDevices",
     "GetMainDevice",
