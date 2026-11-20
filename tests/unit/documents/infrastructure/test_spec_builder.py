@@ -1568,3 +1568,85 @@ class TestEtiquetteEnPictogrammes:
         assert "left:-0.70mm" in html
         assert "" not in html
         assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+
+
+class TestPucesTapeesEtFiletsDElement:
+    """« · Mission » : une puce tapée, sans forme ; un filet sous l'intitulé de chaque élément."""
+
+    def _builder(self, rules: tuple[float, ...] = (61.5, 81.5)) -> SpecBuilder:
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "EXPERIENCE", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Vendeur", 22, 57, font=BOLD),
+            raw_line("L4", "· Conseiller", 20, 64, w=22),
+            raw_line("L5", "· Encaisser", 20, 69, w=20),
+            raw_line("L6", "Caissier", 22, 77, font=BOLD),
+            raw_line("L7", "· Rendre la monnaie", 20, 84, w=30),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "experiences", 0),
+            ("item_title", "experiences", 1),
+            ("bullet", "experiences", 1),
+            ("bullet", "experiences", 1),
+            ("item_title", "experiences", 2),
+            ("bullet", "experiences", 2),
+        ]
+        return builder(
+            lines,
+            roles,
+            drawings=[drawing("hline", 20, y, 170, 0, stroke="#E1E1E1") for y in rules],
+        )
+
+    def test_deux_puces_tapees_font_deux_missions_sans_leur_glyphe(self) -> None:
+        spec, sample, _ = self._builder().build()
+        exp = sections(spec)["experiences"]
+        assert sample["experiences"][0]["bullets"] == ["Conseiller", "Encaisser"]
+        marker = exp["marker"]
+        assert (marker["shape"], marker["text"], marker["roles"]) == ("text", "·", ["bullet"])
+        # Le texte commence après la puce ; la puce est à gauche de lui, à l'écart mesuré.
+        bullet = slot(exp, "bullet")
+        assert bullet["dx_mm"] > 0
+        assert marker["dx_mm"] == pytest.approx(-bullet["dx_mm"], abs=0.01)
+        assert bullet["repeat_margin_mm"] == pytest.approx(5.0 - 3.6, abs=0.05)
+
+    def test_la_place_du_texte_se_lit_sur_ses_glyphes(self) -> None:
+        b = self._builder()
+        b.lines[3].raw["chars"] = [("·", 20.0, 20.6), ("C", 22.4, 24.0)]
+        typed = b.typed_markers(b.lines)
+        assert set(typed) == {"L4", "L5", "L7"}
+        assert (b.lines[3].text, b.lines[3].x, b.lines[3].w) == ("Conseiller", 22.4, 19.6)
+
+    def test_un_tiret_dans_un_texte_ou_un_autre_role_nest_pas_une_puce(self) -> None:
+        b = self._builder()
+        b.lines[2].text = "- Vendeur"
+        b.lines[3].text = "Conseiller - vendre"
+        assert set(b.typed_markers(b.lines)) == {"L5", "L7"}
+
+    def test_le_filet_repete_sous_chaque_intitule_est_un_decor_delement(self) -> None:
+        spec, _, _ = self._builder().build()
+        decor = sections(spec)["experiences"]["decorations"]
+        assert [(d["kind"], d["anchor"], d["dy_mm"]) for d in decor] == [("hline", "item", 4.5)]
+
+    def test_un_filet_qui_manque_a_un_element_reste_a_la_rubrique(self) -> None:
+        spec, _, _ = self._builder(rules=(61.5,)).build()
+        decor = sections(spec)["experiences"]["decorations"]
+        assert [d["anchor"] for d in decor] == ["section"]
+
+    def test_des_filets_a_des_ecarts_differents_restent_a_la_rubrique(self) -> None:
+        spec, _, _ = self._builder(rules=(61.5, 86.0)).build()
+        decor = sections(spec)["experiences"]["decorations"]
+        assert {d["anchor"] for d in decor} == {"section"}
+
+    def test_le_rendu_repose_la_puce_devant_chaque_mission(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        spec, sample, _ = self._builder().build()
+        view = from_sample(spec, sample)
+        html = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert html.count(">·</span>") == 3
+        # Un filet par élément, dans l'élément.
+        assert html.count("border-top:0.75pt solid #E1E1E1") == 2
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")

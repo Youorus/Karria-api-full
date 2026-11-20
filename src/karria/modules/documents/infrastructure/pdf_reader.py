@@ -275,6 +275,7 @@ class PdfDocument:
                     "text": c["text"],
                     "font": base_font_name(c["fontname"]),
                     "size": round(float(c["size"]), 2),
+                    "color": hex_color(c.get("non_stroking_color")),
                 }
                 for c in visible
             ]

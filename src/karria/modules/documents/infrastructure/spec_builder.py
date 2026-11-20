@@ -72,6 +72,12 @@ PICTOGRAM_PAD: Final = 0.35
 CENTERED_AXIS_MM: Final = 1.5
 CENTERED_MIN_SPREAD_MM: Final = 2.0
 CENTERED_MIN_LINES: Final = 3
+#: Une puce **tapée** en tête de ligne (« · Mission », « • Mission ») : le glyphe, puis une espace.
+TEXT_BULLET: Final = re.compile(r"^([·•‣▪◦●○■∙*–—-])\s+(?=\S)")
+#: Les rôles dont une ligne peut porter une puce tapée.
+BULLETED_ROLES: Final = frozenset({"bullet", "skill", "language", "interest"})
+#: Un filet répété sous chaque élément l'est au même décalage, à cette tolérance (mm).
+ITEM_RULE_TOLERANCE_MM: Final = 0.6
 #: Espacement des mots retenu d'un paragraphe justifié : ni le bruit de mesure, ni une aberration.
 WORD_SPACING_MIN_MM: Final = 0.1
 WORD_SPACING_MAX_MM: Final = 1.5
@@ -430,6 +436,10 @@ class SpecBuilder:
         label_lines = [ln for ln in lines if ln.role == "label"]
         lines = [ln for ln in lines if ln.role != "label"]
         markers = self.markers_for(lines)
+        # Sans puce dessinée, une puce tapée en tête de ligne (« · ») en tient lieu :
+        # elle ouvre une entrée, et le gabarit la repose devant chaque mission.
+        typed = {} if markers else self.typed_markers(lines)
+        markers = markers or typed
         elements = self.elements(lines, markers)
         labels = self.attach_labels(self.elements(label_lines, {}), elements) if label_lines else {}
         side_elements = self.elements(side_lines, {}) if side_lines else []
@@ -565,7 +575,15 @@ class SpecBuilder:
                 if len(row["elems"]) > 1:
                     a, b = row["elems"][0], row["elems"][1]
                     slot["gaps"].append(b["x"] - a["right"])
-                    slot.setdefault("rights", []).append(b["right"])
+                    # Le fer à droite se juge sur le dernier champ de la ligne
+                    # (« Poste - Entreprise ……… 2016 » : les dates).
+                    last, before = row["elems"][-1], row["elems"][-2]
+                    slot.setdefault("rights", []).append(last["right"])
+                    slot.setdefault("last_gaps", []).append(last["x"] - before["right"])
+                    for e in row["elems"][1:]:
+                        lead = e["lines"][0].raw.get("lead")
+                        if lead:
+                            slot.setdefault("joiners", {})[e["role"]] = lead
                     sep = self.row_separator(a, b)
                     if sep:
                         slot["separator"] = sep
@@ -603,8 +621,10 @@ class SpecBuilder:
                 "flush_right": bool(
                     len(v.get("rights", [])) >= 2  # noqa: PLR2004
                     and max(v["rights"]) - min(v["rights"]) < 1.0
-                    and max(v["gaps"]) - min(v["gaps"]) > 2.0  # noqa: PLR2004
+                    and max(v["last_gaps"]) - min(v["last_gaps"]) > 2.0  # noqa: PLR2004
                 ),
+                # Le signe écrit entre deux champs d'une ligne (« Poste - Entreprise »).
+                **({"joiners": v["joiners"]} if v.get("joiners") else {}),
                 **self.grid_spec(v),
             }
             for k, v in slots.items()
@@ -622,7 +642,9 @@ class SpecBuilder:
             for slot in spec["slots"]:
                 slot.update(align="center", dx_mm=0.0)
         spec["side"] = self.side_spec(side_groups, groups, col_x) if side_elements else None
-        spec["marker"] = self.marker_spec(markers, lines)
+        spec["marker"] = (
+            self.typed_marker_spec(typed, lines) if typed else self.marker_spec(markers, lines)
+        )
         spec["icons"] = self.icons_for(lines) if kind == "contact" else {}
         left_bound = col_x - 8
         if spec["side"] is not None:
@@ -1025,6 +1047,51 @@ class SpecBuilder:
                     break
         return found
 
+    def typed_markers(self, lines: list[Line]) -> dict[str, Json]:
+        """Les puces **tapées** en tête de ligne : retirées du texte, qui commence après elles.
+
+        « · Develop… » puis « · Define… » sont deux missions : sans puce
+        dessinée, rien ne les séparait et elles se recollaient en un paragraphe.
+        La ligne garde son texte sans la puce, à l'abscisse de son premier mot
+        (lue sur ses glyphes, à défaut mesurée avec la police servie).
+        """
+        found: dict[str, Json] = {}
+        for ln in lines:
+            match = TEXT_BULLET.match(ln.text) if ln.role in BULLETED_ROLES else None
+            if match is None:
+                continue
+            chars = ln.raw.get("chars") or []
+            if len(chars) > 1 and chars[0][0] == match.group(1):
+                start = float(chars[1][1])
+            else:
+                family, weight, italic = self.served_style(ln.raw["font"])
+                probe = {
+                    "family": family,
+                    "weight": weight,
+                    "italic": italic,
+                    "size_pt": ln.raw["size"],
+                    "letter_spacing_pt": 0.0,
+                }
+                start = ln.x + self.fonts.width_mm(match.group(0), probe)
+            found[ln.id] = {"text": match.group(1), "x": ln.x, "color": ln.raw["color"]}
+            ln.text = ln.text[match.end() :]
+            ln.w = round(ln.right - start, 2)
+            ln.x = round(start, 2)
+        return found
+
+    @staticmethod
+    def typed_marker_spec(markers: dict[str, Json], lines: list[Line]) -> Json:
+        """La puce tapée d'une rubrique : son glyphe, écrit au style de la ligne, à gauche du texte."""
+        by_id = {ln.id: ln for ln in lines}
+        first = next(iter(markers.values()))
+        return {
+            "shape": "text",
+            "text": first["text"],
+            "color": first["color"],
+            "dx_mm": round(med([m["x"] - by_id[k].x for k, m in markers.items()]), 2),
+            "roles": sorted({by_id[k].role for k in markers}),
+        }
+
     def marker_spec(self, markers: dict[str, Json], lines: list[Line]) -> Json | None:
         """La puce d'une rubrique : forme vue, taille, couleur, décalage."""
         if not markers:
@@ -1140,6 +1207,7 @@ class SpecBuilder:
             for no, elems in groups.items()
             if no != 0
         ]
+        item_rules = self.item_rules(items, left, col_x)
         first_decorated: int | None = None
         # Frise d'élément : le dernier élément a souvent un trait plus court
         # (il ne rejoint pas d'élément suivant) ; on garde son retrait.
@@ -1168,7 +1236,7 @@ class SpecBuilder:
                 "dx_mm": round(d["x"] - col_x, 2),
             }
             owner = next((it for it in items if it[1] - 4 <= d["y"] <= it[2] + 1), None)
-            if owner and d["kind"] != "hline":
+            if owner and (d["kind"] != "hline" or i in item_rules):
                 h = owner[2] - owner[1]
                 if first_decorated is None:
                     first_decorated = owner[0]
@@ -1208,6 +1276,31 @@ class SpecBuilder:
             if entry.get("connector") and last_item in last_insets:
                 entry["last_bottom_inset_mm"] = last_insets[last_item]
         return out
+
+    def item_rules(
+        self, items: list[tuple[int, float, float, float]], left: float, col_x: float
+    ) -> set[int]:
+        """Les filets horizontaux répétés sous **chaque** élément, au même décalage : un décor d'élément.
+
+        Un filet sous l'intitulé de chaque expérience, ancré à la rubrique à sa
+        hauteur mesurée, restait à sa place de l'exemple quand une personne a
+        trois missions au lieu de deux : il barrait le texte. Il faut au moins
+        deux éléments, et un filet par élément au même écart de son haut.
+        """
+        if len(items) < 2:  # noqa: PLR2004
+            return set()
+        found: dict[int, tuple[int, float]] = {}
+        for i, d in enumerate(self.drawings):
+            if i in self.used or d["kind"] != "hline" or not left <= d["x"] <= col_x + 5:
+                continue
+            owner = next((it for it in items if it[1] - 4 <= d["y"] <= it[2] + 1), None)
+            if owner is None or owner[0] in found:
+                continue
+            found[owner[0]] = (i, d["y"] - owner[1])
+        offsets = [dy for _, dy in found.values()]
+        if len(found) != len(items) or max(offsets) - min(offsets) > ITEM_RULE_TOLERANCE_MM:
+            return set()
+        return {i for i, _ in found.values()}
 
     def icons_for(self, lines: list[Line]) -> dict[str, Json]:
         """Pictogrammes à gauche des lignes de contact : rastérisés depuis la source (600 dpi)."""

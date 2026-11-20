@@ -1013,6 +1013,9 @@ class HtmlRenderer:
         mk = s.get("marker")
         if not mk or role not in (mk.get("roles") or ROLE_MARKER):
             return ""
+        if mk["shape"] == "text":
+            # Une puce tapée (« · ») : le glyphe, au style de la ligne, à sa place mesurée.
+            return f'<span style="position:absolute;left:{mk["dx_mm"]:.2f}mm;top:0">{esc(mk["text"])}</span>'
         top = mk["dy_mm"] - mk["size_mm"] / 2 + half(st)
         radius = "50%" if mk["shape"] == "circle" else "0"
         return (
@@ -1206,11 +1209,20 @@ class HtmlRenderer:
         """Plusieurs champs sur une ligne (« Entreprise | 2016 »), séparés comme dans le modèle."""
         gapx = sl["gap_mm"] or 3.0
         sep = sl.get("separator")
-        flush = bool(sl.get("flush_right")) and len(vals) == 2  # noqa: PLR2004
+        # Le dernier champ du gabarit au fer à droite (les dates) : seulement s'il
+        # est là — sans dates, l'entreprise ne part pas à la marge.
+        flush = bool(sl.get("flush_right")) and len(vals) > 1 and vals[-1][0] == sl["roles"][-1]
+        joiners = sl.get("joiners") or {}
         parts = []
         for n, (role, v, path) in enumerate(vals):
-            if n and flush:
+            if n and flush and n == len(vals) - 1:
                 parts.append('<span style="flex:1 1 auto;min-width:3mm"></span>')
+            elif n and role in joiners:
+                # Le signe du modèle entre deux champs (« - »), au style du second.
+                parts.append(
+                    f'<span class="{esc(css_class(style_key(self.styles, kind, role)))}" '
+                    f'style="white-space:pre"> {esc(joiners[role])} </span>'
+                )
             elif n:
                 if sep:
                     parts.append(
@@ -1458,7 +1470,11 @@ class HtmlRenderer:
     def header(self) -> str:
         """L'en-tête : ornements d'abord (ordre de peinture de la source), textes, photo."""
         h = self.spec["header"]
-        out = [f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>' for d in h["decorations"]]
+        out = [
+            f'<div style="{deco_css(d, d["x_mm"], d["y_mm"])}"></div>'
+            for d in h["decorations"]
+            if self.shown(d)
+        ]
         pw = float(self.spec["page"]["width_mm"])
         tight = self.tight_contact(h["elements"])
         for e in h["elements"]:
@@ -1576,7 +1592,7 @@ class HtmlRenderer:
             "section,.item{display:block}",
             *(self.css_style(k, v) for k, v in self.styles.items()),
         ]
-        bands_html = []
+        bands_html: list[str] = []
         drawn: set[int] = set()
         for bi, band in enumerate(placement(self.spec, self.view, self.fonts)):
             if not any(band["columns"]):
@@ -1604,6 +1620,7 @@ class HtmlRenderer:
                 )
                 prev_right = cspec["x_mm"] + cspec["w_mm"]
             margin = 0.0 if bi == 0 else self.spec["bands"][bi - 1].get("gap_after_mm", 8.0)
+            lead_css = self.held_band_top(bi) if not bands_html else ""
             # Un filet posé entre deux bandes garde sa place quand l'ajustement
             # resserre l'écart : la bande ne remonte pas dessus.
             rules = [
@@ -1615,6 +1632,7 @@ class HtmlRenderer:
             gap_css = f"calc({margin:.2f}mm*var(--k))"
             if rules and max(rules) + 3.5 < margin:
                 gap_css = f"max({gap_css},{max(rules) + 3.5:.2f}mm)"
+            gap_css = lead_css or gap_css
             # Un filet qui court le long de la bande (la ligne d'une frise) s'étire avec elle.
             band_decor = "".join(
                 f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"], self.stretch_css(d))}"></div>'
@@ -1667,6 +1685,27 @@ class HtmlRenderer:
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
             f"{flows}{self.flow_headline()}{''.join(bands_html)}</div>{footer_html('cv') if self.view.get('watermark', True) else ''}</div>{fit}</body></html>"
         )
+
+    def held_band_top(self, index: int) -> str:
+        """La marge qui garde à sa place la première bande rendue quand celles d'avant sont vides.
+
+        Une bande propre à l'exemple (une rubrique libre à côté des coordonnées
+        de l'en-tête) n'a rien pour une personne : la bande suivante remontait
+        à sa place, sous les coordonnées posées en absolu à cette hauteur. Elle
+        garde son haut mesuré tant qu'un champ d'en-tête rendu occupe la
+        hauteur des bandes vides ; sinon elle remonte, comme avant.
+        """
+        if index == 0:
+            return ""
+        top = float(self.spec["first_band_top_mm"])
+        own = float(self.spec["bands"][index]["y_sample"])
+        beside = any(
+            top - 1.0 <= float(e["y_mm"]) < own
+            and self.view["header"].get(e["field"])
+            and not e.get("flow")
+            for e in self.spec["header"]["elements"]
+        )
+        return f"{own - top:.2f}mm" if beside else ""
 
     def flow_headline(self) -> str:
         """Le poste visé d'une personne quand le modèle ne lui laisse pas de place sous le nom :

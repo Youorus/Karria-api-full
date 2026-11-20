@@ -21,6 +21,8 @@ from typing import Any
 import pytest
 
 from documents.infrastructure.fakes import (
+    BOLD,
+    REGULAR,
     SERVED,
     cv_font_set,
     timeline_plan,
@@ -1241,14 +1243,22 @@ class TestPiedDePage:
         assert len(plan["bands"]) == 1
         assert [h["field"] for h in plan["header"]["lines"]] == ["full_name", "phone", "email"]
 
-    def test_une_rubrique_contact_haute_titree_ou_accompagnee_reste_une_bande(self) -> None:
+    def test_des_coordonnees_a_la_suite_dune_rubrique_sont_aussi_un_pied_de_page(self) -> None:
+        spec, _, assembler = _assemble(self._lines(), self._plan(alone=False))
+        assert list(sections(spec)) == ["skills"]
+        assert {e["field"] for e in spec["header"]["elements"]} >= {"phone", "email"}
+        assert len(assembler.labels["plan"]["bands"]) == 1
+
+    def test_une_rubrique_contact_haute_titree_ou_suivie_reste_une_bande(self) -> None:
         lines = self._lines()
         lines[3]["y"], lines[4]["y"] = 80.0, 80.0
         spec, _, _ = _assemble(lines, self._plan())
         assert "contact" in sections(spec)
         spec, _, _ = _assemble(self._lines(), self._plan(titled=True))
         assert "contact" in sections(spec)
-        spec, _, _ = _assemble(self._lines(), self._plan(alone=False))
+        plan = self._plan(alone=False)
+        plan["bands"][0]["columns"][0]["sections"].reverse()
+        spec, _, _ = _assemble(self._lines(), plan)
         assert "contact" in sections(spec)
         plan = self._plan()
         plan["bands"][-1]["columns"][0]["sections"][0]["items"][0]["lines"][0]["role"] = "item_text"
@@ -1332,3 +1342,360 @@ def test_le_bas_du_contenu_ignore_un_pied_de_page(built: tuple) -> None:
     spec, _, _ = _assemble(lines, plan)
     assert spec["content_bottom_mm"] < 100.0
     assert built[0]["content_bottom_mm"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Un modèle à intitulés en deux polices, puces réparties, site en pied de page
+# ---------------------------------------------------------------------------
+
+
+def _glyphs(text: str, x: float, step: float = 2.0) -> list[tuple[str, float, float]]:
+    """Les glyphes visibles d'un texte, posés à un pas régulier."""
+    return [(c, x + i * step, x + (i + 1) * step) for i, c in enumerate(text.replace(" ", ""))]
+
+
+def _two_font_title(lid: str, y: float) -> Json:
+    from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+    text = "Vendeur - Zara"
+    spans = [
+        {
+            "text": c,
+            "font": BOLD if i < 7 else REGULAR,
+            "size": 9.0,
+            "color": "#000000" if i < 7 else "#6E6E6E",
+        }
+        for i, c in enumerate(text.replace(" ", ""))
+    ]
+    return raw_line(lid, text, 22, y, w=24, font=BOLD, spans=spans, chars=_glyphs(text, 22.0))
+
+
+class TestIntituleEnDeuxPolices:
+    def test_la_seconde_moitie_devient_le_sous_titre_sans_son_tiret(self) -> None:
+        from karria.modules.documents.infrastructure.spec_assembler import split_mixed_title  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+        line = Line(
+            _two_font_title("L3", 57), {"role": "item_title", "section": "experiences", "item": 1}
+        )
+        halves = split_mixed_title(line)
+        assert halves is not None
+        title, subtitle = halves
+        assert (title.text, title.role, title.raw["font"], title.x, title.w) == (
+            "Vendeur",
+            "item_title",
+            BOLD,
+            22.0,
+            14.0,
+        )
+        assert (subtitle.text, subtitle.role, subtitle.raw["font"], subtitle.raw["color"]) == (
+            "Zara",
+            "item_subtitle",
+            REGULAR,
+            "#6E6E6E",
+        )
+        # « Zara » commence après le tiret : au huitième glyphe.
+        assert (subtitle.x, subtitle.w, subtitle.raw["lead"]) == (38.0, 8.0, "-")
+
+    def test_une_ligne_dune_police_ou_coupee_dans_un_mot_ne_change_pas(self) -> None:
+        from karria.modules.documents.infrastructure.spec_assembler import split_mixed_title  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.spec_builder import Line  # noqa: PLC0415
+
+        label = {"role": "item_title", "section": "experiences", "item": 1}
+        raw = _two_font_title("L3", 57)
+        assert split_mixed_title(Line({**raw, "spans": None}, label)) is None
+        inside = [{**sp, "font": BOLD if i < 3 else REGULAR} for i, sp in enumerate(raw["spans"])]
+        assert split_mixed_title(Line({**raw, "spans": inside}, label)) is None
+        three = [
+            {**sp, "font": "Autre" if i > 9 else sp["font"]} for i, sp in enumerate(raw["spans"])
+        ]
+        assert split_mixed_title(Line({**raw, "spans": three}, label)) is None
+        # Rien après le signe : pas de sous-titre.
+        alone = {**raw, "text": "Vendeur -", "spans": raw["spans"][:8], "chars": raw["chars"][:8]}
+        assert split_mixed_title(Line(alone, label)) is None
+
+    def _spec(self) -> tuple[Json, Json]:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+            raw_line("L2", "EXPERIENCE", 20, 50, size=11, caps=True),
+            _two_font_title("L3", 57),
+            raw_line("L4", "2020 - 2022", 170, 57, w=20),
+            _two_font_title("L5", 70),
+            raw_line("L6", "2019", 182, 70, w=8),
+        ]
+        items = [
+            {"lines": [{"line": a, "role": "item_title"}, {"line": b, "role": "item_dates"}]}
+            for a, b in (("L3", "L4"), ("L5", "L6"))
+        ]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "experiences",
+                    "title_lines": ["L2"],
+                    "items": items,
+                    "side_roles": [],
+                }
+            ],
+            [{"line": "L1", "field": "full_name"}],
+        )
+        spec, sample, _ = _assemble(lines, plan)
+        return spec, sample
+
+    def test_la_ligne_porte_trois_champs_les_dates_au_fer_a_droite(self) -> None:
+        spec, sample = self._spec()
+        exp = sections(spec)["experiences"]
+        assert exp["slot_order"] == ["item_title+item_subtitle+item_dates"]
+        row = exp["slots"][0]
+        assert row["joiners"] == {"item_subtitle": "-"}
+        assert row["flush_right"] is True
+        assert spec["styles"]["experiences.item_subtitle"]["color"] == "#6E6E6E"
+        assert spec["styles"]["experiences.item_subtitle"]["weight"] == 400
+        assert sample["experiences"][0]["title_raw"] == "Vendeur"
+        assert sample["experiences"][0]["subtitle_raw"] == "Zara"
+
+    def test_le_rendu_reecrit_le_signe_entre_le_poste_et_lentreprise(self) -> None:
+        spec, sample = self._spec()
+        html = HtmlRenderer(spec, from_sample(spec, sample), cv_font_set(), photo=None).render()
+        joiner = '<span class="s-experiences-item-subtitle" style="white-space:pre"> - </span>'
+        assert html.count(joiner) == 2
+        assert html.count('<span style="flex:1 1 auto;min-width:3mm"></span>') == 2
+        cv = {
+            "identity": {"first_name": "Awa", "last_name": "Diallo"},
+            "experiences": [
+                {"position": "Caissière", "company": "Fnac", "start_date": "2021"},
+                {"position": "Hôtesse", "company": "Ikea"},
+            ],
+        }
+        view = from_cv(spec, cv)
+        person = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert "Caissière</span>" in person
+        assert person.count(joiner) == 2
+        # Sans dates, l'entreprise suit le poste : elle ne part pas à la marge.
+        assert person.count('<span style="flex:1 1 auto;min-width:3mm"></span>') == 1
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+
+
+class TestRubriqueIntercalee:
+    def _lines(self) -> list[Json]:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        return [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20),
+            raw_line("L2", "EXPERIENCE", 20, 50, size=11, caps=True),
+            raw_line("L3", "Vendeur", 20, 57),
+            raw_line("L4", "Conseiller", 20, 62, w=22),
+            raw_line("L5", "Encaisser", 20, 67, w=20),
+            raw_line("L6", "Caissier", 20, 77),
+            raw_line("L7", "Rendre la monnaie", 20, 82, w=30),
+            raw_line("L8", "Ranger", 20, 87, w=12),
+        ]
+
+    def _plan(self, stray: list[str]) -> Json:
+        return _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "experiences",
+                    "title_lines": ["L2"],
+                    "items": [
+                        {
+                            "lines": [
+                                {"line": "L3", "role": "item_title"},
+                                {"line": "L4", "role": "bullet"},
+                            ]
+                        },
+                        {
+                            "lines": [
+                                {"line": "L6", "role": "item_title"},
+                                {"line": "L7", "role": "bullet"},
+                            ]
+                        },
+                    ],
+                    "side_roles": [],
+                },
+                {
+                    "ref": "S2",
+                    "kind": "other",
+                    "title_lines": [],
+                    "items": [{"lines": [{"line": ln, "role": "bullet"}]} for ln in stray],
+                    "side_roles": [],
+                },
+            ],
+            [{"line": "L1", "field": "full_name"}],
+        )
+
+    def test_les_lignes_rejoignent_lelement_quelles_suivent(self) -> None:
+        spec, sample, assembler = _assemble(self._lines(), self._plan(["L5", "L8"]))
+        assert list(sections(spec)) == ["experiences"]
+        assert [e["bullets"] for e in sample["experiences"]] == [
+            ["Conseiller Encaisser"],
+            ["Rendre la monnaie Ranger"],
+        ]
+        assert assembler.check.unplaced == []
+        plan = assembler.labels["plan"]
+        assert len(plan["bands"][0]["columns"][0]["sections"]) == 1
+
+    def test_une_rubrique_sans_titre_qui_suit_les_autres_reste_une_rubrique(self) -> None:
+        lines = self._lines()
+        lines[4]["y"], lines[7]["y"] = 120.0, 125.0
+        spec, _, _ = _assemble(lines, self._plan(["L5", "L8"]))
+        assert len(sections(spec)) == 2
+
+    def test_une_ligne_trop_loin_de_tout_element_interdit_le_rapprochement(self) -> None:
+        lines = self._lines()
+        lines[7]["y"] = 110.0
+        spec, _, _ = _assemble(lines, self._plan(["L5", "L8"]))
+        assert len(sections(spec)) == 2
+
+
+class TestSiteEnPiedDePageEtFiletDansLeNom:
+    def _assemble(self, drawings: list[Json] | None = None) -> tuple[Json, Json]:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        lines = [
+            raw_line(
+                "L1",
+                "JEAN DUPONT CV",
+                60,
+                10,
+                w=83,
+                h=8,
+                size=20,
+                # Dix glyphes serrés, un blanc de 10 mm, puis « CV ».
+                chars=[*_glyphs("JEANDUPONT", 60.0, 6.0), *_glyphs("CV", 130.0, 6.5)],
+            ),
+            raw_line("L2", "jean.fr", 170, 30, w=25, size=8),
+            raw_line("L3", "COMPETENCES", 20, 50, size=11, caps=True),
+            raw_line("L4", "Python", 20, 57),
+            raw_line("L5", "jean.fr · github.com/jean", 70, 292, w=70, color="#0096FF"),
+        ]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "skills",
+                    "title_lines": ["L3"],
+                    "items": [{"lines": [{"line": "L4", "role": "skill"}]}],
+                    "side_roles": [],
+                },
+                {
+                    "ref": "S2",
+                    "kind": "other",
+                    "title_lines": [],
+                    "items": [{"lines": [{"line": "L5", "role": "website"}]}],
+                    "side_roles": [],
+                },
+            ],
+            [{"line": "L1", "field": "full_name"}, {"line": "L2", "field": "website"}],
+        )
+        spec, sample, _ = _assemble(lines, plan, drawings=drawings or [])
+        return spec, sample
+
+    def test_le_site_repete_en_pied_de_page_est_un_second_champ_dentete(self) -> None:
+        spec, sample = self._assemble()
+        assert list(sections(spec)) == ["skills"]
+        sites = [e for e in spec["header"]["elements"] if e["field"] == "website"]
+        assert [e["style"] for e in sites] == ["header.website", "header.website.2"]
+        # L'exemple garde le texte de chaque écriture ; la première fait la valeur.
+        assert sites[1]["sample_lines"][0]["text"] == "jean.fr · github.com/jean"
+        assert sample["contact"]["website"] == "jean.fr"
+        # Le pied de page Karria occupe les 6 derniers millimètres : la ligne remonte.
+        box = spec["styles"]["header.website.2"]["box_h_mm"]
+        assert sites[1]["y_mm"] == pytest.approx(297.0 - 6.0 - box, abs=0.01)
+        assert sites[1]["sample_lines"][0]["y_mm"] == sites[1]["y_mm"]
+        assert spec["content_bottom_mm"] < 100
+
+    def test_un_filet_entre_deux_mots_du_nom_ne_vaut_que_pour_lexemple(self) -> None:
+        from documents.infrastructure.test_spec_builder import drawing  # noqa: PLC0415
+
+        # « JEAN DUPONT | CV » : le filet est dans le blanc entre « DUPONT » (120 mm) et « CV » (130 mm).
+        spec, sample = self._assemble([drawing("rect", 124.5, 9, 1.0, 9, fill="#0096FF")])
+        name = next(e for e in spec["header"]["elements"] if e["field"] == "full_name")
+        assert [ln["text"] for ln in name["sample_lines"]] == ["JEAN DUPONT", "CV"]
+        assert name["sample_lines"][1]["x_mm"] == 130.0
+        assert spec["header"]["decorations"][0]["sample_only"] is True
+        view = from_cv(spec, {"identity": {"first_name": "Awa", "last_name": "Diallo"}})
+        person = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        assert "#0096FF;border-radius" not in person
+        example = HtmlRenderer(spec, from_sample(spec, sample), cv_font_set(), photo=None).render()
+        assert "background:#0096FF" in example
+        docx = DocxRenderer(spec, view, cv_font_set(), photo=None).render({})
+        assert docx.startswith(b"PK")
+
+    def test_un_filet_hors_du_nom_reste_un_ornement(self) -> None:
+        from documents.infrastructure.test_spec_builder import drawing  # noqa: PLC0415
+
+        spec, _ = self._assemble([drawing("rect", 40.0, 9, 1.0, 9, fill="#0096FF")])
+        name = next(e for e in spec["header"]["elements"] if e["field"] == "full_name")
+        assert "sample_lines" not in name
+        assert "sample_only" not in spec["header"]["decorations"][0]
+
+
+class TestBandePropreALExemple:
+    """Une rubrique libre à côté des coordonnées de l'en-tête : rien pour une personne."""
+
+    def _spec(self) -> Json:
+        from documents.infrastructure.test_spec_builder import raw_line  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN DUPONT", 60, 10, w=90, h=8, size=20),
+            raw_line("L2", "Statut : salarié", 20, 30, w=40),
+            raw_line("L3", "0612", 170, 30, w=20, size=8),
+            raw_line("L4", "COMPETENCES", 20, 50, size=11, caps=True),
+            raw_line("L5", "Python", 20, 57),
+        ]
+        plan = _mini_plan(
+            [
+                {
+                    "ref": "S1",
+                    "kind": "other",
+                    "title_lines": [],
+                    "items": [{"lines": [{"line": "L2", "role": "item_text"}]}],
+                    "side_roles": [],
+                }
+            ],
+            [{"line": "L1", "field": "full_name"}, {"line": "L3", "field": "phone"}],
+        )
+        plan["bands"].append(
+            {
+                "columns": [
+                    {
+                        "sections": [
+                            {
+                                "ref": "S2",
+                                "kind": "skills",
+                                "title_lines": ["L4"],
+                                "items": [{"lines": [{"line": "L5", "role": "skill"}]}],
+                                "side_roles": [],
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+        spec, _, _ = _assemble(lines, plan)
+        return spec
+
+    CV: Json = {  # noqa: RUF012 - une donnée de test, jamais modifiée
+        "identity": {"first_name": "Awa", "last_name": "Diallo"},
+        "contact": {"phone": "06 12 34 56 78"},
+        "skills": [{"name": "Vente"}],
+    }
+
+    def test_la_bande_suivante_garde_sa_place_sous_les_coordonnees(self) -> None:
+        spec = self._spec()
+        renderer = HtmlRenderer(spec, from_cv(spec, self.CV), cv_font_set(), photo=None)
+        # La bande des compétences commençait à 50 mm, la première à 30 mm.
+        assert renderer.held_band_top(1) == "20.00mm"
+        assert renderer.held_band_top(0) == ""
+        assert "margin-top:20.00mm" in renderer.render()
+
+    def test_sans_coordonnee_a_cette_hauteur_elle_remonte(self) -> None:
+        spec = self._spec()
+        cv = {**self.CV, "contact": {}}
+        renderer = HtmlRenderer(spec, from_cv(spec, cv), cv_font_set(), photo=None)
+        assert renderer.held_band_top(1) == ""
+        assert "margin-top:20.00mm" not in renderer.render()

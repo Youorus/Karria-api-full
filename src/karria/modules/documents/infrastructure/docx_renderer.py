@@ -449,7 +449,8 @@ class DocxRenderer:
     def page_shapes(self, anchor: Paragraph) -> None:
         """Ornements fixes (en-tête, page) et photo : ancrés à la page, derrière le texte."""
         h = self.spec["header"]
-        decorations = list(h["decorations"]) + [
+        sample = bool(self.view.get("sample"))
+        decorations = [d for d in h["decorations"] if sample or not d.get("sample_only")] + [
             d
             for d in self.spec["page_decorations"]
             if d.get("anchor") == "page" and (self.view.get("sample") or not d.get("sample_only"))
@@ -1024,7 +1025,9 @@ class DocxRenderer:
         rogne le haut de la ligne (constaté).
         """
         st = self.styles[key]
-        glyph = "■" if mk["shape"] == "square" else "•"
+        # Une puce tapée du modèle (« · ») garde son glyphe ; une puce dessinée
+        # devient « • » ou « ■ ».
+        glyph = mk["text"] if mk["shape"] == "text" else "■" if mk["shape"] == "square" else "•"
         font = self.fonts.get(st["family"], int(st["weight"]), bool(st["italic"]))
         box = glyph_box(font.data, glyph) if font else None
         x0 = box[0] if box else 0.08
@@ -1110,9 +1113,14 @@ class DocxRenderer:
         sep = sl.get("separator")
         st0 = self.styles[key0]
         space_mm = self.fonts.width_mm(" ", {**st0, "letter_spacing_pt": 0.0}) * self.f
-        flush = bool(sl.get("flush_right")) and len(vals) == 2  # noqa: PLR2004
-        for role, v in vals[1:]:
-            if flush:
+        flush = bool(sl.get("flush_right")) and len(vals) > 1 and vals[-1][0] == sl["roles"][-1]
+        joiners = sl.get("joiners") or {}
+        for n, (role, v) in enumerate(vals[1:], 1):
+            if not (flush and n == len(vals) - 1) and role in joiners:
+                # Le signe du modèle entre deux champs (« - »), au style du second.
+                glue = p.add_run(f" {joiners[role]} ")
+                self.apply_run_style(glue, style_key(self.styles, kind, role))
+            elif flush and n == len(vals) - 1:
                 # Le second champ au fer à droite : un taquet aligné à droite au bord de la colonne.
                 p.paragraph_format.tab_stops.add_tab_stop(
                     Mm(max(col_w_of(cell) - sl["dx_mm"], 10.0)), WD_TAB_ALIGNMENT.RIGHT

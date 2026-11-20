@@ -26,6 +26,7 @@ Contrat
 from __future__ import annotations
 
 import itertools
+import re
 from typing import Any, Final, cast
 
 from karria.modules.documents.infrastructure.fonts import FontSet
@@ -75,6 +76,14 @@ CENTER_TOLERANCE_MM: Final = 1.5
 #: Deux champs centrés l'un sur l'autre doivent différer en largeur pour que
 #: le centrage se distingue d'un simple alignement à gauche.
 WIDTH_DIFFERENCE_MM: Final = 2.0
+#: Le signe qui ouvre la seconde moitié d'un intitulé (« Poste - Entreprise », « Poste | Entreprise »).
+TITLE_LEAD: Final = re.compile(r"^([-–—|·/,]+)(?:\s+|$)")
+#: Un filet vertical glissé entre deux mots est mince (mm).
+RULE_MAX_W_MM: Final = 2.0
+#: La bande du bas de page que le pied Karria occupe (mm) : `page_limit_mm` la réserve.
+WATERMARK_BAND_MM: Final = 6.0
+#: Une ligne intercalée suit l'élément voisin d'au plus tant de fois sa hauteur.
+INTERLEAVED_FOLLOW: Final = 2.5
 #: Un nom complet en deux polices se coupe entre deux mots : il en faut deux.
 MIN_NAME_WORDS: Final = 2
 
@@ -115,29 +124,102 @@ def relocate_contact_lines(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
 
 
 def relocate_footer_contact(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
-    """Des coordonnées en pied de page (une rubrique Contact sans titre, seule dans la
-    dernière bande, toute dans le bas de la page) sont des champs d'en-tête : posées
-    en absolu, elles restent au pied ; en bande, elles couleraient sous le contenu
-    et le tasseraient (mesuré sur cv5 : le plan les met tantôt dans l'en-tête,
-    tantôt dans une bande ; la règle tranche)."""
+    """Des coordonnées en pied de page (une rubrique sans titre faite de coordonnées
+    seules, toute dans le bas de la page, la dernière de sa colonne dans la dernière
+    bande) sont des champs d'en-tête : posées en absolu, elles restent au pied ; en
+    bande, elles couleraient sous le contenu et le tasseraient (mesuré sur cv5 : le
+    plan les met tantôt dans l'en-tête, tantôt dans une bande ; la règle tranche).
+
+    Le plan la dit `contact` ou `other`, seule dans sa bande ou à la suite des
+    formations : c'est sa place et son contenu qui en font un pied de page (un
+    modèle qui répète son site en bas de page ; en flux, la ligne passait la
+    limite de page et l'ajustement resserrait tout l'exemple de 10 %).
+    """
     if not plan.bands:
         return plan
     last = plan.bands[-1]
-    sections = [s for c in last.columns for s in c.sections]
-    if len(sections) != 1 or sections[0].kind != "contact" or sections[0].title_lines:
-        return plan
-    contact = sections[0]
     by_id = {ln["id"]: ln for ln in page.lines}
-    lines = [pl for it in contact.items for pl in it.lines if pl.line in by_id]
-    if not lines or any(pl.role not in CONTACT_ROLES for pl in lines):
-        return plan
-    if any(by_id[pl.line]["y"] < FOOTER_RATIO * page.height_mm for pl in lines):
-        return plan
-    plan.header.lines.extend(
-        PlanHeaderLine(line=pl.line, field=cast("HeaderField", pl.role)) for pl in lines
-    )
-    plan.bands.pop()
+    for column in last.columns:
+        foot = column.sections[-1] if column.sections else None
+        if foot is None or foot.title_lines or foot.kind not in ("contact", "other"):
+            continue
+        lines = [pl for it in foot.items for pl in it.lines if pl.line in by_id]
+        if not lines or any(pl.role not in CONTACT_ROLES for pl in lines):
+            continue
+        if any(by_id[pl.line]["y"] < FOOTER_RATIO * page.height_mm for pl in lines):
+            continue
+        plan.header.lines.extend(
+            PlanHeaderLine(line=pl.line, field=cast("HeaderField", pl.role)) for pl in lines
+        )
+        column.sections.remove(foot)
+    last.columns = [c for c in last.columns if c.sections]
+    if not last.columns:
+        plan.bands.pop()
     return plan
+
+
+def relocate_interleaved_lines(plan: LayoutPlan, page: PdfPage) -> LayoutPlan:
+    """Une rubrique sans titre dont les lignes s'intercalent entre les éléments d'une voisine
+    n'est pas une rubrique : chaque ligne rejoint l'élément qu'elle suit.
+
+    Les rubriques d'une colonne s'empilent ; elles ne s'entrelacent pas. Mesuré
+    sur un modèle à deux puces par élément : le plan rangeait la seconde puce
+    de chaque expérience et de chaque formation dans une rubrique libre à part,
+    rendue d'un bloc au pas de ses lignes — juste dans la première rubrique,
+    10 mm trop haut dans la seconde, sur ses titres. Rien ne bouge si une seule
+    ligne ne suit pas de près (`INTERLEAVED_FOLLOW`) un élément d'une autre
+    rubrique, ou si la rubrique n'en chevauche aucune en hauteur.
+    """
+    by_id = {ln["id"]: ln for ln in page.lines}
+    for band in plan.bands:
+        for column in band.columns:
+            for stray in [s for s in column.sections if not s.title_lines]:
+                hosts = [s for s in column.sections if s is not stray]
+                moves = _interleaved_moves(stray, hosts, by_id)
+                if moves is None:
+                    continue
+                for item, line in moves:
+                    item.lines.append(line)
+                column.sections.remove(stray)
+    return plan
+
+
+def _interleaved_moves(
+    stray: PlanSection, hosts: list[PlanSection], by_id: dict[str, Json]
+) -> list[tuple[PlanItem, PlanLine]] | None:
+    """Pour chaque ligne d'une rubrique intercalée, l'élément voisin qu'elle suit ; rien si elle ne l'est pas."""
+    lines = [pl for it in stray.items for pl in it.lines if pl.line in by_id]
+    items = [
+        (it, [by_id[pl.line] for pl in it.lines if pl.line in by_id])
+        for host in hosts
+        for it in host.items
+    ]
+    items = [(it, raws) for it, raws in items if raws]
+    if not lines or not items:
+        return None
+    host_top = min(raw["y"] for _, raws in items for raw in raws)
+    host_bottom = max(raw["y"] for _, raws in items for raw in raws)
+    ys = [by_id[pl.line]["y"] for pl in lines]
+    if not (min(ys) < host_bottom and max(ys) > host_top):
+        return None
+    moves: list[tuple[PlanItem, PlanLine]] = []
+    for pl in sorted(lines, key=lambda pl: by_id[pl.line]["y"]):
+        raw = by_id[pl.line]
+        # L'élément dont la dernière ligne (lignes déjà rapportées comprises)
+        # précède celle-ci de plus près.
+        best: tuple[float, PlanItem] | None = None
+        for it, raws in items:
+            above = [r for r in raws if r["y"] <= raw["y"]]
+            if not above:
+                continue
+            gap = raw["y"] - max(r["y"] for r in above)
+            if best is None or gap < best[0]:
+                best = (gap, it)
+        if best is None or best[0] > INTERLEAVED_FOLLOW * raw["h"]:
+            return None
+        moves.append((best[1], pl))
+        next(raws for it, raws in items if it is best[1]).append(raw)
+    return moves
 
 
 def size_of(line: Line) -> float | None:
@@ -186,6 +268,59 @@ def split_mixed_name(line: Line) -> tuple[Line, Line] | None:
     return halves[0], halves[1]
 
 
+def split_mixed_title(line: Line) -> tuple[Line, Line] | None:
+    """Un intitulé écrit en deux polices (« Poste » en gras, « - Entreprise » en gris maigre) → deux lignes.
+
+    Le PDF donne la police de chaque glyphe ; quand elle change exactement
+    entre deux mots, la seconde moitié devient le sous-titre de l'élément, à sa
+    place, dans sa police et sa couleur. Le signe qui l'ouvre (« - », « | »)
+    n'est pas du contenu : il est gardé à part (`lead`) et le gabarit le
+    réécrit entre le poste et l'entreprise d'une personne. Sinon, rien ne change.
+    """
+    spans, chars = line.raw.get("spans"), line.raw.get("chars")
+    if not spans or not chars or len(spans) != len(chars):
+        return None
+    cut = next((i for i in range(1, len(spans)) if spans[i]["font"] != spans[0]["font"]), None)
+    if cut is None or any(span["font"] != spans[cut]["font"] for span in spans[cut:]):
+        return None
+    words = line.text.split()
+    head = "".join(str(c[0]) for c in chars[:cut])
+    count = next(
+        (k for k in range(1, len(words)) if "".join(words[:k]) == head),
+        None,
+    )
+    if count is None:
+        return None
+    rest = " ".join(words[count:])
+    lead = TITLE_LEAD.match(rest)
+    skipped = len(lead.group(1)) if lead else 0
+    text = rest[lead.end() :] if lead else rest
+    if not text or cut + skipped >= len(chars):
+        return None
+
+    def half(first: int, last: int, content: str, role: str) -> Line:
+        x0, x1 = float(chars[first][1]), float(chars[last - 1][2])
+        raw = {
+            **line.raw,
+            "text": content,
+            "font": spans[first]["font"],
+            "size": spans[first]["size"],
+            "color": spans[first].get("color") or line.raw["color"],
+            "x": round(x0, 2),
+            "w": round(x1 - x0, 2),
+            "caps": content.isupper() and any(ch.isalpha() for ch in content),
+            "spans": None,
+            "chars": list(chars[first:last]),
+        }
+        return Line(raw, {"role": role, "section": line.section, "item": line.item})
+
+    title = half(0, cut, " ".join(words[:count]), line.role)
+    subtitle = half(cut + skipped, len(chars), text, "item_subtitle")
+    if lead:
+        subtitle.raw["lead"] = lead.group(1)
+    return title, subtitle
+
+
 def style_runs(lines: list[Line]) -> list[list[Line]]:
     """Les lignes d'un champ, découpées en suites d'une même police et d'un même corps."""
     runs: list[list[Line]] = []
@@ -218,6 +353,7 @@ class SpecAssembler(SpecBuilder):
         for i, d in enumerate(page.drawings, 1):
             d["_id"] = shape_id(i)
         plan = relocate_footer_contact(relocate_contact_lines(plan, page), page)
+        plan = relocate_interleaved_lines(plan, page)
         self.labels = plan_to_labels(plan, page)
         super().__init__(doc, page, self.labels, fonts, served, substituted=substituted)
         self.plan = plan
@@ -457,6 +593,13 @@ class SpecAssembler(SpecBuilder):
         ]
         if not title and not lines:
             return None
+        if not any(ln.role == "item_subtitle" for ln in lines):
+            # Un intitulé en deux polices porte son sous-titre : chaque moitié a son style.
+            lines = [
+                half
+                for ln in lines
+                for half in ((split_mixed_title(ln) if ln.role == "item_title" else None) or (ln,))
+            ]
         if lines and all(ln.role == "label" for ln in lines):
             # Des étiquettes qui n'annoncent rien (« Mon portfolio » seul dans sa
             # rubrique) sont du texte : elles se rendent, elles ne se perdent pas.
@@ -604,11 +747,7 @@ class SpecAssembler(SpecBuilder):
         # Un champ écrit deux fois dans deux styles (un rappel du poste en haut de
         # page, le poste en grand sous le nom) fait deux éléments, pas un champ
         # sur deux lignes : un champ sur plusieurs lignes garde une seule police.
-        elements = [
-            self.header_element(field, run, styles, sample)
-            for field, lines in by_field.items()
-            for run in style_runs(sorted(lines, key=lambda ln: (ln.y, ln.x)))
-        ]
+        elements = self.header_elements(by_field, styles, sample)
         elements.sort(key=lambda e: e["y_mm"])
         self.align_header_elements(elements)
         contact_lines = [
@@ -637,12 +776,94 @@ class SpecAssembler(SpecBuilder):
                 continue
             self.used.add(i)
             decor.append(self.shape_entry(d))
+        for e in elements:
+            lines = [ln for ln in by_field.get(e["field"], []) if abs(ln.y - e["y_mm"]) < 0.01]  # noqa: PLR2004
+            if len(lines) == 1 and "sample_lines" not in e:
+                self.split_by_rule(e, lines[0], decor)
         return {"elements": elements, "photo": photo, "decorations": decor}
 
+    @staticmethod
+    def split_by_rule(e: Json, line: Line, decor: list[Json]) -> None:
+        """Un filet vertical dessiné **dans** une ligne d'en-tête, entre deux mots, est de l'exemple.
+
+        « JAN KÜSTER | RESUME » : le filet tient dans un blanc que le texte de
+        l'exemple lui laisse. Le nom d'une personne n'a pas ce blanc — le filet
+        passait sur ses lettres. Il ne se dessine donc que pour l'exemple
+        (`sample_only`), dont la ligne garde ses deux moitiés à leur place
+        (`sample_lines`).
+        """
+        chars = line.raw.get("chars") or []
+        words = line.text.split()
+        for d in decor:
+            x0, x1 = float(d["x_mm"]), float(d["x_mm"]) + float(d["w_mm"])
+            if float(d["w_mm"]) > RULE_MAX_W_MM or not (
+                float(d["y_mm"]) < line.bottom and float(d["y_mm"]) + float(d["h_mm"]) > line.y
+            ):
+                continue
+            before = [c for c in chars if float(c[2]) <= x0 + 0.2]
+            after = [c for c in chars if float(c[1]) >= x1 - 0.2]
+            if not before or not after or len(before) + len(after) != len(chars):
+                continue
+            head = "".join(str(c[0]) for c in before)
+            count = next(
+                (k for k in range(1, len(words)) if "".join(words[:k]) == head),
+                None,
+            )
+            if count is None:
+                continue
+            d["sample_only"] = True
+            e["sample_lines"] = [
+                {"text": " ".join(words[:count]), "x_mm": round(line.x, 2), "y_mm": e["y_mm"]},
+                {
+                    "text": " ".join(words[count:]),
+                    "x_mm": round(float(after[0][1]), 2),
+                    "y_mm": e["y_mm"],
+                },
+            ]
+            return
+
+    def header_elements(
+        self, by_field: dict[str, list[Line]], styles: dict[str, Json], sample: Json
+    ) -> list[Json]:
+        """Un élément par champ et par style : un champ écrit deux fois dans deux styles en fait deux."""
+        elements = []
+        for field, lines in by_field.items():
+            runs = style_runs(sorted(lines, key=lambda ln: (ln.y, ln.x)))
+            for run in runs:
+                e = self.header_element(field, run, styles, sample, repeated=len(runs) > 1)
+                self.clear_watermark(e, styles[e["style"]])
+                elements.append(e)
+        return elements
+
+    def clear_watermark(self, e: Json, st: Json) -> None:
+        """Un texte du modèle posé dans la bande du pied de page Karria remonte au-dessus d'elle.
+
+        La ligne « CV réalisé avec Karria » occupe le bas de la feuille ; un
+        modèle qui écrit son site à 4 mm du bord se retrouvait dessous.
+        """
+        limit = self.ph - WATERMARK_BAND_MM
+        lift = float(e["y_mm"]) + float(st["box_h_mm"]) - limit
+        if lift <= 0 or float(e["y_mm"]) < FOOTER_RATIO * self.ph:
+            return
+        e["y_mm"] = round(float(e["y_mm"]) - lift, 2)
+        for line in e.get("sample_lines") or []:
+            line["y_mm"] = round(float(line["y_mm"]) - lift, 2)
+
     def header_element(
-        self, field: str, lines: list[Line], styles: dict[str, Json], sample: Json
+        self,
+        field: str,
+        lines: list[Line],
+        styles: dict[str, Json],
+        sample: Json,
+        *,
+        repeated: bool = False,
     ) -> Json:
-        """Un champ de l'en-tête, sur une ou plusieurs lignes (d'un même style)."""
+        """Un champ de l'en-tête, sur une ou plusieurs lignes (d'un même style).
+
+        `repeated` : le champ est écrit ailleurs dans un autre style (le site en
+        haut de page et en pied) ; l'exemple garde le texte et la place de
+        chaque écriture (`sample_lines`), une personne y lit la même valeur.
+        """
         key = f"header.{field}"
         own = self.style_of(lines)
         if key in styles and not same_style(own, styles[key]):
@@ -668,6 +889,10 @@ class SpecAssembler(SpecBuilder):
                 e["cx_mm"] = round(med([ln.x + ln.w / 2 for ln in lines]), 2)
             elif e["align"] == "right":
                 e["rx_mm"] = round(max(ln.right for ln in lines), 2)
+        elif repeated:
+            e["sample_lines"] = [
+                {"text": ln.text, "x_mm": round(ln.x, 2), "y_mm": round(ln.y, 2)} for ln in lines
+            ]
         if field in ("first_name", "last_name"):
             sample["identity"][field] = text.title()
         elif field == "headline":
@@ -683,7 +908,8 @@ class SpecAssembler(SpecBuilder):
                 last_name=" ".join(parts[1:]).title(),
             )
         else:
-            sample["contact"][{"address": "city"}.get(field, field)] = text
+            # Écrit deux fois, le champ garde dans l'exemple sa première écriture.
+            sample["contact"].setdefault({"address": "city"}.get(field, field), text)
         return e
 
     @staticmethod
