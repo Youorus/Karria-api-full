@@ -702,6 +702,7 @@ class _HeaderLayout:
         delta = bottom - tpl_bottom
         if delta <= 0.2:  # noqa: PLR2004
             return
+        moved: list[Json] = []
         for e in self.elements:
             if any(e is s for s in skip) or e.get("laid") or e.get("flow"):
                 continue
@@ -718,3 +719,20 @@ class _HeaderLayout:
             )
             if min(right, x1) - max(left, x0) > 1.0:
                 e["y_mm"] = round(y + delta, 2)
+                moved.append(e)
+        # Des coordonnées empilées descendent ensemble : la plus longue seule
+        # poussée (une adresse de site) tombait sur la ligne d'après.
+        for stack in self.contact_stacks_before(moved, delta):
+            first = next(i for i, e in enumerate(stack) if any(e is m for m in moved))
+            for e in stack[first:]:
+                if not any(e is m for m in moved):
+                    e["y_mm"] = round(float(e["y_mm"]) + delta, 2)
+
+    def contact_stacks_before(self, moved: list[Json], delta: float) -> list[list[Json]]:
+        """Les piles de coordonnées telles qu'elles étaient avant qu'un de leurs champs descende."""
+        for e in moved:
+            e["y_mm"] = round(float(e["y_mm"]) - delta, 2)
+        stacks = [s for s in self.contact_stacks() if any(e is m for e in s for m in moved)]
+        for e in moved:
+            e["y_mm"] = round(float(e["y_mm"]) + delta, 2)
+        return stacks

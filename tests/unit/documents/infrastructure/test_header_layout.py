@@ -447,3 +447,45 @@ class TestPremiereBande:
         assert all("pushes_band" not in e for e in out["header"]["elements"])
         under = layout_header(a_spec(stacked_right()), a_view(), fonts, photo=False)
         assert all(e.get("pushes_band") for e in under["header"]["elements"])
+
+
+class TestPileDeCoordonneesPoussee:
+    def test_une_coordonnee_poussee_entraine_celles_du_dessous(self, fonts: FontSet) -> None:
+        """La précision allonge le bloc de titre : le site, assez long pour passer sous lui,
+        descend — et le courriel et le téléphone empilés sous lui descendent avec lui."""
+        contact = [
+            {
+                "field": field,
+                "style": "header.phone",
+                "x_mm": 190.0 - width,
+                "y_mm": y,
+                "w_mm": width,
+                "align": "right",
+                "rx_mm": 190.0,
+            }
+            for field, y, width in (
+                ("address", 30.0, 22.0),
+                ("website", 34.0, 26.0),
+                ("email", 38.0, 26.0),
+                ("phone", 42.0, 18.0),
+            )
+        ]
+        name = {"field": "full_name", "style": "header.full_name", "x_mm": 70.0, "y_mm": 10.0}
+        headline = {"field": "headline", "style": "header.headline", "x_mm": 85.0, "y_mm": 24.0}
+        for e, width in ((name, 70.0), (headline, 40.0)):
+            e.update(w_mm=width, align="center", cx_mm=105.0)
+        spec = a_spec([name, headline, *contact])
+        view = a_view(
+            availability="Recherche alternance 24 mois · Disponible immédiatement",
+            phone="06 12 34 56 78",
+            email="marc@example.com",
+            address="Ivry",
+            website="linkedin.com/in/" + "marc-takoumba-" * 5,
+        )
+        after = by_field(layout_header(spec, view, fonts, photo=False))
+        deltas = {e["field"]: round(after[e["field"]]["y_mm"] - e["y_mm"], 2) for e in contact}
+        # Seul le site, très long, passe sous le bloc de titre ; il descend, et les deux
+        # lignes empilées sous lui descendent d'autant. L'adresse, au-dessus, reste.
+        assert deltas["website"] > 0
+        assert deltas["email"] == deltas["phone"] == deltas["website"]
+        assert deltas["address"] == 0
