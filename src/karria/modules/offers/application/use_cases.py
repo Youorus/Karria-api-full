@@ -28,7 +28,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final
@@ -1320,6 +1321,26 @@ class SuggestWidenings:
         return chosen
 
 
+#: Un verrou par personne en train de parler à l'assistante ; retiré dès qu'il est libre.
+_TURN_LOCKS: dict[UUID, tuple[asyncio.Lock, int]] = {}
+
+
+@asynccontextmanager
+async def _turn_lock(user_id: UUID) -> AsyncIterator[None]:
+    """Sérialise les tours d'une personne, sans garder de verrou inutilisé."""
+    lock, waiting = _TURN_LOCKS.get(user_id, (asyncio.Lock(), 0))
+    _TURN_LOCKS[user_id] = (lock, waiting + 1)
+    try:
+        async with lock:
+            yield
+    finally:
+        lock, waiting = _TURN_LOCKS[user_id]
+        if waiting <= 1:
+            del _TURN_LOCKS[user_id]
+        else:
+            _TURN_LOCKS[user_id] = (lock, waiting - 1)
+
+
 class ConverseSearch:
     """Un message de la personne → une réponse de Karria, et peut-être une recherche.
 
@@ -1387,7 +1408,20 @@ class ConverseSearch:
     async def execute(
         self, user_id: UUID, *, conversation_id: UUID | None, content: str
     ) -> ConversationTurn:
-        """Joue un tour."""
+        """Joue un tour — un seul à la fois par personne.
+
+        Le plafond compte les messages **enregistrés**, donc après le modèle :
+        des tours simultanés le lisaient tous avant d'écrire (audit du
+        2026-11-20). Ils passent ici l'un après l'autre. Le verrou vit dans le
+        processus : avec plusieurs processus, le dépassement reste borné à un
+        tour par processus.
+        """
+        async with _turn_lock(user_id):
+            return await self._play(user_id, conversation_id=conversation_id, content=content)
+
+    async def _play(
+        self, user_id: UUID, *, conversation_id: UUID | None, content: str
+    ) -> ConversationTurn:
         now = self._clock.now()
         await self._ensure_turn_allowed(user_id, now)
 
@@ -2304,6 +2338,7 @@ class ForgetUser:
         clock: Clock,
         uow: UnitOfWork,
         saved: SavedSearches | None = None,
+        interactions: InteractionLog | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
@@ -2315,6 +2350,7 @@ class ForgetUser:
         self._clock = clock
         self._uow = uow
         self._saved = saved
+        self._interactions = interactions
 
     async def execute(self, user_id: UUID) -> None:
         """Efface tout ce qui concerne la personne. Idempotent."""
@@ -2325,6 +2361,9 @@ class ForgetUser:
             await self._feed.delete_all_of_user(user_id)
             await self._states.delete_all_of_user(user_id)
             await self._conversations.delete_all_of_user(user_id)
+            if self._interactions is not None:
+                # Offres vues, position, durée de lecture : des données de la personne.
+                await self._interactions.delete_all_of_user(user_id)
         await self._criteria_index.delete(user_id)
         if self._saved is not None:
             await self._saved.forget_user(user_id)

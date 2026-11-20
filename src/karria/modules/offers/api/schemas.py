@@ -12,10 +12,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Final, Literal, Self
+from typing import Annotated, Final, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from karria.modules.offers.application import (
     ConversationTurn,
@@ -457,13 +464,19 @@ class CriteriaEnvelopeResponse(BaseModel):
     criteria: CriteriaResponse | None
 
 
+#: Un intitulé ou un mot-clé : quelques mots, jamais un texte.
+_ShortLabel = Annotated[str, StringConstraints(min_length=1, max_length=120)]
+#: Un lieu sérialisé (libellé, point, départements) : très au-dessus du réel, loin d'un abus.
+LOCATION_MAX_CHARS = 2_000
+
+
 class CriteriaRequest(BaseModel):
     """Des critères posés directement (édition depuis l'app), sans conversation."""
 
     model_config = ConfigDict(extra="forbid")
 
-    job_titles: list[str] = Field(min_length=1, max_length=12)
-    keywords: list[str] = Field(default_factory=list, max_length=12)
+    job_titles: list[_ShortLabel] = Field(min_length=1, max_length=12)
+    keywords: list[_ShortLabel] = Field(default_factory=list, max_length=12)
     location: LocationCriteria | None = None
     whole_france: bool = False
     contract_types: list[ContractType] = Field(default_factory=list)
@@ -471,6 +484,14 @@ class CriteriaRequest(BaseModel):
     schedule: Schedule | None = None
     max_experience: ExperienceLevel | None = None
     salary_min_monthly: int | None = Field(default=None, ge=0, le=100_000)
+
+    @field_validator("location")
+    @classmethod
+    def _bounded_location(cls, value: LocationCriteria | None) -> LocationCriteria | None:
+        """Un lieu reste court : ses chaînes partent au géocodage et dans l'index."""
+        if value is not None and len(value.model_dump_json()) > LOCATION_MAX_CHARS:
+            raise ValueError("Ce lieu est trop long.")
+        return value
 
     def to_domain(self) -> SearchCriteria:
         """Les critères du domaine ; la phrase est reconstruite des intitulés."""

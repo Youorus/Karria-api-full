@@ -17,6 +17,7 @@ un message qui n'aurait pas été écrit.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
@@ -461,7 +462,9 @@ async def store_attachment(
     un son passe tel quel, jugé par la politique du bucket. La clé ne porte
     que des identifiants opaques (AGENTS §6.12).
     """
-    prepared = prepare_upload(Bucket.SUPPORT, payload, declared_content_type or "")
+    prepared = await asyncio.to_thread(
+        prepare_upload, Bucket.SUPPORT, payload, declared_content_type or ""
+    )
     kind = kind_for_content_type(prepared.content_type)
     key = build_key(
         "support", str(conversation_id), kind.value, extension=prepared.extension, at=clock.now()

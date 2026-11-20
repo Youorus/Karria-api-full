@@ -1369,6 +1369,10 @@ class TortoiseOfferStateRepository:
 class TortoiseInteractionLog:
     """Implémente `InteractionLog` : un lot, une requête."""
 
+    async def delete_all_of_user(self, user_id: UUID) -> int:
+        """Efface les gestes de la personne."""
+        return await InteractionEventModel.filter(user_id=user_id).delete()
+
     async def append(self, events: Sequence[InteractionEvent]) -> None:
         """Consigne."""
         if not events:

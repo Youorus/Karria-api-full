@@ -118,6 +118,13 @@ class TortoiseAiUsageRepository:
             user_id=user_id, kind=usage.value, created_at__gte=since
         ).count()
 
+    async def reserve(self, user_id: UUID, usage: AiUsage, at: datetime) -> UUID:
+        row = await CvAiUsageModel.create(user_id=user_id, kind=usage.value, created_at=at)
+        return row.id
+
+    async def release(self, reservation_id: UUID) -> None:
+        await CvAiUsageModel.filter(id=reservation_id).delete()
+
     async def delete_by_user(self, user_id: UUID) -> None:
         await CvAiUsageModel.filter(user_id=user_id).delete()
 

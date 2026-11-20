@@ -103,11 +103,12 @@ from karria.modules.offers.infrastructure import (
     collection_name,
 )
 from karria.modules.offers.infrastructure.constitution import CONSTITUTION_VERSION
-from karria.shared.auth import Principal, allow_anonymous
+from karria.shared.auth import CurrentPrincipalDep, Principal, allow_anonymous
 from karria.shared.clock import Clock, SystemClock
 from karria.shared.config import Settings
 from karria.shared.database import TortoiseUnitOfWork
 from karria.shared.errors import AuthenticationError
+from karria.shared.errors.exceptions import RateLimitedError
 from karria.shared.http import SlidingWindowLimiter
 from karria.shared.http.dependencies import (
     LanguageModelDep,
@@ -607,6 +608,7 @@ def build_forget_user() -> ForgetUser:
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
         saved=build_saved_searches(settings),
+        interactions=get_interaction_log(),
     )
 
 
@@ -786,3 +788,25 @@ async def ensure_indexes(settings: Settings) -> None:
     """Crée les collections Qdrant si besoin (commande explicite, jamais au démarrage)."""
     await get_offer_index(settings).ensure_ready()
     await get_criteria_index(settings).ensure_ready()
+
+
+#: Modifications de la recherche par compte (audit du 2026-11-20) : chacune lance
+#: un plongement, une recherche vectorielle, un géocodage, la réécriture du fil
+#: et peut créer des cibles de collecte. Trente en dix minutes laissent affiner
+#: une recherche à la main ; un script, non.
+CRITERIA_RATE_LIMIT = 30
+CRITERIA_RATE_WINDOW_SECONDS = 600
+_criteria_limiter = SlidingWindowLimiter(
+    max_hits=CRITERIA_RATE_LIMIT, window_seconds=CRITERIA_RATE_WINDOW_SECONDS
+)
+
+
+def throttle_criteria(principal: CurrentPrincipalDep) -> None:
+    """Une modification de plus pour ce compte, ou `429 criteria_rate_limited`."""
+    retry_after = _criteria_limiter.hit(f"criteria|{principal.subject_id}")
+    if retry_after is not None:
+        raise RateLimitedError(
+            "Trop de recherches d'affilée. Réessaie dans quelques minutes.",
+            retry_after=retry_after,
+            details={"reason": "criteria_rate_limited"},
+        )

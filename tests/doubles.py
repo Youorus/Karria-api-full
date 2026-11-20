@@ -738,6 +738,7 @@ class InMemoryAiUsageRepository:
 
     def __init__(self) -> None:
         self.records: list[tuple[UUID, str, datetime]] = []
+        self.reservations: dict[UUID, tuple[UUID, str, datetime]] = {}
 
     async def record(self, user_id: UUID, usage: str, at: datetime) -> None:
         self.records.append((user_id, str(usage), at))
@@ -748,6 +749,18 @@ class InMemoryAiUsageRepository:
             for owner, kind, at in self.records
             if owner == user_id and kind == str(usage) and at >= since
         )
+
+    async def reserve(self, user_id: UUID, usage: str, at: datetime) -> UUID:
+        record = (user_id, str(usage), at)
+        self.records.append(record)
+        reservation = uuid4()
+        self.reservations[reservation] = record
+        return reservation
+
+    async def release(self, reservation_id: UUID) -> None:
+        record = self.reservations.pop(reservation_id, None)
+        if record is not None and record in self.records:
+            self.records.remove(record)
 
     async def delete_by_user(self, user_id: UUID) -> None:
         self.records = [r for r in self.records if r[0] != user_id]

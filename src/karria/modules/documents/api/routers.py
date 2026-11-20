@@ -49,6 +49,7 @@ from karria.modules.documents.api.dependencies import (
     get_send_documents,
     get_submit,
     require_admin,
+    throttle_export,
 )
 from karria.modules.documents.api.schemas import (
     AcquireRequest,
@@ -313,6 +314,7 @@ async def select_template(
 @exports_router.post(
     "",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(throttle_export)],
     summary="Exporter mon CV (PDF, DOCX) avec son score ATS",
     response_model=GeneratedCvRead,
     responses=error_responses(
@@ -473,6 +475,7 @@ async def render_document(
 @documents_router.post(
     "/letters/export",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(throttle_export)],
     summary="Exporter une lettre de motivation (PDF, DOCX) : lettre assortie ou lettre sobre",
     response_model=GeneratedCvRead,
     description=(

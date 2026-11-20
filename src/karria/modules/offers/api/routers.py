@@ -47,6 +47,7 @@ from karria.modules.offers.api.dependencies import (
     SetSavedSearchAlertsDep,
     UpdateStateDep,
     require_collector,
+    throttle_criteria,
 )
 from karria.modules.offers.api.schemas import (
     AlertsRequest,
@@ -420,6 +421,7 @@ async def get_criteria(
 @search_router.put(
     "/criteria",
     response_model=CriteriaAppliedResponse,
+    dependencies=[Depends(throttle_criteria)],
     summary="Modifier la recherche directement",
     description=(
         "Sans conversation : l'app envoie des critères structurés (au moins `job_titles`, et un "

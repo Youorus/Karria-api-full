@@ -161,6 +161,27 @@ def throttle_render(principal: CurrentPrincipalDep) -> Principal:
 
 RenderPrincipalDep = Annotated[Principal, Depends(throttle_render)]
 
+#: Exports par compte (audit du 2026-11-20) : chacun coûte un ou deux rendus
+#: Chromium, un DOCX, des écritures de stockage et une explication ATS. Vingt
+#: en dix minutes couvrent une séance de finition appuyée ; une boucle, non.
+EXPORT_RATE_LIMIT = 20
+EXPORT_RATE_WINDOW_SECONDS = 600
+_export_limiter = SlidingWindowLimiter(
+    max_hits=EXPORT_RATE_LIMIT, window_seconds=EXPORT_RATE_WINDOW_SECONDS
+)
+
+
+def throttle_export(principal: CurrentPrincipalDep) -> None:
+    """Un export de plus pour ce compte, ou `429 export_rate_limited`."""
+    retry_after = _export_limiter.hit(f"export|{principal.subject_id}")
+    if retry_after is not None:
+        raise RateLimitedError(
+            "Trop d'exports d'affilée. Réessaie dans quelques minutes.",
+            retry_after=retry_after,
+            details={"reason": "export_rate_limited"},
+        )
+
+
 #: Envois vers une adresse tierce par origine (adresse IP) et par heure
 #: (ADR-0031, revue de sécurité) : dix couvrent une personne qui envoie son
 #: dossier à plusieurs entreprises ; un relais en voudrait des centaines.

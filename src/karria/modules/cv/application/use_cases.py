@@ -12,6 +12,7 @@ concret, et la suite unitaire les remplace toutes par des doublures.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -403,6 +404,29 @@ class GetUsageQuota:
         )
 
 
+async def _reserve_quota(
+    usage: AiUsageRepository, quota: GetUsageQuota, clock: Clock, user_id: UUID, kind: AiUsage
+) -> UUID:
+    """Réserve une action du mois **avant** l'appel au modèle ; rend la réservation.
+
+    Lire, appeler le modèle puis noter laissait passer cent demandes simultanées
+    sous un plafond de trois (audit du 2026-11-20). L'action est donc inscrite,
+    puis recomptée : si elle dépasse, elle est retirée et refusée. L'appelant
+    retire la réservation si le modèle échoue — une panne ne consomme rien.
+
+    Raises:
+        UsageQuotaExceededError: Plafond du mois atteint.
+    """
+    now = clock.now()
+    (await quota.execute(user_id, kind)).ensure_available(now)
+    reservation = await usage.reserve(user_id, kind, now)
+    after = await quota.execute(user_id, kind)
+    if after.used > after.limit:
+        await usage.release(reservation)
+        dataclasses.replace(after, used=after.used - 1).ensure_available(now)
+    return reservation
+
+
 class DailyAiGuard:
     """Le garde-fou journalier des actions d'IA sans quota mensuel (`quotas.DAILY_GUARDS`)."""
 
@@ -433,11 +457,9 @@ class DailyAiGuard:
 class UploadPhoto:
     """Range une photo dans le bucket — améliorée d'abord si on le demande.
 
-    L'amélioration est soumise au quota mensuel de portraits : vérifié
-    **avant** l'appel au générateur (un portrait refusé ne coûte rien), noté
-    **après** son succès (un refus ou une panne ne consomment rien). Deux
-    demandes simultanées au dernier portrait du mois peuvent passer toutes
-    les deux : un portrait de trop, assumé plutôt qu'un verrou.
+    L'amélioration est soumise au quota mensuel de portraits : **réservé**
+    avant l'appel au générateur (des demandes simultanées ne passent pas
+    toutes), rendu si le générateur refuse ou tombe en panne.
     """
 
     def __init__(
@@ -470,13 +492,23 @@ class UploadPhoto:
         Raises:
             UsageQuotaExceededError: `enhance` demandé, quota du mois atteint.
         """
-        prepared = prepare_upload(Bucket.MEDIA, image, declared_content_type or "")
+        # Décoder et réduire une image est du calcul bloquant : hors de la boucle
+        # d'événements, pour ne pas figer l'API pendant qu'une photo se prépare.
+        prepared = await asyncio.to_thread(
+            prepare_upload, Bucket.MEDIA, image, declared_content_type or ""
+        )
         if enhance:
-            quota = await self._quota.execute(user_id, AiUsage.PORTRAIT)
-            quota.ensure_available(self._clock.now())
-            generated = await self._enhancer.enhance(prepared.payload, prepared.content_type)
-            prepared = prepare_upload(Bucket.MEDIA, generated.payload, generated.content_type)
-            await self._usage.record(user_id, AiUsage.PORTRAIT, self._clock.now())
+            reservation = await _reserve_quota(
+                self._usage, self._quota, self._clock, user_id, AiUsage.PORTRAIT
+            )
+            try:
+                generated = await self._enhancer.enhance(prepared.payload, prepared.content_type)
+                prepared = await asyncio.to_thread(
+                    prepare_upload, Bucket.MEDIA, generated.payload, generated.content_type
+                )
+            except BaseException:
+                await self._usage.release(reservation)
+                raise
 
         now = self._clock.now()
         key = build_key("users", str(user_id), "cv-photo", extension=prepared.extension, at=now)
@@ -640,10 +672,15 @@ class ImportCv:
         # Le quota se vérifie après les contrôles gratuits du fichier, avant le
         # modèle ; l'import se compte dès que le modèle a lu, qu'il en sorte un
         # CV ou non : la lecture est payée.
-        quota = await self._quota.execute(user_id, AiUsage.IMPORT)
-        quota.ensure_available(self._clock.now())
-        extracted = await self._extractor.extract(documents)
-        await self._usage.record(user_id, AiUsage.IMPORT, self._clock.now())
+        reservation = await _reserve_quota(
+            self._usage, self._quota, self._clock, user_id, AiUsage.IMPORT
+        )
+        try:
+            extracted = await self._extractor.extract(documents)
+        except BaseException:
+            # Le modèle n'a rien lu : la panne ne consomme pas l'import.
+            await self._usage.release(reservation)
+            raise
 
         now = self._clock.now()
         existing = await self._cvs.find_by_user(user_id)

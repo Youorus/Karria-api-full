@@ -986,6 +986,13 @@ class InMemoryInteractionLog:
     def __init__(self) -> None:
         self.events: list[InteractionEvent] = []
 
+    async def delete_all_of_user(self, user_id: UUID) -> int:
+        """Efface les gestes de la personne."""
+        kept = [e for e in self.events if e.user_id != user_id]
+        removed = len(self.events) - len(kept)
+        self.events = kept
+        return removed
+
     async def append(self, events: Sequence[InteractionEvent]) -> None:
         """Consigne."""
         self.events.extend(events)

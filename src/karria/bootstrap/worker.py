@@ -57,6 +57,10 @@ def register_queue_maintenance(app: App) -> None:
         await retry_stalled_jobs(app)
 
 
+#: Durée de conservation d'un travail en échec, pour le diagnostic.
+FAILED_JOBS_KEPT_HOURS = 7 * 24
+
+
 async def retry_stalled_jobs(app: App) -> int:
     """Relance chaque travail bloqué ; rend leur nombre."""
     stalled = list(
@@ -75,6 +79,14 @@ async def retry_stalled_jobs(app: App) -> int:
             continue
         logger.warning("worker.job_stalled_retried", task=job.task_name, job_id=job.id)
     await app.job_manager.prune_stalled_workers(seconds_since_heartbeat=STALLED_AFTER_SECONDS)
+    # Ce qui a fini avant cette règle, et les échecs gardés une semaine pour le diagnostic.
+    await app.job_manager.delete_old_jobs(nb_hours=1)
+    await app.job_manager.delete_old_jobs(
+        nb_hours=FAILED_JOBS_KEPT_HOURS,
+        include_failed=True,
+        include_cancelled=True,
+        include_aborted=True,
+    )
     return len(stalled)
 
 
@@ -103,7 +115,13 @@ async def run_worker() -> None:
         app = build_worker_app()
         async with app.open_async():
             logger.info("worker.started", concurrency=WORKER_CONCURRENCY)
-            await app.run_worker_async(concurrency=WORKER_CONCURRENCY, install_signal_handlers=True)
+            # Un travail réussi est supprimé : ses arguments (le message d'une
+            # personne à l'assistante, par exemple) n'ont pas à rester dans la file.
+            await app.run_worker_async(
+                concurrency=WORKER_CONCURRENCY,
+                install_signal_handlers=True,
+                delete_jobs="successful",
+            )
     finally:
         await disconnect()
         logger.info("worker.stopped")

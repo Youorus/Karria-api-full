@@ -573,6 +573,34 @@ class TestQuotas:
             subscriptions=subscriptions or FakeSubscriptions(),
         )
 
+    async def test_des_portraits_demandes_en_meme_temps_ne_depassent_pas_le_quota(self) -> None:
+        # Audit du 2026-11-20 : cent demandes simultanées donnaient cent portraits.
+        now = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
+        usage = InMemoryAiUsageRepository()
+        enhancer = FakeEnhancer(result=GeneratedImage(sample_image(400, 500), "image/jpeg"))
+        upload = self._upload(enhancer, usage, now)
+
+        results = await asyncio.gather(
+            *(upload.execute(USER, sample_image(), "image/jpeg", enhance=True) for _ in range(12)),
+            return_exceptions=True,
+        )
+
+        assert len(enhancer.calls) <= MONTHLY_PORTRAIT_LIMIT
+        assert all(
+            isinstance(r, UsageQuotaExceededError) for r in results if isinstance(r, Exception)
+        )
+        assert await usage.count_since(USER, AiUsage.PORTRAIT, now) == len(enhancer.calls)
+
+    async def test_un_portrait_en_panne_ne_consomme_rien(self) -> None:
+        now = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
+        usage = InMemoryAiUsageRepository()
+        upload = self._upload(FakeEnhancer(error=RuntimeError("panne")), usage, now)
+
+        with pytest.raises(RuntimeError):
+            await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
+
+        assert await usage.count_since(USER, AiUsage.PORTRAIT, now) == 0
+
     async def test_le_quatrieme_portrait_du_mois_est_refuse_sans_appel_au_generateur(
         self,
     ) -> None:

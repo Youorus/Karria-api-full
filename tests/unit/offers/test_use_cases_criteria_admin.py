@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -20,6 +20,7 @@ from offers.fakes import (
     InMemoryCriteriaIndex,
     InMemoryCriteriaRepository,
     InMemoryFeedRepository,
+    InMemoryInteractionLog,
     InMemoryMemoryRepository,
     InMemoryStateRepository,
     InMemoryTargetRepository,
@@ -44,6 +45,18 @@ def index() -> InMemoryCriteriaIndex:
     index = InMemoryCriteriaIndex()
     index.points[USER] = ((0.0, 1.0), make_criteria(), True)
     return index
+
+
+class _InteractionsTemoin(InMemoryInteractionLog):
+    """Note qui a été oublié."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.forgotten: list[UUID] = []
+
+    async def delete_all_of_user(self, user_id: UUID) -> int:
+        self.forgotten.append(user_id)
+        return await super().delete_all_of_user(user_id)
 
 
 class TestLecture:
@@ -112,6 +125,7 @@ class TestOubliDuCompte:
         await targets.replace_demands(USER, ["serveur|75|-"], at=NOW)
         memory = InMemoryMemoryRepository()
         memory.memories[USER] = KarriaMemory()
+        interactions = _InteractionsTemoin()
         forget = ForgetUser(
             criteria=criteria,
             criteria_index=index,
@@ -122,10 +136,13 @@ class TestOubliDuCompte:
             memory=memory,
             clock=FixedClock(),
             uow=RecordingUnitOfWork(),
+            interactions=interactions,
         )
 
         await forget.execute(USER)
         await forget.execute(USER)
+
+        assert interactions.forgotten == [USER, USER]  # les gestes sur les offres aussi
 
         assert memory.memories == {}
 

@@ -110,6 +110,14 @@ class AiUsageRepository(Protocol):
         """Les actions de ce type rendues à la personne depuis `since` (inclus)."""
         ...
 
+    async def reserve(self, user_id: UUID, usage: AiUsage, at: datetime) -> UUID:
+        """Inscrit une action **avant** qu'elle soit rendue ; rend de quoi la retirer."""
+        ...
+
+    async def release(self, reservation_id: UUID) -> None:
+        """Retire une réservation : l'action a été refusée ou a échoué. Idempotent."""
+        ...
+
     async def delete_by_user(self, user_id: UUID) -> None:
         """Oublie le registre de la personne. Idempotent."""
         ...

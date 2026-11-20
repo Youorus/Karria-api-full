@@ -92,6 +92,7 @@ class FakeJobManager:
         self.stalled = stalled
         self.retried: list[Any] = []
         self.pruned: list[int] = []
+        self.purged: list[tuple[int, bool]] = []
         self.asked: list[int] = []
         self.finished: list[tuple[int, Any, bool]] = []
 
@@ -111,6 +112,9 @@ class FakeJobManager:
 
     async def prune_stalled_workers(self, *, seconds_since_heartbeat: int) -> None:
         self.pruned.append(seconds_since_heartbeat)
+
+    async def delete_old_jobs(self, *, nb_hours: int, **kinds: bool) -> None:
+        self.purged.append((nb_hours, bool(kinds.get("include_failed"))))
 
 
 class FakeJob:
@@ -137,6 +141,9 @@ async def test_les_travaux_orphelins_sont_relances_et_les_workers_morts_oublies(
     assert await worker.retry_stalled_jobs(app) == 2
     assert manager.retried == jobs
     assert manager.asked == manager.pruned == [worker.STALLED_AFTER_SECONDS]
+    # Les travaux réussis ne restent pas (leurs arguments portent des messages) ;
+    # les échecs sont gardés une semaine.
+    assert manager.purged == [(1, False), (worker.FAILED_JOBS_KEPT_HOURS, True)]
 
 
 async def test_la_maintenance_est_inscrite_et_appelle_la_relance(

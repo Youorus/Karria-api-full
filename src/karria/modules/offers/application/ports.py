@@ -640,6 +640,10 @@ class Message:
 class InteractionLog(Protocol):
     """Port : le journal d'apprentissage (ADR-0019), en ajout seulement."""
 
+    async def delete_all_of_user(self, user_id: UUID) -> int:
+        """Efface les gestes d'une personne (suppression du compte) ; rend leur nombre."""
+        ...
+
     async def append(self, events: Sequence[InteractionEvent]) -> None:
         """Consigne ces gestes."""
         ...
