@@ -79,6 +79,19 @@ Demande de Marc : zéro échec avant le marketing payant. État au moment d'écr
 - **Autres constats d'exploitation** : `karria-minio` est à 1 017 Mio sur 1 Gio de limite
   mémoire ; quota invité du fil 240 lectures par 10 min **par adresse IP** (adresses
   partagées des opérateurs mobiles).
+- **Déployé le 20/11** (accord de Marc) : migrations 24 et 25 puis le code ; charge du fil
+  remesurée — **de 8 à ≈ 155–180 requêtes par seconde** (médiane 0,30 s à 60 simultanés,
+  0,88 s à 150) ; le plafond est désormais le processeur de l'API et de Traefik, plus la
+  base. Cache du total durci après trois revues de sécurité (calcul partagé par filtre,
+  deux comptes à la fois, file bornée à huit, place réservée au total sans filtre).
+- **Sources d'offres vérifiées en base le 20/11** : France Travail 14 191 offres en 24 h,
+  Indeed 937, HelloWork 491, LinkedIn 83 (bloqué par des 429 : source faible) ; toutes
+  indexées (0 en attente). Contrat absent sur 52 % des offres LinkedIn et 23 % d'Indeed.
+- **Recherches enregistrées (ADR-0041)** : `offers_saved_searches` (**migration 26, avant
+  le code**), `domain/saved.py`, `application/saved_searches.py`, `GET /search/saved`,
+  `PUT /search/saved/{id}/alerts`, `DELETE /search/saved/{id}` ; alertes pour les
+  recherches qui ne sont plus la recherche en cours ; phrase de Karria (deux fois au
+  plus). 3 729 tests unitaires. **Reste l'écran « Mes recherches » de l'app.**
 - **Constats non traités** : polices `Lora-800`, `Lato-500`, `Lato-600` absentes du
   bucket public `assets` (le navigateur prend la graisse voisine) ; « Portrait
   Capitales » reste un dessin à petit corps et à pied de page chargé ; aucun PDF

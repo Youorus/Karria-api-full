@@ -30,6 +30,7 @@ from karria.modules.offers.api.dependencies import (
     ClearCriteriaDep,
     ClockDep,
     ConverseSearchDep,
+    DeleteSavedSearchDep,
     GetCriteriaDep,
     GetFeedDep,
     GetFeedFiltersDep,
@@ -37,11 +38,13 @@ from karria.modules.offers.api.dependencies import (
     GetOfferDep,
     GuestPrincipalDep,
     LeaseTargetsDep,
+    ListSavedSearchesDep,
     LogoUrlDep,
     MarkSeenDep,
     ReceiveBatchDep,
     ResetMemoryDep,
     SetAlertsEnabledDep,
+    SetSavedSearchAlertsDep,
     UpdateStateDep,
     require_collector,
 )
@@ -60,6 +63,8 @@ from karria.modules.offers.api.schemas import (
     JobMatchResponse,
     MemoryResponse,
     MessageRequest,
+    SavedSearchListResponse,
+    SavedSearchResponse,
     SeenRequest,
     SeenResponse,
     TargetResponse,
@@ -75,6 +80,7 @@ from karria.modules.offers.domain import (
     FeedMode,
     FeedSort,
 )
+from karria.modules.offers.domain.saved import MAX_SAVED_SEARCHES
 from karria.shared.auth import AiConsentedPrincipalDep, CurrentPrincipalDep, Principal
 from karria.shared.errors import (
     AuthenticationError,
@@ -462,6 +468,64 @@ async def put_alerts(
     if stored is None:
         raise CriteriaNotFoundError
     return AlertsResponse(enabled=stored.alerts_enabled)
+
+
+@search_router.get(
+    "/saved",
+    response_model=SavedSearchListResponse,
+    summary="Mes recherches enregistrées",
+    description=(
+        "Chaque recherche appliquée est retenue (dix au plus). `is_current` : celle qui fait "
+        "le fil. `alerts_enabled` : Karria la surveille et prévient quand une offre correspond."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED),
+)
+async def list_saved_searches(
+    principal: CurrentPrincipalDep, listing: ListSavedSearchesDep
+) -> SavedSearchListResponse:
+    """La liste, pour les paramètres."""
+    found = await listing.execute(principal.subject_id)
+    return SavedSearchListResponse(
+        items=[SavedSearchResponse.from_listed(item) for item in found], max=MAX_SAVED_SEARCHES
+    )
+
+
+@search_router.put(
+    "/saved/{search_id}/alerts",
+    response_model=SavedSearchResponse,
+    summary="Activer ou couper l'alerte d'une recherche enregistrée",
+    description=(
+        "Coupée : plus de notification pour cette recherche, et Karria ne collecte plus pour "
+        "elle. Réactivée : elle surveille à nouveau. `404 saved_search_not_found` sinon."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
+)
+async def put_saved_search_alerts(
+    search_id: UUID,
+    body: AlertsRequest,
+    principal: CurrentPrincipalDep,
+    toggle: SetSavedSearchAlertsDep,
+) -> SavedSearchResponse:
+    """Bascule."""
+    listed = await toggle.execute(principal.subject_id, search_id, enabled=body.enabled)
+    return SavedSearchResponse.from_listed(listed)
+
+
+@search_router.delete(
+    "/saved/{search_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Supprimer une recherche enregistrée",
+    description=(
+        "Si c'est la recherche en cours, le fil redevient « toutes les offres ». "
+        "`404 saved_search_not_found` sinon."
+    ),
+    responses=error_responses(ErrorCode.UNAUTHENTICATED, ErrorCode.NOT_FOUND),
+)
+async def delete_saved_search(
+    search_id: UUID, principal: CurrentPrincipalDep, delete: DeleteSavedSearchDep
+) -> None:
+    """Oublie."""
+    await delete.execute(principal.subject_id, search_id)
 
 
 @internal_router.get(

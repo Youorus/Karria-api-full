@@ -271,6 +271,30 @@ class CriteriaModel(BaseDBModel):
         table_description = "Ce que chaque personne cherche, et l'état de ses alertes."
 
 
+class SavedSearchModel(BaseDBModel):
+    """Une recherche enregistrée d'une personne, avec son alerte (ADR-0041)."""
+
+    user_id = fields.UUIDField(db_index=True)
+    criteria: dict[str, Any] = fields.JSONField(description="`SearchCriteria` sérialisés.")
+    fingerprint = fields.CharField(max_length=32)
+    alerts_enabled = fields.BooleanField(default=True)
+    last_used_at = fields.DatetimeField(description="Dernière fois où elle a été appliquée.")
+    target_keys: list[str] = fields.JSONField(
+        default=list, description="Cibles de collecte demandées."
+    )
+    last_alert_at = fields.DatetimeField(null=True)
+    alerts_sent_on = fields.DatetimeField(null=True)
+    alerts_sent_today = fields.IntField(default=0)
+    notified_offer_ids: list[str] = fields.JSONField(
+        default=list, description="Dernières offres déjà signalées."
+    )
+
+    class Meta:
+        table = "offers_saved_searches"
+        table_description = "Les recherches que chaque personne a faites, et leurs alertes."
+        unique_together = (("user_id", "fingerprint"),)
+
+
 class KarriaMemoryModel(BaseDBModel):
     """Ce que Karria a retenu d'une personne : des faits bornés, écrits par le modèle, fusionnés par la règle."""
 

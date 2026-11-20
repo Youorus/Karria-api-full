@@ -25,6 +25,7 @@ from karria.modules.offers.application import (
     ConverseSearch,
     CriteriaIndex,
     CriteriaRepository,
+    DeleteSavedSearch,
     DispatchAlerts,
     ExpireOffers,
     FeedRepository,
@@ -45,6 +46,7 @@ from karria.modules.offers.application import (
     KarriaMemoryRepository,
     LandingStore,
     LeaseScrapeTargets,
+    ListSavedSearches,
     LogoFetcher,
     MarkFeedSeen,
     OfferIndex,
@@ -54,10 +56,13 @@ from karria.modules.offers.application import (
     ReconcileIndex,
     RefreshScrapeTargets,
     ResetKarriaMemory,
+    SavedSearches,
+    SavedSearchRepository,
     ScrapeTargetRepository,
     SearchDialogue,
     SearchOffers,
     SetAlertsEnabled,
+    SetSavedSearchAlerts,
     SubscriptionReader,
     SuggestWidenings,
     SyncIndex,
@@ -92,6 +97,7 @@ from karria.modules.offers.infrastructure import (
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
     TortoiseOfferVocabulary,
+    TortoiseSavedSearchRepository,
     TortoiseScrapeTargetRepository,
     build_transport,
     collection_name,
@@ -149,6 +155,11 @@ def get_run_repository() -> IngestionRunRepository:
 def get_criteria_repository() -> CriteriaRepository:
     """Les critères des personnes."""
     return TortoiseCriteriaRepository()
+
+
+def get_saved_search_repository() -> SavedSearchRepository:
+    """Les recherches enregistrées (ADR-0041)."""
+    return TortoiseSavedSearchRepository()
 
 
 def get_conversation_repository() -> ConversationRepository:
@@ -274,6 +285,19 @@ FeedRepositoryDep = Annotated[FeedRepository, Depends(get_feed_repository)]
 StateRepositoryDep = Annotated[OfferStateRepository, Depends(get_state_repository)]
 OfferIndexDep = Annotated[OfferIndex, Depends(get_offer_index)]
 CriteriaIndexDep = Annotated[CriteriaIndex, Depends(get_criteria_index)]
+SavedSearchRepositoryDep = Annotated[SavedSearchRepository, Depends(get_saved_search_repository)]
+
+
+def get_saved_searches(
+    saved: SavedSearchRepositoryDep,
+    criteria_index: CriteriaIndexDep,
+    targets: TargetRepositoryDep,
+) -> SavedSearches:
+    """Le registre des recherches enregistrées, en phase avec l'index et la collecte."""
+    return SavedSearches(saved=saved, criteria_index=criteria_index, targets=targets)
+
+
+SavedSearchesDep = Annotated[SavedSearches, Depends(get_saved_searches)]
 EmbedderDep = Annotated[TextEmbedder, Depends(get_embedder)]
 GeocoderDep = Annotated[Geocoder, Depends(get_geocoder)]
 JobQueueDep = Annotated[JobQueue, Depends(get_job_queue)]
@@ -308,9 +332,11 @@ def get_apply_criteria(  # noqa: PLR0917 - FastAPI injecte par position
     geocoder: GeocoderDep,
     clock: ClockDep,
     uow: UnitOfWorkDep,
+    saved: SavedSearchesDep,
 ) -> ApplyCriteria:
     """Des critères au fil."""
     return ApplyCriteria(
+        saved=saved,
         criteria=criteria,
         criteria_index=criteria_index,
         search=search,
@@ -398,21 +424,59 @@ def get_get_criteria(criteria: CriteriaRepositoryDep) -> GetCriteria:
     return GetCriteria(criteria=criteria)
 
 
-def get_clear_criteria(
+def get_clear_criteria(  # noqa: PLR0917 - FastAPI injecte par position
     criteria: CriteriaRepositoryDep,
     criteria_index: CriteriaIndexDep,
     feed: FeedRepositoryDep,
     uow: UnitOfWorkDep,
+    saved: SavedSearchesDep,
+    clock: ClockDep,
 ) -> ClearCriteria:
     """Oubli des critères."""
-    return ClearCriteria(criteria=criteria, criteria_index=criteria_index, feed=feed, uow=uow)
+    return ClearCriteria(
+        criteria=criteria,
+        criteria_index=criteria_index,
+        feed=feed,
+        uow=uow,
+        saved=saved,
+        clock=clock,
+    )
 
 
 def get_set_alerts_enabled(
-    criteria: CriteriaRepositoryDep, criteria_index: CriteriaIndexDep, clock: ClockDep
+    criteria: CriteriaRepositoryDep,
+    criteria_index: CriteriaIndexDep,
+    clock: ClockDep,
+    saved: SavedSearchesDep,
 ) -> SetAlertsEnabled:
     """Bascule des alertes."""
-    return SetAlertsEnabled(criteria=criteria, criteria_index=criteria_index, clock=clock)
+    return SetAlertsEnabled(
+        criteria=criteria, criteria_index=criteria_index, clock=clock, saved=saved
+    )
+
+
+def get_list_saved_searches(
+    saved: SavedSearchRepositoryDep, criteria: CriteriaRepositoryDep
+) -> ListSavedSearches:
+    """Les recherches enregistrées, pour les paramètres."""
+    return ListSavedSearches(saved=saved, criteria=criteria)
+
+
+def get_set_saved_search_alerts(
+    saved: SavedSearchRepositoryDep,
+    registry: SavedSearchesDep,
+    criteria: CriteriaRepositoryDep,
+    criteria_index: CriteriaIndexDep,
+    clock: ClockDep,
+) -> SetSavedSearchAlerts:
+    """Activer ou couper l'alerte d'une recherche enregistrée."""
+    return SetSavedSearchAlerts(
+        saved=saved,
+        registry=registry,
+        criteria=criteria,
+        criteria_index=criteria_index,
+        clock=clock,
+    )
 
 
 def get_get_feed(
@@ -492,6 +556,30 @@ ReceiveBatchDep = Annotated[ReceiveBatch, Depends(get_receive_batch)]
 ConverseSearchDep = Annotated[ConverseSearch, Depends(get_converse_search)]
 GetCriteriaDep = Annotated[GetCriteria, Depends(get_get_criteria)]
 ClearCriteriaDep = Annotated[ClearCriteria, Depends(get_clear_criteria)]
+
+
+def get_delete_saved_search(  # noqa: PLR0917 - FastAPI injecte par position
+    saved: SavedSearchRepositoryDep,
+    registry: SavedSearchesDep,
+    criteria: CriteriaRepositoryDep,
+    criteria_index: CriteriaIndexDep,
+    clear: ClearCriteriaDep,
+    clock: ClockDep,
+) -> DeleteSavedSearch:
+    """Supprimer une recherche enregistrée."""
+    return DeleteSavedSearch(
+        saved=saved,
+        registry=registry,
+        criteria=criteria,
+        criteria_index=criteria_index,
+        clear=clear,
+        clock=clock,
+    )
+
+
+ListSavedSearchesDep = Annotated[ListSavedSearches, Depends(get_list_saved_searches)]
+SetSavedSearchAlertsDep = Annotated[SetSavedSearchAlerts, Depends(get_set_saved_search_alerts)]
+DeleteSavedSearchDep = Annotated[DeleteSavedSearch, Depends(get_delete_saved_search)]
 SetAlertsEnabledDep = Annotated[SetAlertsEnabled, Depends(get_set_alerts_enabled)]
 GetFeedDep = Annotated[GetFeed, Depends(get_get_feed)]
 GetOfferDep = Annotated[GetOfferForUser, Depends(get_get_offer)]
@@ -518,6 +606,16 @@ def build_forget_user() -> ForgetUser:
         memory=get_memory_repository(),
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
+        saved=build_saved_searches(settings),
+    )
+
+
+def build_saved_searches(settings: Settings) -> SavedSearches:
+    """Le registre des recherches enregistrées, hors requête."""
+    return SavedSearches(
+        saved=get_saved_search_repository(),
+        criteria_index=get_criteria_index(settings),
+        targets=get_target_repository(),
     )
 
 
@@ -566,6 +664,7 @@ def build_apply_criteria(settings: Settings) -> ApplyCriteria:
         geocoder=get_geocoder(settings),
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
+        saved=build_saved_searches(settings),
     )
 
 
@@ -636,6 +735,7 @@ def build_dispatch_alerts(settings: Settings, notifier: UserNotifier) -> Dispatc
         notifier=notifier,
         clock=get_clock(),
         uow=TortoiseUnitOfWork(),
+        saved=get_saved_search_repository(),
     )
 
 

@@ -53,6 +53,17 @@ class CriteriaNotFoundError(DomainError):
         super().__init__("Aucune recherche en cours.", details={"reason": "criteria_not_found"})
 
 
+class SavedSearchNotFoundError(DomainError):
+    """La recherche enregistrée n'existe pas, ou n'est pas à cette personne."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.NOT_FOUND
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Cette recherche n'existe plus.", details={"reason": "saved_search_not_found"}
+        )
+
+
 class CriteriaIncompleteError(InvalidInputError):
     """Des critères posés directement doivent au moins dire quel métier, et où."""
 

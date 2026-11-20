@@ -30,6 +30,7 @@ from karria.modules.offers.infrastructure.repositories import (
     TortoiseOfferRepository,
     TortoiseOfferStateRepository,
     TortoiseOfferVocabulary,
+    TortoiseSavedSearchRepository,
     TortoiseScrapeTargetRepository,
 )
 
@@ -58,6 +59,7 @@ __all__ = [
     "TortoiseOfferRepository",
     "TortoiseOfferStateRepository",
     "TortoiseOfferVocabulary",
+    "TortoiseSavedSearchRepository",
     "TortoiseScrapeTargetRepository",
     "build_transport",
     "collection_name",

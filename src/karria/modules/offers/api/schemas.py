@@ -23,6 +23,7 @@ from karria.modules.offers.application import (
     FeedItem,
     FeedPage,
     Impression,
+    ListedSearch,
     StoredCriteria,
 )
 from karria.modules.offers.domain import (
@@ -506,6 +507,52 @@ class AlertsResponse(BaseModel):
     """L'état des alertes."""
 
     enabled: bool
+
+
+class SavedSearchResponse(BaseModel):
+    """Une recherche enregistrée, telle que les paramètres la montrent (ADR-0041)."""
+
+    id: UUID
+    summary: str = Field(description="Une ligne : « Serveur · Paris (30 km) · CDI ».")
+    query: str = Field(description="Ce que la personne a demandé, dans ses mots.")
+    job_titles: list[str]
+    location_label: str | None = Field(description="Le lieu nommé ; `null` : France entière.")
+    whole_france: bool
+    contract_types: list[ContractType]
+    alerts_enabled: bool = Field(
+        description="Karria surveille cette recherche et prévient quand une offre correspond."
+    )
+    is_current: bool = Field(description="C'est la recherche en cours : elle fait le fil.")
+    created_at: datetime
+    last_used_at: datetime
+    last_alert_at: datetime | None
+
+    @classmethod
+    def from_listed(cls, listed: ListedSearch) -> SavedSearchResponse:
+        """Projette."""
+        search = listed.search
+        criteria = search.criteria
+        return cls(
+            id=search.id,
+            summary=criteria.summary(),
+            query=criteria.query,
+            job_titles=criteria.job_titles,
+            location_label=criteria.location.label if criteria.location else None,
+            whole_france=criteria.whole_france,
+            contract_types=criteria.contract_types,
+            alerts_enabled=search.alerts_enabled,
+            is_current=listed.is_current,
+            created_at=search.created_at,
+            last_used_at=search.last_used_at,
+            last_alert_at=search.last_alert_at,
+        )
+
+
+class SavedSearchListResponse(BaseModel):
+    """`GET /search/saved` : les recherches de la personne, la plus récente d'abord."""
+
+    items: list[SavedSearchResponse]
+    max: int = Field(description="Recherches gardées au plus ; au-delà, la plus ancienne sort.")
 
 
 # ---------------------------------------------------------------------

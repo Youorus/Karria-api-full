@@ -555,6 +555,78 @@ class CriteriaRepository(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class SavedSearch:
+    """Une recherche que la personne a faite, gardée avec son alerte (ADR-0041).
+
+    Chaque recherche appliquée est retenue (une par empreinte de critères).
+    La recherche **en cours** est celle des critères courants ; les autres
+    continuent de surveiller les nouvelles offres tant que leur alerte est
+    active. La personne les voit et les active ou les coupe dans ses paramètres.
+    """
+
+    id: UUID
+    user_id: UUID
+    criteria: SearchCriteria
+    fingerprint: str
+    alerts_enabled: bool
+    created_at: datetime
+    last_used_at: datetime
+    #: Les cibles de collecte que cette recherche demande (`steering.targets_of`).
+    target_keys: tuple[str, ...] = ()
+    last_alert_at: datetime | None = None
+    alerts_sent_on: datetime | None = None
+    alerts_sent_today: int = 0
+    #: Les dernières offres déjà signalées pour cette recherche (jamais deux fois).
+    notified_offer_ids: tuple[UUID, ...] = ()
+
+
+class SavedSearchRepository(Protocol):
+    """Port : les recherches enregistrées de chaque personne."""
+
+    async def list_of_user(self, user_id: UUID) -> Sequence[SavedSearch]:
+        """Celles d'une personne, la plus récemment utilisée d'abord."""
+        ...
+
+    async def list_of_users(self, user_ids: Sequence[UUID]) -> dict[UUID, list[SavedSearch]]:
+        """Celles de plusieurs personnes."""
+        ...
+
+    async def find(self, user_id: UUID, fingerprint: str) -> SavedSearch | None:
+        """Celle de ces critères-là, ou `None`."""
+        ...
+
+    async def get(self, search_id: UUID) -> SavedSearch | None:
+        """Par identifiant."""
+        ...
+
+    async def find_many(self, search_ids: Sequence[UUID]) -> dict[UUID, SavedSearch]:
+        """Plusieurs, par identifiant."""
+        ...
+
+    async def save(self, saved: SavedSearch) -> None:
+        """Crée ou remplace (par identifiant)."""
+        ...
+
+    async def delete(self, search_id: UUID) -> None:
+        """Oublie une recherche."""
+        ...
+
+    async def delete_all_of_user(self, user_id: UUID) -> Sequence[UUID]:
+        """Oublie toutes celles d'une personne ; rend leurs identifiants."""
+        ...
+
+    async def record_alert(
+        self, search_id: UUID, *, at: datetime, offer_ids: Sequence[UUID], counted: bool = True
+    ) -> None:
+        """Note qu'une notification est partie pour ces offres.
+
+        `counted=False` : la recherche a contribué à une notification déjà
+        comptée pour la personne ; on retient ses offres, pas un envoi de plus.
+        """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """Un message d'une conversation."""
 

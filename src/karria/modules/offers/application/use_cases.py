@@ -61,6 +61,8 @@ from karria.modules.offers.application.ports import (
     OfferLink,
     OfferRepository,
     OfferStateRepository,
+    SavedSearch,
+    SavedSearchRepository,
     ScrapeTargetRepository,
     SearchDialogue,
     StoredCriteria,
@@ -69,6 +71,7 @@ from karria.modules.offers.application.ports import (
     TextEmbedder,
     UserNotifier,
 )
+from karria.modules.offers.application.saved_searches import SavedSearches
 from karria.modules.offers.domain import (
     ALERT_MIN_SCORE,
     ALERT_MIN_SIMILARITY,
@@ -187,6 +190,7 @@ from karria.modules.offers.domain.companies import (
     sighting_of,
     site_icon_urls,
 )
+from karria.modules.offers.domain.saved import SAVED_SEARCH_HINT, alert_rhythm
 from karria.shared.clock import Clock
 from karria.shared.database import UnitOfWork
 from karria.shared.logging import get_logger
@@ -998,6 +1002,8 @@ class AppliedCriteria:
     results: int
     #: La recherche elle-même (ses voisines nourrissent les élargissements).
     search: SearchResult | None = None
+    #: Karria peut dire, en une phrase, où couper l'alerte de cette recherche (ADR-0041).
+    hint: bool = False
 
 
 class ApplyCriteria:
@@ -1025,6 +1031,7 @@ class ApplyCriteria:
         geocoder: Geocoder,
         clock: Clock,
         uow: UnitOfWork,
+        saved: SavedSearches | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
@@ -1037,6 +1044,7 @@ class ApplyCriteria:
         self._geocoder = geocoder
         self._clock = clock
         self._uow = uow
+        self._saved = saved
 
     async def execute(self, user_id: UUID, criteria: SearchCriteria) -> AppliedCriteria:
         """Cherche, reconstruit le fil, enregistre les critères."""
@@ -1048,11 +1056,17 @@ class ApplyCriteria:
         states = await self._states.all_of_user(user_id)
         dismissed = frozenset(i for i, state in states.items() if state.dismissed)
         result = await self._search.execute(criteria, exclude=dismissed)
+        fingerprint = criteria.fingerprint()
+        # Une recherche déjà enregistrée retrouve l'état de **son** alerte (coupée
+        # dans les paramètres, elle le reste) ; une recherche neuve hérite de la
+        # recherche en cours, comme avant.
+        known = await self._saved.alerts_flag(user_id, fingerprint) if self._saved else None
+        inherited = previous.alerts_enabled if previous else True
         stored = StoredCriteria(
             user_id=user_id,
             criteria=criteria,
-            fingerprint=criteria.fingerprint(),
-            alerts_enabled=previous.alerts_enabled if previous else True,
+            fingerprint=fingerprint,
+            alerts_enabled=inherited if known is None else known,
             updated_at=now,
             last_alert_at=previous.last_alert_at if previous else None,
             alerts_sent_on=previous.alerts_sent_on if previous else None,
@@ -1082,7 +1096,17 @@ class ApplyCriteria:
         targets = targets_of(criteria, await self._validated_terms(criteria))
         if targets:
             await self._targets.upsert_many(targets, at=now, due_now=thin)
-        await self._targets.replace_demands(user_id, [t.key for t in targets], at=now)
+        hint = False
+        if self._saved is not None:
+            # La recherche est retenue : elle continuera de surveiller les offres
+            # quand une autre deviendra la recherche en cours, et la collecte suit
+            # toutes celles dont l'alerte est active.
+            remembered = await self._saved.remember(
+                stored, result.query_vector, [t.key for t in targets], now=now
+            )
+            hint = remembered.hint
+        else:
+            await self._targets.replace_demands(user_id, [t.key for t in targets], at=now)
         logger.info(
             "offers.criteria_applied",
             user_id=str(user_id),
@@ -1091,7 +1115,7 @@ class ApplyCriteria:
             thin=thin,
             targets=[t.key for t in targets],
         )
-        return AppliedCriteria(stored=stored, results=len(entries), search=result)
+        return AppliedCriteria(stored=stored, results=len(entries), search=result, hint=hint)
 
     async def dismissed_of(self, user_id: UUID) -> frozenset[UUID]:
         """Les offres que la personne a écartées : jamais recomptées."""
@@ -1171,14 +1195,27 @@ class ClearCriteria:
         criteria_index: CriteriaIndex,
         feed: FeedRepository,
         uow: UnitOfWork,
+        saved: SavedSearches | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
         self._feed = feed
         self._uow = uow
+        self._saved = saved
+        self._clock = clock
 
     async def execute(self, user_id: UUID) -> None:
-        """Efface critères et fil ; les états (sauvegardes…) restent."""
+        """Efface critères et fil ; les états (sauvegardes…) restent.
+
+        La recherche reste **enregistrée**, alerte coupée (ADR-0041) : la personne
+        la retrouve dans ses paramètres et peut la réactiver.
+        """
+        current = await self._criteria.find(user_id)
+        if current is not None and self._saved is not None and self._clock is not None:
+            await self._saved.set_enabled(
+                user_id, current.fingerprint, enabled=False, now=self._clock.now()
+            )
         async with self._uow.atomic():
             await self._criteria.delete(user_id)
             await self._feed.delete_all_of_user(user_id)
@@ -1190,21 +1227,36 @@ class SetAlertsEnabled:
     """Active ou coupe les alertes, sans toucher aux critères."""
 
     def __init__(
-        self, *, criteria: CriteriaRepository, criteria_index: CriteriaIndex, clock: Clock
+        self,
+        *,
+        criteria: CriteriaRepository,
+        criteria_index: CriteriaIndex,
+        clock: Clock,
+        saved: SavedSearches | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
         self._clock = clock
+        self._saved = saved
 
     async def execute(self, user_id: UUID, *, enabled: bool) -> StoredCriteria | None:
         """Rend les critères mis à jour, ou `None` s'il n'y en a pas."""
         stored = await self._criteria.find(user_id)
         if stored is None:
             return None
-        updated = dataclasses.replace(stored, alerts_enabled=enabled, updated_at=self._clock.now())
+        now = self._clock.now()
+        updated = dataclasses.replace(stored, alerts_enabled=enabled, updated_at=now)
         await self._criteria.save(updated)
         await self._criteria_index.set_alerts_enabled(user_id, enabled=enabled)
+        if self._saved is not None:
+            # La même recherche, vue depuis les paramètres, dit la même chose.
+            await self._saved.set_enabled(user_id, stored.fingerprint, enabled=enabled, now=now)
         return updated
+
+
+def with_saved_search_hint(reply: str, applied: AppliedCriteria) -> str:
+    """La réponse, suivie d'une phrase — une seule, et rarement — sur l'alerte (ADR-0041)."""
+    return f"{reply} {SAVED_SEARCH_HINT}" if applied.hint else reply
 
 
 @dataclass(frozen=True, slots=True)
@@ -1374,6 +1426,7 @@ class ConverseSearch:
             )
             widenings = await self._widenings_for(user_id, applied)
             reply = f"{outcome.reply} {announce_results(results)} {phrase_widenings(results, widenings)}".strip()
+            reply = with_saved_search_hint(reply, applied)
         else:
             memory = await self._memory.find(user_id)
             history = [
@@ -1411,6 +1464,7 @@ class ConverseSearch:
                 reply = (
                     f"{reply} {announce_results(results)} {phrase_widenings(results, widenings)}"
                 ).strip()
+                reply = with_saved_search_hint(reply, applied)
         if outcome.status is DialogueStatus.SEARCH:
             await self._conversations.set_pending_widenings(conversation_id, widenings)
         suggestions = clean_suggestions((*(w.message for w in widenings), *outcome.suggestions))
@@ -1548,6 +1602,7 @@ class DispatchAlerts:
         notifier: UserNotifier,
         clock: Clock,
         uow: UnitOfWork,
+        saved: SavedSearchRepository | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
@@ -1556,6 +1611,7 @@ class DispatchAlerts:
         self._notifier = notifier
         self._clock = clock
         self._uow = uow
+        self._saved = saved
 
     async def execute(self, indexed: Sequence[IndexedOffer]) -> AlertSummary:
         """Confronte ces offres aux critères, enrichit les fils, prévient."""
@@ -1577,8 +1633,17 @@ class DispatchAlerts:
         if not by_user:
             return AlertSummary(offers_examined=examined)
 
+        # Un point de l'index est soit la recherche en cours d'une personne (son
+        # identifiant), soit une recherche enregistrée (le sien) — ADR-0041.
         stored = await self._criteria.find_many(list(by_user))
+        others = [point for point in by_user if point not in stored]
+        hits = await self._saved.find_many(others) if self._saved and others else {}
+        people_ids = {*stored, *(s.user_id for s in hits.values())}
+        registered = (
+            await self._saved.list_of_users(list(people_ids)) if self._saved and people_ids else {}
+        )
         added = sent = people = 0
+        notified: set[UUID] = set()
         for user_id, offers in by_user.items():
             criteria = stored.get(user_id)
             if criteria is None or not criteria.alerts_enabled:
@@ -1589,21 +1654,25 @@ class DispatchAlerts:
             people += 1
             added += len(new_entries)
             await self._feed.add_many(new_entries)
-            if high and may_notify(
-                now=now,
-                last_alert_at=criteria.last_alert_at,
-                sent_today=criteria.alerts_sent_today
-                if _same_day(criteria.alerts_sent_on, now)
-                else 0,
-            ):
+            # Le rythme est celui de la personne, toutes recherches confondues.
+            mine: list[SavedSearch | StoredCriteria] = [criteria, *registered.get(user_id, [])]
+            last, today = alert_rhythm(mine, now=now)
+            if high and may_notify(now=now, last_alert_at=last, sent_today=today):
                 accepted = await self._notifier.notify(
                     user_id, build_notification(criteria.criteria.summary(), high)
                 )
                 if accepted:
                     sent += 1
+                    notified.add(user_id)
                     async with self._uow.atomic():
                         await self._criteria.record_alert(user_id, at=now)
                         await self._feed.mark_notified(user_id, [o.id for o in high], at=now)
+        if hits and self._saved is not None:
+            more_people, more_sent = await self._dispatch_saved(
+                hits, by_user, registered, notified, now
+            )
+            people += more_people
+            sent += more_sent
         logger.info(
             "offers.alerts_dispatched", examined=examined, people=people, entries=added, sent=sent
         )
@@ -1613,6 +1682,84 @@ class DispatchAlerts:
             entries_added=added,
             notifications_sent=sent,
         )
+
+    async def _dispatch_saved(
+        self,
+        hits: dict[UUID, SavedSearch],
+        by_point: dict[UUID, list[Offer]],
+        registered: dict[UUID, list[SavedSearch]],
+        notified: set[UUID],
+        now: datetime,
+    ) -> tuple[int, int]:
+        """Les recherches enregistrées qui ne sont plus la recherche en cours.
+
+        Leurs offres n'entrent pas dans le fil (il est celui de la recherche en
+        cours) : la personne est prévenue, et la notification ouvre la première.
+        Une notification par personne et par passage, au rythme de la personne ;
+        jamais deux fois la même offre pour une même recherche.
+        """
+        assert self._saved is not None  # noqa: S101 - garanti par l'appelant
+        by_person: dict[UUID, list[tuple[SavedSearch, list[Offer]]]] = {}
+        for point, search in hits.items():
+            if search.alerts_enabled:
+                by_person.setdefault(search.user_id, []).append((search, by_point[point]))
+        currents = await self._criteria.find_many(list(by_person)) if by_person else {}
+        people = sent = 0
+        for user_id, matched in by_person.items():
+            current = currents.get(user_id)
+            found: list[tuple[SavedSearch, list[Offer]]] = []
+            for search, offers in matched:
+                if current is not None and current.fingerprint == search.fingerprint:
+                    continue  # la recherche en cours : déjà traitée par son propre point
+                high = await self._settle_saved(search, offers)
+                if high:
+                    found.append((search, high))
+            if not found:
+                continue
+            people += 1
+            rhythm: list[SavedSearch | StoredCriteria] = [*registered.get(user_id, [])]
+            if current is not None:
+                rhythm.append(current)
+            last, today = alert_rhythm(rhythm, now=now)
+            if user_id in notified or not may_notify(now=now, last_alert_at=last, sent_today=today):
+                continue
+            lead, _ = max(found, key=lambda pair: len(pair[1]))
+            unique = list({o.id: o for _, high in found for o in high}.values())
+            accepted = await self._notifier.notify(
+                user_id, build_notification(lead.criteria.summary(), unique, in_feed=False)
+            )
+            if not accepted:
+                continue
+            sent += 1
+            notified.add(user_id)
+            for search, high in found:
+                # Un seul envoi compté pour la personne, même si deux recherches y contribuent.
+                await self._saved.record_alert(
+                    search.id, at=now, offer_ids=[o.id for o in high], counted=search is lead
+                )
+        return people, sent
+
+    async def _settle_saved(self, search: SavedSearch, offers: Sequence[Offer]) -> list[Offer]:
+        """Ce qui mérite une notification pour une recherche enregistrée : filtre dur,
+        porte d'intitulé, score haut, ni écartée ni déjà signalée."""
+        accepted = [o for o in offers if search.criteria.accepts(o)]
+        if not accepted:
+            return []
+        states = await self._states.find_many(search.user_id, [o.id for o in accepted])
+        seen = set(search.notified_offer_ids)
+        fresh = [
+            o
+            for o in accepted
+            if not (o.id in states and states[o.id].dismissed) and o.id not in seen
+        ]
+        if not fresh:
+            return []
+        by_id = {o.id: o for o in fresh}
+        return [
+            by_id[item.offer_id]
+            for item in rank(fresh, search.criteria)
+            if item.score >= ALERT_MIN_SCORE
+        ]
 
     async def _settle(
         self, stored: StoredCriteria, offers: Sequence[Offer], now: datetime
@@ -2156,6 +2303,7 @@ class ForgetUser:
         memory: KarriaMemoryRepository,
         clock: Clock,
         uow: UnitOfWork,
+        saved: SavedSearches | None = None,
     ) -> None:
         self._criteria = criteria
         self._criteria_index = criteria_index
@@ -2166,6 +2314,7 @@ class ForgetUser:
         self._memory = memory
         self._clock = clock
         self._uow = uow
+        self._saved = saved
 
     async def execute(self, user_id: UUID) -> None:
         """Efface tout ce qui concerne la personne. Idempotent."""
@@ -2177,6 +2326,8 @@ class ForgetUser:
             await self._states.delete_all_of_user(user_id)
             await self._conversations.delete_all_of_user(user_id)
         await self._criteria_index.delete(user_id)
+        if self._saved is not None:
+            await self._saved.forget_user(user_id)
         logger.info("offers.user_forgotten", user_id=str(user_id))
 
 

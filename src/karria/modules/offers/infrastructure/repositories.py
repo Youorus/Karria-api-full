@@ -27,6 +27,7 @@ from karria.modules.offers.application import (
     Message,
     OfferFilters,
     OutboxItem,
+    SavedSearch,
     StoredCriteria,
     StoredTarget,
 )
@@ -54,6 +55,7 @@ from karria.modules.offers.domain import (
     bands,
     fold,
 )
+from karria.modules.offers.domain.saved import remember_notified
 from karria.modules.offers.infrastructure.models import (
     ConversationModel,
     CriteriaModel,
@@ -66,6 +68,7 @@ from karria.modules.offers.infrastructure.models import (
     MessageModel,
     OfferModel,
     OfferStateModel,
+    SavedSearchModel,
     ScrapeTargetModel,
     TargetDemandModel,
 )
@@ -891,6 +894,108 @@ def _to_criteria(row: CriteriaModel) -> StoredCriteria:
         alerts_sent_on=row.alerts_sent_on,
         alerts_sent_today=row.alerts_sent_today,
     )
+
+
+def _to_saved(row: SavedSearchModel) -> SavedSearch:
+    return SavedSearch(
+        id=row.id,
+        user_id=row.user_id,
+        criteria=SearchCriteria.model_validate(row.criteria),
+        fingerprint=row.fingerprint,
+        alerts_enabled=row.alerts_enabled,
+        created_at=row.created_at,
+        last_used_at=row.last_used_at,
+        target_keys=tuple(str(k) for k in (row.target_keys or [])),
+        last_alert_at=row.last_alert_at,
+        alerts_sent_on=row.alerts_sent_on,
+        alerts_sent_today=row.alerts_sent_today,
+        notified_offer_ids=tuple(UUID(str(i)) for i in (row.notified_offer_ids or [])),
+    )
+
+
+class TortoiseSavedSearchRepository:
+    """Implémente `SavedSearchRepository`."""
+
+    async def list_of_user(self, user_id: UUID) -> Sequence[SavedSearch]:
+        """La plus récemment utilisée d'abord."""
+        rows = await SavedSearchModel.filter(user_id=user_id).order_by("-last_used_at", "-id")
+        return [_to_saved(row) for row in rows]
+
+    async def list_of_users(self, user_ids: Sequence[UUID]) -> dict[UUID, list[SavedSearch]]:
+        """Par personne."""
+        found: dict[UUID, list[SavedSearch]] = {}
+        if not user_ids:
+            return found
+        for row in await SavedSearchModel.filter(user_id__in=list(user_ids)).order_by(
+            "-last_used_at"
+        ):
+            found.setdefault(row.user_id, []).append(_to_saved(row))
+        return found
+
+    async def find(self, user_id: UUID, fingerprint: str) -> SavedSearch | None:
+        """Par personne et empreinte."""
+        row = await SavedSearchModel.get_or_none(user_id=user_id, fingerprint=fingerprint)
+        return None if row is None else _to_saved(row)
+
+    async def get(self, search_id: UUID) -> SavedSearch | None:
+        """Par identifiant."""
+        row = await SavedSearchModel.get_or_none(id=search_id)
+        return None if row is None else _to_saved(row)
+
+    async def find_many(self, search_ids: Sequence[UUID]) -> dict[UUID, SavedSearch]:
+        """Plusieurs."""
+        if not search_ids:
+            return {}
+        rows = await SavedSearchModel.filter(id__in=list(search_ids))
+        return {row.id: _to_saved(row) for row in rows}
+
+    async def save(self, saved: SavedSearch) -> None:
+        """Crée ou remplace."""
+        await SavedSearchModel.update_or_create(
+            id=saved.id,
+            defaults={
+                "user_id": saved.user_id,
+                "criteria": saved.criteria.model_dump(mode="json"),
+                "fingerprint": saved.fingerprint,
+                "alerts_enabled": saved.alerts_enabled,
+                "created_at": saved.created_at,
+                "last_used_at": saved.last_used_at,
+                "target_keys": list(saved.target_keys),
+                "last_alert_at": saved.last_alert_at,
+                "alerts_sent_on": saved.alerts_sent_on,
+                "alerts_sent_today": saved.alerts_sent_today,
+                "notified_offer_ids": [str(i) for i in saved.notified_offer_ids],
+            },
+        )
+
+    async def delete(self, search_id: UUID) -> None:
+        """Oublie."""
+        await SavedSearchModel.filter(id=search_id).delete()
+
+    async def delete_all_of_user(self, user_id: UUID) -> Sequence[UUID]:
+        """Oublie tout ; rend les identifiants (pour l'index)."""
+        ids = [
+            UUID(str(i))
+            for i in await SavedSearchModel.filter(user_id=user_id).values_list("id", flat=True)
+        ]
+        await SavedSearchModel.filter(user_id=user_id).delete()
+        return ids
+
+    async def record_alert(
+        self, search_id: UUID, *, at: datetime, offer_ids: Sequence[UUID], counted: bool = True
+    ) -> None:
+        """Retient les offres signalées ; compte l'envoi du jour s'il est le sien."""
+        row = await SavedSearchModel.get_or_none(id=search_id)
+        if row is None:
+            return
+        known = [UUID(str(i)) for i in (row.notified_offer_ids or [])]
+        row.notified_offer_ids = [str(i) for i in remember_notified(known, offer_ids)]
+        if counted:
+            same_day = row.alerts_sent_on is not None and row.alerts_sent_on.date() == at.date()
+            row.alerts_sent_today = row.alerts_sent_today + 1 if same_day else 1
+            row.alerts_sent_on = at
+            row.last_alert_at = at
+        await row.save()
 
 
 class TortoiseCriteriaRepository:

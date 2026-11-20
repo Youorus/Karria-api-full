@@ -29,6 +29,7 @@ from karria.modules.offers.application import (
     OfferLink,
     OutboxItem,
     ProcessedLogo,
+    SavedSearch,
     StoredCriteria,
     StoredTarget,
 )
@@ -65,6 +66,7 @@ from karria.modules.offers.domain import (
     simhash64,
 )
 from karria.modules.offers.domain.companies import CompanyRecord, ImageTraits, LogoStatus
+from karria.modules.offers.domain.saved import remember_notified
 from karria.shared.push import PushMessage
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
@@ -772,6 +774,89 @@ class InMemoryCriteriaRepository:
         self.alerts.append((user_id, at))
 
 
+class InMemorySavedSearchRepository:
+    """`SavedSearchRepository` en mémoire."""
+
+    def __init__(self, *searches: SavedSearch) -> None:
+        self.items: dict[UUID, SavedSearch] = {s.id: s for s in searches}
+
+    async def list_of_user(self, user_id: UUID) -> Sequence[SavedSearch]:
+        """La plus récemment utilisée d'abord."""
+        mine = [s for s in self.items.values() if s.user_id == user_id]
+        return sorted(mine, key=lambda s: s.last_used_at, reverse=True)
+
+    async def list_of_users(self, user_ids: Sequence[UUID]) -> dict[UUID, list[SavedSearch]]:
+        """Par personne."""
+        return {u: list(await self.list_of_user(u)) for u in user_ids if await self.list_of_user(u)}
+
+    async def find(self, user_id: UUID, fingerprint: str) -> SavedSearch | None:
+        """Par empreinte."""
+        return next(
+            (
+                s
+                for s in self.items.values()
+                if s.user_id == user_id and s.fingerprint == fingerprint
+            ),
+            None,
+        )
+
+    async def get(self, search_id: UUID) -> SavedSearch | None:
+        """Par identifiant."""
+        return self.items.get(search_id)
+
+    async def find_many(self, search_ids: Sequence[UUID]) -> dict[UUID, SavedSearch]:
+        """Plusieurs."""
+        return {i: self.items[i] for i in search_ids if i in self.items}
+
+    async def save(self, saved: SavedSearch) -> None:
+        """Remplace."""
+        self.items[saved.id] = saved
+
+    async def delete(self, search_id: UUID) -> None:
+        """Oublie."""
+        self.items.pop(search_id, None)
+
+    async def delete_all_of_user(self, user_id: UUID) -> Sequence[UUID]:
+        """Oublie tout."""
+        ids = [i for i, s in self.items.items() if s.user_id == user_id]
+        for i in ids:
+            del self.items[i]
+        return ids
+
+    async def record_alert(
+        self, search_id: UUID, *, at: datetime, offer_ids: Sequence[UUID], counted: bool = True
+    ) -> None:
+        """Retient."""
+        s = self.items[search_id]
+        same_day = s.alerts_sent_on is not None and s.alerts_sent_on.date() == at.date()
+        self.items[search_id] = dataclasses.replace(
+            s,
+            notified_offer_ids=remember_notified(s.notified_offer_ids, offer_ids),
+            last_alert_at=at if counted else s.last_alert_at,
+            alerts_sent_on=at if counted else s.alerts_sent_on,
+            alerts_sent_today=(s.alerts_sent_today + 1 if same_day else 1)
+            if counted
+            else s.alerts_sent_today,
+        )
+
+
+def make_saved(
+    user_id: UUID, criteria: SearchCriteria | None = None, **changes: Any
+) -> SavedSearch:
+    """Une recherche enregistrée, alerte active, utilisée il y a deux jours."""
+    chosen = criteria or make_criteria()
+    base = SavedSearch(
+        id=uuid4(),
+        user_id=user_id,
+        criteria=chosen,
+        fingerprint=chosen.fingerprint(),
+        alerts_enabled=True,
+        created_at=NOW - timedelta(days=2),
+        last_used_at=NOW - timedelta(days=2),
+    )
+    return dataclasses.replace(base, **changes)
+
+
 class InMemoryConversationRepository:
     """`ConversationRepository` en mémoire."""
 
@@ -1033,7 +1118,13 @@ class RecordingNotifier:
     async def notify(self, user_id: UUID, message: PushMessage) -> int:
         """Retient et rend `accepted`."""
         self.sent.append(
-            {"user_id": user_id, "title": message.title, "body": message.body, "data": message.data}
+            {
+                "user_id": user_id,
+                "title": message.title,
+                "body": message.body,
+                "data": message.data,
+                "message": message,
+            }
         )
         return self.accepted
 

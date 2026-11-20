@@ -49,13 +49,17 @@ def is_fresh(offer: Offer, *, now: datetime) -> bool:
     return now - offer.published_at <= ALERT_MAX_OFFER_AGE
 
 
-def build_notification(criteria_summary: str, offers: Sequence[Offer]) -> PushMessage:
+def build_notification(
+    criteria_summary: str, offers: Sequence[Offer], *, in_feed: bool = True
+) -> PushMessage:
     """Un message groupé, en français, qui nomme les premières offres.
 
     Une seule offre : la notification ouvre **cette** offre (`offer`, au
     contrat de `shared/push`). Plusieurs : elle ouvre le fil (`offers_feed`),
     où elles sont toutes en tête — ouvrir la première ferait croire qu'il
-    n'y en a qu'une.
+    n'y en a qu'une. `in_feed=False` (une recherche enregistrée qui n'est plus
+    la recherche en cours, ADR-0041) : ces offres ne sont pas dans le fil, la
+    notification ouvre donc la première, et son corps nomme les suivantes.
     """
     count = len(offers)
     title = "Une nouvelle offre pour vous" if count == 1 else f"{count} nouvelles offres pour vous"
@@ -65,9 +69,9 @@ def build_notification(criteria_summary: str, offers: Sequence[Offer]) -> PushMe
             f"… et {count - ALERT_BODY_OFFERS} autre{'s' if count - ALERT_BODY_OFFERS > 1 else ''}"
         )
     body = f"{criteria_summary} — " + " · ".join(lines) if criteria_summary else " · ".join(lines)
-    if count == 1:
+    if count == 1 or not in_feed:
         return PushMessage(
-            kind=PushKind.OFFER, title=title, body=body[:240], target_id=offers[0].id, count=1
+            kind=PushKind.OFFER, title=title, body=body[:240], target_id=offers[0].id, count=count
         )
     return PushMessage(kind=PushKind.OFFERS_FEED, title=title, body=body[:240], count=count)
 

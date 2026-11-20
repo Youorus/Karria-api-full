@@ -15,6 +15,7 @@ from karria.modules.offers.application import (
     BackfillCompanies,
     ClearCriteria,
     ConverseSearch,
+    DeleteSavedSearch,
     DispatchAlerts,
     ExpireOffers,
     FetchCompanyLogos,
@@ -27,13 +28,16 @@ from karria.modules.offers.application import (
     IngestBatch,
     IngestPostings,
     LeaseScrapeTargets,
+    ListSavedSearches,
     MarkFeedSeen,
     ReceiveBatch,
     ReconcileIndex,
     RefreshScrapeTargets,
     ResetKarriaMemory,
+    SavedSearches,
     SearchOffers,
     SetAlertsEnabled,
+    SetSavedSearchAlerts,
     SyncIndex,
     UpdateOfferState,
 )
@@ -49,6 +53,7 @@ from karria.modules.offers.infrastructure import (
     TortoiseIngestionRunRepository,
     TortoiseKarriaMemoryRepository,
     TortoiseOfferRepository,
+    TortoiseSavedSearchRepository,
     TortoiseScrapeTargetRepository,
 )
 from karria.shared.clock import SystemClock
@@ -132,6 +137,7 @@ class TestCasDUsage:
             any_port,
             any_port,
             any_port,
+            any_port,
         )
 
         assert isinstance(search, SearchOffers)
@@ -147,10 +153,25 @@ class TestCasDUsage:
         assert isinstance(deps.get_memory_repository(), TortoiseKarriaMemoryRepository)
         assert isinstance(deps.get_get_criteria(any_port), GetCriteria)
         assert isinstance(
-            deps.get_clear_criteria(any_port, any_port, any_port, any_port), ClearCriteria
+            deps.get_clear_criteria(any_port, any_port, any_port, any_port, any_port, any_port),
+            ClearCriteria,
         )
         assert isinstance(
-            deps.get_set_alerts_enabled(any_port, any_port, any_port), SetAlertsEnabled
+            deps.get_set_alerts_enabled(any_port, any_port, any_port, any_port), SetAlertsEnabled
+        )
+        # Les recherches enregistrées (ADR-0041).
+        assert isinstance(deps.get_saved_search_repository(), TortoiseSavedSearchRepository)
+        assert isinstance(deps.get_saved_searches(any_port, any_port, any_port), SavedSearches)
+        assert isinstance(deps.get_list_saved_searches(any_port, any_port), ListSavedSearches)
+        assert isinstance(
+            deps.get_set_saved_search_alerts(any_port, any_port, any_port, any_port, any_port),
+            SetSavedSearchAlerts,
+        )
+        assert isinstance(
+            deps.get_delete_saved_search(
+                any_port, any_port, any_port, any_port, any_port, any_port
+            ),
+            DeleteSavedSearch,
         )
         assert isinstance(deps.get_get_feed(any_port, any_port, any_port, any_port), GetFeed)
         assert isinstance(deps.get_get_offer(any_port, any_port, any_port), GetOfferForUser)
