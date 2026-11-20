@@ -5,6 +5,34 @@
 
 **Dernière mise à jour : 2026-11-20**
 
+### Session du 2026-11-20 (fin) — audit de sécurité avant campagne : EN PRODUCTION (`43bb91b`)
+
+Audit du code (lecture seule) : aucun constat critique, aucun accès aux données d'autrui.
+**Corrigé, testé (3 752 tests), déployé :**
+
+- code de connexion : essai compté avant comparaison (atomique), devinette plafonnée
+  par adresse en base (5/h, 12/j), ouvertures 10/h et 30/j ;
+- corps des requêtes : 2 Mio partout, 26 Mio sur les seules routes de téléversement
+  (choix sur le chemin) — vérifié en prod (413) ;
+- import de CV : PDF borné (pages, temps, volume), analyse hors boucle sous délai,
+  25 tentatives par jour ; pypdf 7.1.1 ;
+- IA : garde-fou journalier sur l'interprétation (200) et la dictée (80), réservé
+  avant l'appel ; jet à corriger borné ;
+- origine des requêtes : celle vue par Traefik (`client_ip_behind`), plus le premier
+  `X-Forwarded-For` — non éprouvé en prod par un essai, Traefik est exposé en direct ;
+- courriels : une valeur ne peut plus poser de bouton, de lien ni de code.
+
+**Reste de l'audit, non fait :** suppression de compte durable (E5), expiration des
+versions du seau (E6), quotas d'IA mensuels non atomiques (M1), limiteurs en mémoire
+par processus (M4), exports sans frein (M6), `PUT /search/criteria` sans borne (M7),
+décodage d'images et de DOCX dans la boucle (M9), journal d'interactions et file de
+tâches non purgés à la suppression (M10, M11). Limite assumée : qui connaît une
+adresse peut bloquer une heure sa connexion par code (Apple et Google restent ouverts).
+
+**Infra, attend l'accord de Marc :** pare-feu inactif, panneau Dokploy en HTTP sur
+:3000, ports Swarm 2377/7946 ouverts, redémarrage en attente, aucune sauvegarde
+automatique de la base.
+
 ### Session du 2026-11-20 — revue avant campagne sponsorisée (rien n'est commité ni déployé)
 
 Demande de Marc : zéro échec avant le marketing payant. État au moment d'écrire :
