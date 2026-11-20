@@ -153,6 +153,23 @@ class GeneratedCvModel(BaseDBModel):
         table = "documents_generated_cvs"
 
 
+class ExportUsageModel(BaseDBModel):
+    """Le registre des exports qui comptent : CV sans filigrane, CV optimisés.
+
+    Séparé des exports eux-mêmes, que la personne peut supprimer : les compter
+    directement lui permettait de remettre ses compteurs du mois à zéro en
+    supprimant ses documents (revue de sécurité du 2026-11-20). Une ligne ici
+    ne s'efface qu'avec le compte.
+    """
+
+    user_id: UUID = fields.UUIDField(db_index=True)
+    kind = fields.CharField(max_length=16, description="clean (sans filigrane) ou optimized.")
+
+    class Meta:
+        table = "documents_export_usage"
+        table_description = "Exports comptés dans les limites du mois (ADR-0040)."
+
+
 class DocumentSendModel(BaseDBModel):
     """Un envoi de documents par e-mail (journal)."""
 

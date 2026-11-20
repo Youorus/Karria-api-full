@@ -22,6 +22,7 @@ from karria.modules.documents.domain.templates import (
 )
 from karria.modules.documents.infrastructure.models import (
     DocumentSendModel,
+    ExportUsageModel,
     GeneratedCvModel,
     SelectionModel,
     TemplateModel,
@@ -271,6 +272,10 @@ def _generated(row: GeneratedCvModel) -> GeneratedCv:
     )
 
 
+USAGE_CLEAN = "clean"
+USAGE_OPTIMIZED = "optimized"
+
+
 class TortoiseGeneratedCvRepository:
     """Implémente `GeneratedCvRepository`."""
 
@@ -300,36 +305,34 @@ class TortoiseGeneratedCvRepository:
             letter_style=generated.letter_style,
             watermarked=generated.watermarked,
         )
+        # Ce qui compte dans les limites du mois va au registre, que la
+        # suppression d'un export ne touche pas.
+        if generated.kind is DocumentKind.CV:
+            kinds = [
+                *(() if generated.watermarked else (USAGE_CLEAN,)),
+                *((USAGE_OPTIMIZED,) if generated.ats_safe else ()),
+            ]
+            for kind in kinds:
+                await ExportUsageModel.create(
+                    user_id=generated.user_id, kind=kind, created_at=generated.created_at
+                )
+
+    async def _usage_times(self, user_id: UUID, kind: str, since: datetime) -> list[datetime]:
+        rows = (
+            await ExportUsageModel.filter(user_id=user_id, kind=kind, created_at__gte=since)
+            .order_by("created_at")
+            .limit(500)
+            .only("created_at")
+        )
+        return [row.created_at for row in rows]
 
     async def optimized_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
         """Les instants des CV exportés optimisés pour les ATS depuis `since`, bornés à 500."""
-        rows = (
-            await GeneratedCvModel.filter(
-                user_id=user_id,
-                kind=DocumentKind.CV.value,
-                ats_safe=True,
-                created_at__gte=since,
-            )
-            .order_by("created_at")
-            .limit(500)
-            .only("created_at")
-        )
-        return [row.created_at for row in rows]
+        return await self._usage_times(user_id, USAGE_OPTIMIZED, since)
 
     async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
         """Les instants des CV exportés sans filigrane depuis `since` (ADR-0040), bornés à 500."""
-        rows = (
-            await GeneratedCvModel.filter(
-                user_id=user_id,
-                kind=DocumentKind.CV.value,
-                watermarked=False,
-                created_at__gte=since,
-            )
-            .order_by("created_at")
-            .limit(500)
-            .only("created_at")
-        )
-        return [row.created_at for row in rows]
+        return await self._usage_times(user_id, USAGE_CLEAN, since)
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:
         row = await GeneratedCvModel.get_or_none(id=generated_id)
@@ -368,6 +371,7 @@ class TortoiseGeneratedCvRepository:
 
     async def forget(self, user_id: UUID) -> None:
         await GeneratedCvModel.filter(user_id=user_id).delete()
+        await ExportUsageModel.filter(user_id=user_id).delete()
 
 
 def _send(row: DocumentSendModel) -> DocumentSend:

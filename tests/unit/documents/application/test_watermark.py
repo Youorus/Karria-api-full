@@ -284,3 +284,19 @@ class TestOptimisations:
 
         assert (await allowance(env).execute(env.user)).can_optimize is True
         assert (await optimized(env, template.id)).ats_safe is True
+
+    async def test_supprimer_ses_exports_ne_remet_pas_les_compteurs_a_zero(self, env: Env) -> None:
+        # Revue de sécurité du 2026-11-20 : les compteurs ne se lisent plus sur
+        # les exports, que la personne peut supprimer.
+        template, _ = env.templates.publish()
+        env.cvs.put(env.user)
+        done = [await optimized(env, template.id) for _ in range(FREE_OPTIMIZATIONS_PER_MONTH)]
+        for generated in done:
+            await env.generated.delete(generated.id)
+
+        state = await allowance(env).execute(env.user)
+
+        assert state.optimizations_remaining == 0
+        assert state.remaining == 0  # les trois CV sans filigrane aussi
+        with pytest.raises(OptimizationQuotaExceededError):
+            await optimized(env, template.id)

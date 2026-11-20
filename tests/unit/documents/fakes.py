@@ -419,29 +419,25 @@ class InMemoryGeneratedCvRepository:
     def __init__(self) -> None:
         self.items: dict[UUID, GeneratedCv] = {}
         self.forgotten: list[UUID] = []
+        #: Le registre des exports comptés : la suppression d'un export n'y touche pas.
+        self.usage: list[tuple[UUID, str, datetime]] = []
 
     async def add(self, generated: GeneratedCv) -> None:
         self.items[generated.id] = generated
+        if generated.kind is DocumentKind.CV:
+            if not generated.watermarked:
+                self.usage.append((generated.user_id, "clean", generated.created_at))
+            if generated.ats_safe:
+                self.usage.append((generated.user_id, "optimized", generated.created_at))
+
+    def _usage_times(self, user_id: UUID, kind: str, since: datetime) -> list[datetime]:
+        return sorted(at for u, k, at in self.usage if u == user_id and k == kind and at >= since)
 
     async def optimized_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
-        return sorted(
-            g.created_at
-            for g in self.items.values()
-            if g.user_id == user_id
-            and g.kind is DocumentKind.CV
-            and g.ats_safe
-            and g.created_at >= since
-        )
+        return self._usage_times(user_id, "optimized", since)
 
     async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
-        return sorted(
-            g.created_at
-            for g in self.items.values()
-            if g.user_id == user_id
-            and g.kind is DocumentKind.CV
-            and not g.watermarked
-            and g.created_at >= since
-        )
+        return self._usage_times(user_id, "clean", since)
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:
         return self.items.get(generated_id)
