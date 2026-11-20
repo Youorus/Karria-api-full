@@ -75,6 +75,9 @@ HEADLINE_SIZE_STEPS: Final = (*FIELD_SIZE_STEPS, 0.55, 0.5)
 CELL_PADDING_MM: Final = 1.0
 #: Un tracé courbe aussi large que haut, à cette tolérance (mm), se dessine en rond.
 ROUND_TOLERANCE_MM: Final = 0.5
+#: Plusieurs valeurs dans un emplacement de texte (des missions repliées, faute de puces) :
+#: chacune s'écarte de la précédente de cette part de son interligne.
+FOLDED_GAP_RATIO: Final = 0.4
 #: Un libellé se replie sur trois lignes au plus dans son cadre.
 CELL_MAX_LINES: Final = 3
 
@@ -170,7 +173,9 @@ def fit_script(spec: Json, *, live: bool) -> str:
         "if(!ok){k=1;f=1;r.style.setProperty('--k',1);r.style.setProperty('--f',1);"
         f"var top={top_mm}*mm,pt=p.getBoundingClientRect().top;"
         # Un élément (item, ou titre hors item) qui chevauche une pliure descend
-        # sous elle, à la marge haute ; un titre collé à la pliure suit son premier item.
+        # sous elle, à la marge haute ; un titre collé à la pliure suit son premier item,
+        # et le titre d'une rubrique suit toujours son premier élément (même section) :
+        # à plus de 12 mm de la pliure, il restait seul en bas de page.
         "function sh(e){var q=e.getBoundingClientRect();return{t:q.top-pt,b:q.bottom-pt}}"
         # Chromium peut supprimer une marge qui traverse une coupure à
         # l'impression. Un bloc vide se répartit sur les deux pages. On
@@ -183,8 +188,11 @@ def fit_script(spec: Json, *, live: bool) -> str:
         "for(var i=0;i<els.length;i++){var e=els[i],q=sh(e);if(q.b-q.t>ph*0.8)continue;"
         # … et le premier élément d'une page suivante descend aussi à la marge haute.
         f"var g=Math.floor(q.t/ph),cut=(g+1)*ph,lim1=g===0?cut-{foot_mm:.2f}*mm:cut;"
-        "if(g>0&&q.t<g*ph+top-0.5){push(e,g*ph+top);continue}if(q.b>lim1){"
-        "var prev=els[i-1];if(prev&&!prev.classList.contains('item')&&!prev.closest('.item')&&sh(prev).b>cut-12*mm){push(prev,cut+top);i--;continue}"
+        # Le premier élément d'une page suivante emmène le titre resté seul au bas de la précédente.
+        "if(g>0&&q.t<g*ph+top-0.5){var pv=els[i-1];"
+        "if(pv&&!pv.classList.contains('item')&&!pv.closest('.item')&&sh(pv).t<g*ph&&(sh(pv).b>g*ph-12*mm||pv.parentNode===e.parentNode)){push(pv,g*ph+top);i--;continue}"
+        "push(e,g*ph+top);continue}if(q.b>lim1){"
+        "var prev=els[i-1];if(prev&&!prev.classList.contains('item')&&!prev.closest('.item')&&(sh(prev).b>cut-12*mm||prev.parentNode===e.parentNode)){push(prev,cut+top);i--;continue}"
         "push(e,cut+top)}}});"
         f"n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*{ph})+'mm';"
         # Les ornements qui couvraient toute la première page couvrent toutes les pages.
@@ -371,6 +379,64 @@ def cell_text_scale(fonts: FontSet, val: str, st: Json, cell: Json) -> float:
         if cell_text_width(fonts, val, st, cell, k) is not None:
             return k
     return FIELD_SIZE_STEPS[-1]
+
+
+def repeat_margin(sl: Json, role: str, st: Json) -> float:
+    """L'écart entre deux valeurs d'un même emplacement (mm).
+
+    Mesuré quand le modèle répète l'emplacement (deux puces) ; sinon celui de
+    l'emplacement. Un emplacement de **texte** n'a qu'une valeur dans l'exemple :
+    quand une personne lui en donne plusieurs (ses missions, dans un modèle sans
+    puces), elles se suivaient au ras l'une de l'autre et se lisaient comme un
+    seul paragraphe. Elles gardent un léger blanc entre elles.
+    """
+    if sl["repeat_margin_mm"] is not None:
+        return float(sl["repeat_margin_mm"])
+    margin = float(sl["margin_top_mm"])
+    return max(margin, FOLDED_GAP_RATIO * lh(st)) if role == "item_text" else margin
+
+
+def head_margin(spec: Json, index: int, column: Json, *, photo: bool) -> float:
+    """La marge de tête d'une colonne : celle de sa première rubrique, sauf sous une photo absente.
+
+    Une colonne qui commence par la photo (le portrait, puis « Contact » sous
+    lui) garde pour sa première rubrique la hauteur du portrait : sans photo,
+    cette marge laissait un trou de la taille du cadre. La rubrique remonte
+    alors là où la photo commençait. Seule compte une photo posée **dans** la
+    première bande, au-dessus de la rubrique et dans sa colonne.
+    """
+    if not column["sections"]:
+        return 0.0
+    margin = float(column["sections"][0]["margin_top_mm"])
+    frame = spec["header"].get("photo")
+    if photo or not frame or index != 0:
+        return margin
+    top = float(spec["bands"][0]["y_sample"])
+    left, width = float(frame["x_mm"]), float(frame["w_mm"])
+    shared = min(left + width, float(column["x_mm"]) + float(column["w_mm"])) - max(
+        left, float(column["x_mm"])
+    )
+    above = float(frame["y_mm"]) >= top - 2.0 and (
+        float(frame["y_mm"]) + float(frame["h_mm"]) <= top + margin + 1.0
+    )
+    if shared < width / 2 or not above:
+        return margin
+    return max(0.0, float(frame["y_mm"]) - top)
+
+
+def column_head(
+    spec: Json, index: int, column: Json, first: tuple[Json, Json, bool], *, photo: bool
+) -> float:
+    """La marge de la première rubrique **rendue** d'une colonne, depuis le haut de sa bande.
+
+    La première rubrique du modèle, ou une rubrique empruntée venue en tête,
+    prend la marge de tête de la colonne ; une autre garde la sienne.
+    """
+    s, _, borrowed = first
+    heads = column["sections"]
+    if borrowed or (heads and heads[0]["kind"] == s["kind"]):
+        return head_margin(spec, index, column, photo=photo)
+    return float(s["margin_top_mm"])
 
 
 def unframed(spec: Json, slots: list[Json]) -> Json:
@@ -724,10 +790,8 @@ class HtmlRenderer:
                     val = item.get(roles[0])
                     vals = val if isinstance(val, list) else ([val] if val else [])
                     for j, v in enumerate(vals):
-                        repeat = (
-                            sl["repeat_margin_mm"]
-                            if sl["repeat_margin_mm"] is not None
-                            else sl["margin_top_mm"]
+                        repeat = repeat_margin(
+                            sl, roles[0], self.styles[style_key(self.styles, kind, roles[0])]
                         )
                         rows.append(
                             (
@@ -1604,11 +1668,13 @@ class HtmlRenderer:
                 reserve = (
                     self.header_reserve(cspec, float(band["spec"]["y_sample"])) if bi == 0 else 0.0
                 )
-                if col and col[0][2]:
+                if col:
                     # Une rubrique empruntée en tête de colonne prend la marge de
-                    # tête de cette colonne, pas l'écart usuel entre rubriques.
-                    head = cspec["sections"][0]["margin_top_mm"] if cspec["sections"] else 0.0
-                    col = [({**col[0][0], "margin_top_mm": head}, col[0][1], True), *col[1:]]  # noqa: PLW2901
+                    # tête de cette colonne, pas l'écart usuel entre rubriques ; sans
+                    # photo, la colonne qui commençait par elle remonte.
+                    head = column_head(self.spec, bi, cspec, col[0], photo=self.photo is not None)
+                    if col[0][2] or head != col[0][0]["margin_top_mm"]:
+                        col = [({**col[0][0], "margin_top_mm": head}, *col[0][1:]), *col[1:]]  # noqa: PLW2901
                 inner = "".join(
                     self.section(
                         s, sec, cspec["w_mm"], reserve_mm=reserve if i == 0 else 0.0, first=i == 0

@@ -1650,3 +1650,190 @@ class TestPucesTapeesEtFiletsDElement:
         # Un filet par élément, dans l'élément.
         assert html.count("border-top:0.75pt solid #E1E1E1") == 2
         assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+
+
+# ---------------------------------------------------------------------------
+# Colonne qui commence par la photo, missions repliées, DOCX d'une liste en cadres
+# ---------------------------------------------------------------------------
+
+
+class TestTeteDeColonneSansPhoto:
+    """Le portrait, puis « Contact » sous lui : sans photo, la rubrique remonte."""
+
+    @staticmethod
+    def _spec(photo: Json | None) -> Json:
+        return {
+            "header": {"photo": photo},
+            "bands": [{"y_sample": 70.0}, {"y_sample": 200.0}],
+        }
+
+    COLUMN: Json = {  # noqa: RUF012 - une donnée de test, jamais modifiée
+        "x_mm": 16.0,
+        "w_mm": 66.0,
+        "sections": [{"kind": "contact", "margin_top_mm": 71.5}],
+    }
+    PHOTO: Json = {"x_mm": 16.5, "y_mm": 70.0, "w_mm": 55.0, "h_mm": 66.0}  # noqa: RUF012
+
+    def test_sans_photo_la_rubrique_prend_le_haut_du_portrait(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import head_margin  # noqa: PLC0415
+
+        spec = self._spec(self.PHOTO)
+        assert head_margin(spec, 0, self.COLUMN, photo=True) == 71.5
+        assert head_margin(spec, 0, self.COLUMN, photo=False) == 0.0
+        lower = self._spec({**self.PHOTO, "y_mm": 74.0})
+        assert head_margin(lower, 0, self.COLUMN, photo=False) == 4.0
+
+    def test_la_marge_reste_hors_de_ce_cas(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import head_margin  # noqa: PLC0415
+
+        # Pas de photo dans le modèle, une autre bande, une colonne vide.
+        assert head_margin(self._spec(None), 0, self.COLUMN, photo=False) == 71.5
+        assert head_margin(self._spec(self.PHOTO), 1, self.COLUMN, photo=False) == 71.5
+        assert (
+            head_margin(self._spec(self.PHOTO), 0, {**self.COLUMN, "sections": []}, photo=False)
+            == 0.0
+        )
+        # Une photo qui commence dans l'en-tête, au-dessus de la bande : la marge
+        # de la rubrique ne lui doit pas tout, elle reste.
+        above = self._spec({**self.PHOTO, "y_mm": 12.0, "h_mm": 83.0})
+        assert head_margin(above, 0, self.COLUMN, photo=False) == 71.5
+        # Une photo dans une autre colonne, ou qui descend plus bas que la rubrique.
+        beside = self._spec({**self.PHOTO, "x_mm": 120.0})
+        assert head_margin(beside, 0, self.COLUMN, photo=False) == 71.5
+        tall = self._spec({**self.PHOTO, "h_mm": 90.0})
+        assert head_margin(tall, 0, self.COLUMN, photo=False) == 71.5
+
+    def test_la_premiere_rubrique_rendue_prend_la_tete_de_colonne_ou_sa_marge(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import column_head  # noqa: PLC0415
+
+        spec = self._spec(self.PHOTO)
+        contact = self.COLUMN["sections"][0]
+        skills = {"kind": "skills", "margin_top_mm": 13.0}
+        assert column_head(spec, 0, self.COLUMN, (contact, {}, False), photo=False) == 0.0
+        assert column_head(spec, 0, self.COLUMN, (contact, {}, False), photo=True) == 71.5
+        # Une rubrique empruntée venue en tête prend la tête de la colonne ; une
+        # autre rubrique du modèle garde sa propre marge.
+        assert column_head(spec, 0, self.COLUMN, (skills, {}, True), photo=True) == 71.5
+        assert column_head(spec, 0, self.COLUMN, (skills, {}, False), photo=True) == 13.0
+
+
+class TestMissionsReplieesEtPliure:
+    def test_plusieurs_valeurs_de_texte_gardent_un_blanc_entre_elles(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import repeat_margin  # noqa: PLC0415
+
+        st = {"pitch_mm": 5.0, "box_h_mm": 4.0}
+        text = {"repeat_margin_mm": None, "margin_top_mm": 0.06}
+        assert repeat_margin(text, "item_text", st) == 2.0
+        # Une puce, un emplacement dont la répétition est mesurée : l'écart du modèle.
+        assert repeat_margin(text, "bullet", st) == 0.06
+        assert repeat_margin({**text, "repeat_margin_mm": 1.2}, "item_text", st) == 1.2
+        assert repeat_margin({**text, "margin_top_mm": 3.0}, "item_text", st) == 3.0
+
+    def test_le_rendu_espace_les_missions_dune_personne_pas_lexemple(self) -> None:
+        from karria.modules.documents.domain.view import from_cv, from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.html_renderer import HtmlRenderer  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "EXPERIENCE", 20, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Vendeur", 20, 57, font=BOLD),
+            raw_line("L4", "Conseil en magasin.", 20, 61, w=30),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "experiences", 0),
+            ("item_title", "experiences", 1),
+            ("item_text", "experiences", 1),
+        ]
+        spec, sample, _ = builder(lines, roles).build()
+        gap = "margin-top:calc(1.44mm*var(--k))"
+        example = HtmlRenderer(spec, from_sample(spec, sample), cv_font_set(), photo=None).render()
+        assert gap not in example
+        cv = {
+            "identity": {"first_name": "Awa", "last_name": "Diallo"},
+            "experiences": [
+                {
+                    "position": "Vendeuse",
+                    "company": "Zara",
+                    "missions": ["Conseiller", "Encaisser", "Ranger"],
+                }
+            ],
+        }
+        view = from_cv(spec, cv)
+        person = HtmlRenderer(spec, view, cv_font_set(), photo=None).render()
+        # Trois missions : deux blancs de 40 % de l'interligne (3,6 mm), aucun avant la première.
+        assert person.count(gap) == 2
+        assert DocxRenderer(spec, view, cv_font_set(), photo=None).render({}).startswith(b"PK")
+
+    def test_le_titre_dune_rubrique_suit_son_premier_element_a_la_pliure(self) -> None:
+        from karria.modules.documents.infrastructure.html_renderer import fit_script  # noqa: PLC0415
+
+        script = fit_script(
+            {"page": {"height_mm": 297.0}, "content_bottom_mm": 280.0, "first_band_top_mm": 60.0},
+            live=False,
+        )
+        assert script.count("parentNode===e.parentNode") == 2
+
+
+class TestDocxDuneListeEnCadres:
+    def _docx(self, spec: Json, view: Json, assets: dict[str, bytes] | None = None) -> Any:
+        import io  # noqa: PLC0415
+
+        import docx  # noqa: PLC0415
+
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+
+        data = DocxRenderer(spec, view, cv_font_set(), photo=None).render(assets or {})
+        return docx.Document(io.BytesIO(data))
+
+    @staticmethod
+    def _paragraphs(document: Any) -> dict[str, Any]:
+        cells = [c for t in document.tables for r in t.rows for c in r.cells]
+        return {p.text: p for c in cells for p in c.paragraphs if p.text}
+
+    def test_les_competences_sortent_en_liste_simple_a_gauche(self) -> None:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH  # noqa: PLC0415
+
+        from karria.modules.documents.domain.view import from_cv  # noqa: PLC0415
+
+        spec, _, _ = TestListeEnCadres()._builder().build()
+        paragraphs = self._paragraphs(self._docx(spec, from_cv(spec, CV_PERSONNE)))
+        for name in ("Vente", "Caisse", "Visualisation de données", "Stock", "Accueil"):
+            assert name in paragraphs
+            assert paragraphs[name].alignment in (None, WD_ALIGN_PARAGRAPH.LEFT)
+            assert not paragraphs[name].paragraph_format.left_indent
+
+    def test_letiquette_en_pictogrammes_pose_son_image(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+
+        spec, sample, assets = TestEtiquetteEnPictogrammes()._spec()
+        document = self._docx(spec, from_sample(spec, sample), assets)
+        assert len(document.element.xpath("//wp:anchor//pic:pic")) == 1
+        assert {"a@b.fr", "0612"} <= set(self._paragraphs(document))
+
+    def test_une_colonne_garde_sa_marge_de_tete_par_rapport_a_sa_voisine(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+
+        lines = [
+            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L2", "EXPERIENCE", 90, 50, size=11, font=BOLD, caps=True),
+            raw_line("L3", "Vendeur", 90, 57),
+            raw_line("L4", "CONTACT", 20, 80, size=11, font=BOLD, caps=True),
+            raw_line("L5", "a@b.fr", 20, 87, w=14),
+        ]
+        roles = [
+            ("full_name", "header", 0),
+            ("section_title", "experiences", 0),
+            ("item_title", "experiences", 1),
+            ("section_title", "contact", 0),
+            ("email", "contact", 0),
+        ]
+        spec, sample, _ = builder(lines, roles).build()
+        columns = spec["bands"][0]["columns"]
+        columns[0]["sections"][0]["margin_top_mm"] = 30.0
+        paragraphs = self._paragraphs(self._docx(spec, from_sample(spec, sample)))
+        contact, experience = paragraphs["CONTACT"], paragraphs["EXPERIENCE"]
+        # « Contact » commence 30 mm sous « Experience », comme dans le modèle.
+        assert contact.paragraph_format.space_before.mm == pytest.approx(30.0, abs=0.1)
+        assert not experience.paragraph_format.space_before

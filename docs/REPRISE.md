@@ -53,6 +53,17 @@ mesurés par `fidelity.measure` — **mesure locale, pas celle de Gotenberg en p
 - Vérifié : `ruff`, `mypy`, `make boundaries`, 3 806 tests unitaires ; les 45 rendus HTML des neuf
   spécifications publiées du banc sont identiques octet pour octet avant/après. **Non vérifié** :
   `make check` complet (pas de base), Gotenberg, le DOCX mesuré, une réingestion réelle.
+- **Suite (même nuit), 049 seulement** : sans photo, la colonne qui commençait par le portrait
+  remonte (`head_margin`) ; les missions repliées gardent un blanc entre elles (`repeat_margin`) ;
+  le titre d'une rubrique suit toujours son premier élément à la pliure (script d'ajustement) ;
+  DOCX : chaque colonne à sa marge de tête mesurée, liste en cadres rendue en liste simple,
+  étiquette en pictogrammes en image flottante. **Change le DOCX de modèles publiés** :
+  `sacha-dubois` (colonne des expériences 57 mm plus bas, sous la photo comme en PDF) et `cv9`
+  (colonne Contact 10 mm plus bas) — à regarder dans Word avant fusion ; leur HTML/PDF est
+  identique hors script d'ajustement. La porte de production juge un **rendu final refait avec
+  le portrait généré** (`IngestTemplate`, pas une passe de la boucle) : simulé avec le portrait
+  de la version en revue, 049 donne 0,910 (SSIM 0,843 pour un plancher de 0,84) — de justesse.
+  DOCX vu seulement par l'aperçu de macOS (ni LibreOffice ni Word ici).
 - Outils : scratchpad `…/oss-travail/` (`assemble.py`, `diag.py`, `lignes.py`, `tiles.py`,
   `publies.py`). L'ADR-0037 § 2 n'a pas reçu ces règles (à compléter à la fusion).
 

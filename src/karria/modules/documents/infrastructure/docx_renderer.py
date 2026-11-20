@@ -56,10 +56,13 @@ from karria.modules.documents.infrastructure.header_layout import layout_header
 from karria.modules.documents.infrastructure.html_renderer import (
     LIST_KINDS,
     ROLE_MARKER,
+    column_head,
     estimate,
     extra_contact_slots,
     placement,
+    repeat_margin,
     style_key,
+    unframed,
 )
 from karria.shared.images import crop_to_frame
 
@@ -809,6 +812,16 @@ class DocxRenderer:
             no_borders(table)
             table.alignment = WD_TABLE_ALIGNMENT.LEFT
             set_widths(table, [max(w, 0.5) for _, w in widths])
+            # Chaque colonne commence à sa marge de tête mesurée, comptée depuis la
+            # colonne la plus haute : « Contact » sous le portrait ne remonte pas
+            # sous lui (toutes les colonnes partaient du haut de la bande).
+            heads = [
+                column_head(self.spec, bi, cols[n], col[0], photo=self.photo is not None)
+                if col
+                else None
+                for n, col in enumerate(band["columns"])
+            ]
+            head_min = min((h for h in heads if h is not None), default=0.0)
             ci = 0
             for i, (kind, _) in enumerate(widths):
                 if kind != "col":
@@ -818,7 +831,11 @@ class DocxRenderer:
                 for n, (s, sec, _) in enumerate(band["columns"][ci]):
                     # Les premières lignes de toutes les colonnes s'alignent : une
                     # colonne dont le titre a un interligne plus grand part plus haut.
-                    lift = max(col_extra) - col_extra[ci] if n == 0 else 0.0
+                    lift = (
+                        max(col_extra) - col_extra[ci] + (heads[ci] or 0.0) - head_min
+                        if n == 0
+                        else 0.0
+                    )
                     self.section(cell, s, sec, cols[ci]["w_mm"], first=n == 0, lift=lift)
                 if not cell.paragraphs:
                     cell.add_paragraph()
@@ -836,6 +853,11 @@ class DocxRenderer:
     ) -> None:
         """Une rubrique : titre, éléments, puces, frise et pastilles."""
         kind = sec["kind"]
+        if any(sl.get("cell") for sl in s["slots"]):
+            # Word ne dessine pas un cadre par entrée : une liste en cadres (des
+            # compétences dans des cercles) se rend en liste simple, une entrée par
+            # ligne, à gauche — lisible, et rien n'est perdu.
+            s = {**s, **unframed(self.spec, s["slots"])}
         margin = 0.0 if first else s["margin_top_mm"]
         untitled = bool(s.get("untitled"))
         title_key = s.get("title_style") or "section_title"
@@ -916,10 +938,8 @@ class DocxRenderer:
                     val = item.get(roles[0])
                     vals = val if isinstance(val, list) else ([val] if val else [])
                     for j, v in enumerate(vals):
-                        repeat = (
-                            sl["repeat_margin_mm"]
-                            if sl["repeat_margin_mm"] is not None
-                            else sl["margin_top_mm"]
+                        repeat = repeat_margin(
+                            sl, roles[0], self.styles[style_key(self.styles, kind, roles[0])]
                         )
                         rows.append(([(roles[0], v)], sl["margin_top_mm"] if j == 0 else repeat))
                 else:
@@ -942,6 +962,20 @@ class DocxRenderer:
                             before_mm=before,
                             indent_mm=label["dx_mm"],
                         )
+                        if label.get("asset"):
+                            # Une étiquette en pictogrammes : son image, flottante, à la
+                            # place du texte (le paragraphe vide garde le pas mesuré).
+                            self.inline_icon(
+                                p_label,
+                                {
+                                    "file": label["asset"],
+                                    "w_mm": label["w_mm"],
+                                    "h_mm": label["h_mm"],
+                                    "dx_mm": -float(label["pad_mm"]),
+                                    "dy_mm": -float(label["pad_mm"]),
+                                },
+                                before=False,
+                            )
                         if item_first is None:
                             item_first = p_label
                         item_paras.append((p_label, "label"))
