@@ -18,6 +18,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from tortoise.expressions import F
+
 from karria.modules.identity.domain import (
     AiConsent,
     AiPurpose,
@@ -308,6 +310,17 @@ class TortoiseLoginChallengeRepository:
         """Retourne le parcours, ou `None`."""
         row = await LoginChallengeModel.get_or_none(id=challenge_id)
         return None if row is None else _to_challenge(row)
+
+    async def claim_attempt(self, challenge_id: UUID, *, limit: int) -> bool:
+        """`UPDATE … SET attempts = attempts + 1 WHERE attempts < limit` : une seule requête."""
+        claimed = await LoginChallengeModel.filter(id=challenge_id, attempts__lt=limit).update(
+            attempts=F("attempts") + 1
+        )
+        return claimed > 0
+
+    async def opened_for_email(self, email: str, *, since: datetime) -> int:
+        """Compte en base : vaut pour tous les processus et toutes les origines."""
+        return await LoginChallengeModel.filter(email=email, created_at__gte=since).count()
 
     async def purge_before(self, moment: datetime) -> int:
         """Supprime les parcours périmés avant cet instant."""

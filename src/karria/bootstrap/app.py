@@ -22,7 +22,11 @@ from karria.bootstrap.modules import ENABLED_MODULES
 from karria.bootstrap.wiring import wire_modules
 from karria.shared.config import Environment, Settings, get_settings
 from karria.shared.errors import register_exception_handlers
-from karria.shared.http import RequestContextMiddleware, SecurityHeadersMiddleware
+from karria.shared.http import (
+    BodySizeLimitMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from karria.shared.logging import configure_logging
 
 
@@ -45,7 +49,7 @@ def _configure_middlewares(app: FastAPI, settings: Settings) -> None:
     middleware ajouté en position la plus externe. On ajoute donc du plus
     interne au plus externe, pour obtenir la pile suivante :
 
-        RequestContext → TrustedHost → CORS → SecurityHeaders → routes
+        RequestContext → BodySizeLimit → TrustedHost → CORS → SecurityHeaders → routes
 
     `RequestContext` est le plus externe afin que l'identifiant de
     corrélation soit disponible pour absolument tout ce qui suit, y compris
@@ -63,6 +67,8 @@ def _configure_middlewares(app: FastAPI, settings: Settings) -> None:
         allow_headers=["*"],
     )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.security.allowed_hosts)
+    # Avant toute route et toute authentification : un corps trop gros n'est pas lu.
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(RequestContextMiddleware)
 
 

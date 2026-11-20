@@ -310,6 +310,16 @@ class InMemoryLoginChallengeRepository:
     async def find(self, challenge_id: UUID) -> LoginChallenge | None:
         return self.rows.get(challenge_id)
 
+    async def claim_attempt(self, challenge_id: UUID, *, limit: int) -> bool:
+        row = self.rows.get(challenge_id)
+        if row is None or row.attempts >= limit:
+            return False
+        self.rows[challenge_id] = replace(row, attempts=row.attempts + 1)
+        return True
+
+    async def opened_for_email(self, email: str, *, since: datetime) -> int:
+        return sum(1 for c in self.rows.values() if c.email == email and c.created_at >= since)
+
     async def purge_before(self, moment: datetime) -> int:
         doomed = [c.id for c in self.rows.values() if c.expires_at < moment]
         for cid in doomed:

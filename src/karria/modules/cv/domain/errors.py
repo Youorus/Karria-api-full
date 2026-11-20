@@ -59,6 +59,17 @@ class PhotoMissingError(BusinessRuleViolationError):
 _QUOTA_WORDS = {"portrait": "portraits", "import": "imports de CV"}
 
 
+class AiDailyLimitError(RateLimitedError):
+    """Le garde-fou journalier d'une action d'IA est atteint (`quotas.DAILY_GUARDS`)."""
+
+    def __init__(self, *, usage: str, limit: int, retry_after: int) -> None:
+        super().__init__(
+            "Tu as beaucoup utilisé cette fonction aujourd'hui. Elle revient demain.",
+            retry_after=retry_after,
+            details={"reason": "ai_daily_limit", "usage": usage, "limit": limit},
+        )
+
+
 class UsageQuotaExceededError(RateLimitedError):
     """Le plafond mensuel d'une action d'IA est atteint (`domain/quotas.py`, ADR-0038).
 

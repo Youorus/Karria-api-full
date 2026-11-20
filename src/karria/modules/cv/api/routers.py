@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from karria.modules.cv.api.dependencies import (
+    DailyAiGuardDep,
     DraftPresenterDep,
     EnhanceCurrentPhotoDep,
     FinalizeDraftDep,
@@ -181,7 +182,10 @@ async def open_draft(
     ),
 )
 async def interpret_answer(
-    body: InterpretRequest, interpret: InterpretAnswerDep, _principal: AiConsentedPrincipalDep
+    body: InterpretRequest,
+    interpret: InterpretAnswerDep,
+    principal: AiConsentedPrincipalDep,
+    guard: DailyAiGuardDep,
 ) -> InterpretationRead:
     """Un premier jet au format du chapitre, ou une relance (`off_topic`).
 
@@ -189,7 +193,10 @@ async def interpret_answer(
     suivie. `503` avec `details.reason = ai_unavailable` si le modèle ne
     répond pas. `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
+    # Garde-fou du jour (audit du 2026-11-20) : `429 ai_daily_limit` au-delà.
+    await guard.ensure_allowed(principal.subject_id, AiUsage.INTERPRET)
     result = await interpret.execute(body.chapter, body.answer, body.correction_of)
+    await guard.record(principal.subject_id, AiUsage.INTERPRET)
     return InterpretationRead(
         proposal=result.proposal,
         missing=list(result.missing),
@@ -385,7 +392,8 @@ async def import_cv(
 )
 async def transcribe(
     transcribe_voice: TranscribeVoiceDep,
-    _principal: AiConsentedPrincipalDep,
+    principal: AiConsentedPrincipalDep,
+    guard: DailyAiGuardDep,
     audio_file: Annotated[
         UploadFile, File(description="M4A, MP3, WAV, WebM ou OGG, 5 minutes au plus.")
     ],
@@ -394,8 +402,10 @@ async def transcribe(
 
     `403 ai_consent_required` sans consentement à l'IA (ADR-0025).
     """
+    await guard.ensure_allowed(principal.subject_id, AiUsage.TRANSCRIBE)
     payload = await audio_file.read(MAX_AUDIO_BYTES + 1)
     text = await transcribe_voice.execute(payload, audio_file.content_type)
+    await guard.record(principal.subject_id, AiUsage.TRANSCRIBE)
     return TranscriptionRead(text=text)
 
 

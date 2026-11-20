@@ -1,6 +1,10 @@
 """API publique de la couche HTTP transverse."""
 
-from karria.shared.http.middlewares import RequestContextMiddleware, SecurityHeadersMiddleware
+from karria.shared.http.middlewares import (
+    BodySizeLimitMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from karria.shared.http.pagination import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -12,6 +16,7 @@ from karria.shared.http.ratelimit import SlidingWindowLimiter, client_ip
 __all__ = [
     "DEFAULT_PAGE_SIZE",
     "MAX_PAGE_SIZE",
+    "BodySizeLimitMiddleware",
     "Page",
     "PaginationParams",
     "RequestContextMiddleware",

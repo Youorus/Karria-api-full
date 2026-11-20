@@ -61,6 +61,9 @@ from karria.modules.identity.application.ports import (
 from karria.modules.identity.domain import (
     CODE_DIGITS,
     LOGIN_CHALLENGE_LIFETIME,
+    MAX_CHALLENGES_PER_EMAIL_DAY,
+    MAX_CHALLENGES_PER_EMAIL_HOUR,
+    MAX_CODE_ATTEMPTS,
     MAX_SESSIONS_PER_USER,
     REVIEW_THROTTLE_KEY,
     AiConsent,
@@ -83,6 +86,7 @@ from karria.modules.identity.domain import (
     SessionNotFoundError,
     SocialEmailMissingError,
     SocialEmailUnverifiedError,
+    TooManyAttemptsError,
     User,
     UserNotFoundError,
     VerifiedSocialProfile,
@@ -405,6 +409,17 @@ class StartEmailLogin:
         await self._throttle.record_failure(key=throttle_key)
 
         now = self._clock.now()
+        # Le plafond par adresse, compté en base : il vaut quelle que soit
+        # l'origine et quel que soit le processus qui répond.
+        for window, limit in (
+            (timedelta(hours=1), MAX_CHALLENGES_PER_EMAIL_HOUR),
+            (timedelta(days=1), MAX_CHALLENGES_PER_EMAIL_DAY),
+        ):
+            if await self._challenges.opened_for_email(address.value, since=now - window) >= limit:
+                logger.warning(
+                    "auth.login_start_capped", window_hours=window.total_seconds() / 3600
+                )
+                raise TooManyAttemptsError(int(window.total_seconds()))
         user = await self._users.find_by_email(address)
         code, code_hash = self._codes.new_code(address.value)
         challenge = open_challenge(
@@ -555,10 +570,16 @@ class VerifyEmailLoginCode:
             await review_throttle.ensure_allowed(key=REVIEW_THROTTLE_KEY)
             await review_throttle.record_failure(key=REVIEW_THROTTLE_KEY)
 
+        # L'essai est compté **avant** la comparaison, par une seule requête :
+        # cent vérifications simultanées n'ont pas cent essais (audit du 2026-11-20).
+        if not await self._challenges.claim_attempt(challenge_id, limit=MAX_CODE_ATTEMPTS):
+            raise LoginCodeExhaustedError
         if not self._tokens.matches(code.strip(), challenge.code_hash):
-            failed = challenge.failed_attempt(at=now)
-            async with self._uow.atomic():
-                await self._challenges.save(failed)
+            current = await self._challenges.find(challenge_id) or challenge
+            failed = current.burnt_if_exhausted(at=now)
+            if failed is not current:
+                async with self._uow.atomic():
+                    await self._challenges.save(failed)
             await self._throttle.record_failure(key=throttle_key)
             if review_throttle is not None:
                 logger.warning("auth.review_code_rejected", challenge_id=str(challenge_id))

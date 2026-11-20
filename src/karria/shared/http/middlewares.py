@@ -134,3 +134,99 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_security_headers)
+
+
+#: Corps maximal d'une requête, tous types confondus : au-dessus du plus gros
+#: téléversement légitime (25 Mio, `shared/storage/uploads.py`).
+MAX_BODY_BYTES: Final = 26 * 1024 * 1024
+#: Corps maximal d'une requête JSON : le plus gros corps légitime est un CV
+#: (256 Kio) ; les lots du collecteur, sous `/internal/`, gardent le plafond général.
+MAX_JSON_BODY_BYTES: Final = 2 * 1024 * 1024
+_UNBOUNDED_JSON_PREFIX: Final = "/api/v1/internal/"
+_TOO_LARGE_BODY: Final = (
+    b'{"error":{"code":"invalid_input","message":"La requ\\u00eate est trop volumineuse.",'
+    b'"details":{"reason":"body_too_large"}}}'
+)
+
+
+class _BodyTooLargeError(Exception):
+    """Le corps reçu dépasse le plafond (levée dans `receive`, rattrapée par le middleware)."""
+
+
+class BodySizeLimitMiddleware:
+    """Refuse un corps de requête trop gros, **avant** l'authentification et avant de le lire.
+
+    Sans lui, n'importe qui pouvait envoyer un JSON de plusieurs gigaoctets sur
+    une route publique : FastAPI le lisait en mémoire avant toute garde (audit de
+    sécurité du 2026-11-20). Deux gardes : l'en-tête `Content-Length` annoncé, et
+    le compte des octets réellement reçus (un envoi par morceaux n'annonce rien).
+    Les lectures bornées des routes (`read(N + 1)`) restent, plus strictes.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_bytes: int = MAX_BODY_BYTES,
+        max_json_bytes: int = MAX_JSON_BODY_BYTES,
+    ) -> None:
+        self.app = app
+        self._max_bytes = max_bytes
+        self._max_json_bytes = max_json_bytes
+
+    def _limit(self, scope: Scope) -> int:
+        headers = Headers(scope=scope)
+        kind = headers.get("content-type", "").split(";")[0].strip().lower()
+        is_json = kind.endswith("json") or not kind
+        if is_json and not str(scope.get("path", "")).startswith(_UNBOUNDED_JSON_PREFIX):
+            return min(self._max_json_bytes, self._max_bytes)
+        return self._max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        limit = self._limit(scope)
+        announced = Headers(scope=scope).get("content-length", "")
+        if announced.isdigit() and int(announced) > limit:
+            await self._refuse(send)
+            return
+        received = 0
+        started = False
+
+        async def bounded_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _BodyTooLargeError
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, bounded_receive, tracking_send)
+        except _BodyTooLargeError:
+            logger.warning("http.body_too_large", path=scope.get("path"), limit=limit)
+            if not started:
+                await self._refuse(send)
+
+    @staticmethod
+    async def _refuse(send: Send) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(_TOO_LARGE_BODY)).encode()),
+                    (b"connection", b"close"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": _TOO_LARGE_BODY})

@@ -36,6 +36,9 @@ class AiUsage(StrEnum):
 
     PORTRAIT = "portrait"
     IMPORT = "import"
+    #: Comptées pour le garde-fou journalier seulement (voir `DAILY_GUARDS`).
+    INTERPRET = "interpret"
+    TRANSCRIBE = "transcribe"
 
 
 #: Par mois civil (UTC), sans abonnement.
@@ -47,6 +50,19 @@ SUBSCRIBER_MONTHLY_LIMITS: Final[dict[AiUsage, int]] = {
 }
 #: Le chiffre que l'app affiche aux personnes sans abonnement.
 MONTHLY_PORTRAIT_LIMIT: Final = MONTHLY_LIMITS[AiUsage.PORTRAIT]
+
+
+#: Garde-fous **journaliers** (jour civil UTC), pour tout le monde : l'interprétation
+#: d'une réponse et la dictée n'avaient ni quota ni frein, donc une dépense d'IA
+#: sans plafond pour un compte en boucle (audit de sécurité du 2026-11-20). Ce ne
+#: sont pas des quotas de produit : l'usage normal (une trentaine de réponses pour
+#: écrire un CV) n'en approche pas.
+DAILY_GUARDS: Final[dict[AiUsage, int]] = {AiUsage.INTERPRET: 200, AiUsage.TRANSCRIBE: 80}
+
+
+def day_start(now: datetime) -> datetime:
+    """Le début du jour civil UTC de `now`."""
+    return now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def month_bounds(now: datetime) -> tuple[datetime, datetime]:

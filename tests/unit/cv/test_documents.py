@@ -11,7 +11,7 @@ from pypdf import PdfWriter
 
 from doubles import sample_image
 from karria.modules.cv.domain import DOCX_CONTENT_TYPE, UnsupportedUploadError
-from karria.modules.cv.infrastructure import FileInspector
+from karria.modules.cv.infrastructure import FileInspector, documents
 from karria.modules.cv.infrastructure.documents import MIN_TEXT_LAYER_CHARS
 
 pytestmark = pytest.mark.unit
@@ -221,3 +221,48 @@ class TestAudio:
 
     def test_un_autre_format_na_pas_de_duree_connue(self) -> None:
         assert inspector.audio(b"RIFF....WAVE", "audio/wav").duration_seconds is None
+
+
+class TestPdfPiege:
+    """Audit de sécurité du 2026-11-20 : un PDF piégé ne fige pas l'API."""
+
+    @staticmethod
+    def pdf(pages: int) -> bytes:
+        writer = PdfWriter()
+        for _ in range(pages):
+            writer.add_blank_page(width=595, height=842)
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+
+    def test_au_dela_de_dix_pages_rien_nest_extrait(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pypdf import PageObject  # noqa: PLC0415
+
+        def forbidden(self: object, *args: object, **kwargs: object) -> str:
+            raise AssertionError("aucune page ne devait être extraite")
+
+        monkeypatch.setattr(PageObject, "extract_text", forbidden)
+
+        pages, text = documents._pdf_pages_and_text(self.pdf(12))
+
+        assert pages == 12
+        assert text == ""
+
+    def test_passe_le_delai_le_pdf_part_tel_quel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(documents, "_PDF_TEXT_BUDGET_SECONDS", -1.0)
+
+        pages, text = documents._pdf_pages_and_text(self.pdf(3))
+
+        assert (pages, text) == (3, "")
+
+    def test_un_volume_de_texte_anormal_arrete_lextraction(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pypdf import PageObject  # noqa: PLC0415
+
+        monkeypatch.setattr(documents, "_PDF_TEXT_MAX_CHARS", 10)
+        monkeypatch.setattr(PageObject, "extract_text", lambda self, *a, **k: "x" * 50)
+
+        pages, text = documents._pdf_pages_and_text(self.pdf(4))
+
+        assert (pages, text) == (4, "")

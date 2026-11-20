@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -32,6 +33,7 @@ from karria.modules.cv.application import (
     PHOTO_FOLLOW_UP,
     TOO_SHORT_FOLLOW_UP,
     CvFinalized,
+    DailyAiGuard,
     EnhanceCurrentPhoto,
     FinalizeDraft,
     GeneratedImage,
@@ -49,9 +51,11 @@ from karria.modules.cv.application import (
     ValidateChapter,
 )
 from karria.modules.cv.domain import (
+    DAILY_GUARDS,
     MONTHLY_LIMITS,
     MONTHLY_PORTRAIT_LIMIT,
     SUBSCRIBER_MONTHLY_LIMITS,
+    AiDailyLimitError,
     AiUsage,
     Chapter,
     ChapterStatus,
@@ -62,6 +66,7 @@ from karria.modules.cv.domain import (
     CurriculumVitae,
     CvNotFoundError,
     CvPhoto,
+    DocumentInfo,
     Draft,
     DraftIncompleteError,
     DraftNotFoundError,
@@ -1068,3 +1073,61 @@ class TestUpdateCvChapter:
 def test_les_identifiants_de_photo_sont_des_uuid() -> None:
     """Garde-fou de lecture : le contrat parle d'`image_id`, et c'est un UUID."""
     assert isinstance(CvPhoto(uuid4(), USER, "k", False, CV_NOW).id, UUID)
+
+
+class TestImportFichierPiege:
+    async def test_une_analyse_trop_longue_est_refusee_sans_figer_la_boucle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import time as _time  # noqa: PLC0415
+
+        from karria.modules.cv.application import use_cases as module  # noqa: PLC0415
+
+        class SlowInspector(FakeInspector):
+            def document(self, payload: bytes, content_type: str) -> DocumentInfo:
+                _time.sleep(0.3)  # bloquant, comme un PDF piégé
+                return super().document(payload, content_type)
+
+        monkeypatch.setattr(module, "INSPECTION_TIMEOUT_SECONDS", 0.05)
+        extractor = FakeExtractor({})
+        use_case = importer(extractor, SlowInspector())
+        ticks = 0
+
+        async def heartbeat() -> None:
+            nonlocal ticks
+            for _ in range(10):
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        beat = asyncio.create_task(heartbeat())
+        with pytest.raises(UnsupportedUploadError) as raised:
+            await use_case.execute(USER, [ReceivedFile(b"%PDF-1.7", "application/pdf")])
+        await beat
+
+        assert raised.value.details["reason"] == "document_unreadable"
+        assert ticks >= 3
+        assert extractor.calls == []  # le modèle n'a pas été appelé
+
+
+class TestGardeFouDuJour:
+    """Audit du 2026-11-20 : l'interprétation et la dictée ont un plafond journalier."""
+
+    async def test_au_dela_du_plafond_du_jour_laction_est_refusee(self) -> None:
+        guard = DailyAiGuard(InMemoryAiUsageRepository(), FakeClock())
+        limit = DAILY_GUARDS[AiUsage.TRANSCRIBE]
+        for _ in range(limit):
+            await guard.ensure_allowed(USER, AiUsage.TRANSCRIBE)
+            await guard.record(USER, AiUsage.TRANSCRIBE)
+
+        with pytest.raises(AiDailyLimitError) as raised:
+            await guard.ensure_allowed(USER, AiUsage.TRANSCRIBE)
+
+        assert raised.value.details["reason"] == "ai_daily_limit"
+        assert raised.value.details["limit"] == limit
+        # L'autre action et une autre personne ne sont pas touchées.
+        await guard.ensure_allowed(USER, AiUsage.INTERPRET)
+        await guard.ensure_allowed(uuid4(), AiUsage.TRANSCRIBE)
+
+    def test_les_garde_fous_laissent_ecrire_un_cv_entier(self) -> None:
+        assert DAILY_GUARDS[AiUsage.INTERPRET] >= 100
+        assert DAILY_GUARDS[AiUsage.TRANSCRIBE] >= 50

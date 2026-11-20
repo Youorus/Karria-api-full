@@ -20,6 +20,7 @@ octets :
 from __future__ import annotations
 
 import struct
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 from io import BytesIO
@@ -30,6 +31,7 @@ from pypdf.errors import PyPdfError
 
 from karria.modules.cv.domain import (
     DOCX_CONTENT_TYPE,
+    MAX_DOCUMENT_PAGES,
     AudioInfo,
     DocumentInfo,
     UnsupportedUploadError,
@@ -51,6 +53,9 @@ MIN_TEXT_LAYER_CHARS: Final = 200
 #: tenir ensemble sous la limite d'une requête (20 Mo en base64).
 _PAGE_IMAGE_POLICY: Final = ImagePolicy(max_edge=2_000, quality=85, min_quality=70)
 _PAGE_IMAGE_MAX_BYTES: Final = 1_500_000
+#: Temps et volume accordés à l'extraction de la couche texte d'un PDF.
+_PDF_TEXT_BUDGET_SECONDS: Final = 5.0
+_PDF_TEXT_MAX_CHARS: Final = 400_000
 _MP4_TYPES: Final[frozenset[str]] = frozenset(
     {"audio/m4a", "audio/x-m4a", "audio/mp4", "audio/aac"}
 )
@@ -118,9 +123,25 @@ def _pdf_pages_and_text(payload: bytes) -> tuple[int, str]:
             # Un PDF « protégé » sans mot de passe s'ouvre avec la clé vide ;
             # un vrai mot de passe nous arrête ici, et c'est normal.
             reader.decrypt("")
-        pages = list(reader.pages)
-        text = "\n".join(page.extract_text() or "" for page in pages)
-        return len(pages), text
+        count = len(reader.pages)
+        if count > MAX_DOCUMENT_PAGES:
+            # Trop de pages : le refus se décide sur le compte, sans rien extraire.
+            return count, ""
+        # L'extraction est bornée en temps et en volume : un PDF de quelques
+        # kilo-octets dont les pages partagent un flux compressé occupait un
+        # processus près d'une minute (audit de sécurité du 2026-11-20). Passé
+        # le délai, le PDF part tel quel, comme un PDF scanné.
+        deadline = time.monotonic() + _PDF_TEXT_BUDGET_SECONDS
+        pieces: list[str] = []
+        size = 0
+        for page in reader.pages:
+            if time.monotonic() > deadline or size > _PDF_TEXT_MAX_CHARS:
+                logger.warning("cv.pdf_text_abandoned", pages=count, chars=size)
+                return count, ""
+            piece = page.extract_text() or ""
+            size += len(piece)
+            pieces.append(piece)
+        return count, "\n".join(pieces)
     except (PyPdfError, ValueError, TypeError, KeyError, OSError) as exc:
         logger.info("cv.pdf_unreadable", error=type(exc).__name__)
         raise UnsupportedUploadError(

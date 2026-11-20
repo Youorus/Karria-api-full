@@ -11,9 +11,10 @@ concret, et la suite unitaire les remplace toutes par des doublures.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Final
 from uuid import UUID, uuid4
 
@@ -37,11 +38,13 @@ from karria.modules.cv.application.ports import (
 )
 from karria.modules.cv.domain import (
     CHAPTER_SCHEMAS,
+    DAILY_GUARDS,
     INTERPRETABLE_CHAPTERS,
     MATERIALIZED_KINDS,
     MAX_DOCUMENT_PAGES,
     REFERENCE_KINDS,
     SUGGESTION_LIMIT,
+    AiDailyLimitError,
     AiUsage,
     Chapter,
     ChapterSubmission,
@@ -65,6 +68,7 @@ from karria.modules.cv.domain import (
     check_document,
     check_documents,
     clean_vocabulary,
+    day_start,
     month_bounds,
     normalize_query,
     plain_content_type,
@@ -399,6 +403,31 @@ class GetUsageQuota:
         )
 
 
+class DailyAiGuard:
+    """Le garde-fou journalier des actions d'IA sans quota mensuel (`quotas.DAILY_GUARDS`)."""
+
+    def __init__(self, usage: AiUsageRepository, clock: Clock) -> None:
+        self._usage = usage
+        self._clock = clock
+
+    async def ensure_allowed(self, user_id: UUID, usage: AiUsage) -> None:
+        """Refuse l'action de trop pour aujourd'hui.
+
+        Raises:
+            AiDailyLimitError: Plafond du jour atteint.
+        """
+        now = self._clock.now()
+        start = day_start(now)
+        limit = DAILY_GUARDS[usage]
+        if await self._usage.count_since(user_id, usage, start) >= limit:
+            retry_after = max(int((start + timedelta(days=1) - now).total_seconds()), 1)
+            raise AiDailyLimitError(usage=usage.value, limit=limit, retry_after=retry_after)
+
+    async def record(self, user_id: UUID, usage: AiUsage) -> None:
+        """Note une action rendue (le modèle a été appelé)."""
+        await self._usage.record(user_id, usage, self._clock.now())
+
+
 class UploadPhoto:
     """Range une photo dans le bucket — améliorée d'abord si on le demande.
 
@@ -581,7 +610,21 @@ class ImportCv:
         check_documents(received)
         documents: list[DocumentInfo] = []
         for f in received:
-            info = self._inspector.document(f.payload, f.content_type)
+            # L'analyse d'un fichier (PDF, Word, image) est du calcul bloquant : hors
+            # de la boucle d'événements, et sous un délai — un fichier piégé ne doit
+            # pas figer l'API pour tout le monde (audit de sécurité du 2026-11-20).
+            try:
+                info = await asyncio.wait_for(
+                    asyncio.to_thread(self._inspector.document, f.payload, f.content_type),
+                    INSPECTION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                logger.warning("cv.import_inspection_timeout", user_id=str(user_id))
+                raise UnsupportedUploadError(
+                    "Ce fichier est trop long à lire. Envoie plutôt une photo du CV.",
+                    reason="document_unreadable",
+                    field="file",
+                ) from exc
             check_document(info)
             documents.append(info)
         pages = _total_pages(documents)
@@ -663,6 +706,8 @@ class ImportCv:
 #: Un CV de dix pages est déjà un portfolio ; les photos de pages comptent
 #: comme des pages. Même borne que `MAX_DOCUMENT_PAGES`, nommée pour le total.
 MAX_DOCUMENT_PAGES_TOTAL: Final = MAX_DOCUMENT_PAGES
+#: Délai d'analyse d'un fichier importé, avant de le refuser.
+INSPECTION_TIMEOUT_SECONDS: Final = 20.0
 
 
 def _total_pages(documents: Sequence[DocumentInfo]) -> int | None:

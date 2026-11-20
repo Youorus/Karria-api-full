@@ -21,6 +21,7 @@ from karria.modules.cv.application import (
     ChapterInterpreter,
     CvDocumentExtractor,
     CvRepository,
+    DailyAiGuard,
     DraftRepository,
     EnhanceCurrentPhoto,
     FinalizeDraft,
@@ -183,6 +184,14 @@ def get_finalize_draft(
         events=events,
         clock=clock,
     )
+
+
+def get_daily_ai_guard(usage: AiUsageRepositoryDep, clock: ClockDep) -> DailyAiGuard:
+    """Le garde-fou journalier de l'interprétation et de la dictée."""
+    return DailyAiGuard(usage, clock)
+
+
+DailyAiGuardDep = Annotated[DailyAiGuard, Depends(get_daily_ai_guard)]
 
 
 def get_transcribe_voice(

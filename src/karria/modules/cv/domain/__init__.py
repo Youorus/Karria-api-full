@@ -17,6 +17,7 @@ from karria.modules.cv.domain.draft import (
     validated_or_raise,
 )
 from karria.modules.cv.domain.errors import (
+    AiDailyLimitError,
     ChapterSubmissionError,
     ChapterValidationError,
     CvNotFoundError,
@@ -41,11 +42,13 @@ from karria.modules.cv.domain.normalization import (
 )
 from karria.modules.cv.domain.photo import CvPhoto
 from karria.modules.cv.domain.quotas import (
+    DAILY_GUARDS,
     MONTHLY_LIMITS,
     MONTHLY_PORTRAIT_LIMIT,
     SUBSCRIBER_MONTHLY_LIMITS,
     AiUsage,
     UsageQuota,
+    day_start,
     month_bounds,
 )
 from karria.modules.cv.domain.schemas import (
@@ -106,6 +109,7 @@ from karria.modules.cv.domain.uploads import (
 __all__ = [
     "CHAPTER_ORDER",
     "CHAPTER_SCHEMAS",
+    "DAILY_GUARDS",
     "DOCX_CONTENT_TYPE",
     "INTERPRETABLE_CHAPTERS",
     "LOOP_CHAPTERS",
@@ -123,6 +127,7 @@ __all__ = [
     "SUGGESTION_LIMIT",
     "SUPPORTED_AUDIO_TYPES",
     "SUPPORTED_DOCUMENT_TYPES",
+    "AiDailyLimitError",
     "AiUsage",
     "AudioInfo",
     "Chapter",
@@ -178,6 +183,7 @@ __all__ = [
     "clean_vocabulary",
     "coerce_language_level",
     "coerce_skill_level",
+    "day_start",
     "fold",
     "month_bounds",
     "normalize_query",

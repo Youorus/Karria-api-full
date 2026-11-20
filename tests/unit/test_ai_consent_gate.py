@@ -48,10 +48,23 @@ class _Temoin:
         raise InvalidInputError("atteint", details={"reason": "temoin_atteint"})
 
 
+class _GardeOuverte:
+    async def ensure_allowed(self, *args: object) -> None:
+        return None
+
+    async def record(self, *args: object) -> None:
+        return None
+
+
 @pytest.fixture
 def temoin(app: FastAPI) -> Iterator[None]:
     """Remplace les cas d'usage d'IA du CV par le témoin : aucune base, aucun modèle."""
-    overrides = {cv_deps.get_upload_photo: _Temoin, cv_deps.get_transcribe_voice: _Temoin}
+    overrides = {
+        cv_deps.get_upload_photo: _Temoin,
+        cv_deps.get_transcribe_voice: _Temoin,
+        # Le garde-fou journalier (sans base ici) laisse passer : ce n'est pas lui qu'on teste.
+        cv_deps.get_daily_ai_guard: _GardeOuverte,
+    }
     app.dependency_overrides.update(overrides)
     yield
     for key in overrides:

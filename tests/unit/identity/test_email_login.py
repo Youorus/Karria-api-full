@@ -7,6 +7,7 @@ code, et la validation crée le compte avec son consentement.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -24,6 +25,8 @@ from karria.modules.identity.application import (
 )
 from karria.modules.identity.domain import (
     LOGIN_CODE_RESEND_DELAY,
+    MAX_CHALLENGES_PER_EMAIL_DAY,
+    MAX_CHALLENGES_PER_EMAIL_HOUR,
     MAX_CODE_ATTEMPTS,
     AiDisclosure,
     InvalidEmailError,
@@ -363,3 +366,65 @@ class TestAccordIaALInscription:
         await self._login(start, verify, env, consent)
 
         assert env.ai_consents.rows[user_id].accepted_at == first
+
+
+class TestDevinetteDuCode:
+    """Audit du 2026-11-20 : un code à six chiffres ne se devine pas à force d'essais."""
+
+    async def test_les_parcours_sont_plafonnes_par_adresse_quelle_que_soit_lorigine(
+        self, start: StartEmailLogin, env: IdentityEnv
+    ) -> None:
+        for n in range(MAX_CHALLENGES_PER_EMAIL_HOUR):
+            # Une origine différente à chaque fois : le frein par origine ne voit rien.
+            await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"origine-{n}")
+
+        with pytest.raises(TooManyAttemptsError):
+            await start.execute(email=EMAIL, consent=CONSENT, throttle_key="encore-une-autre")
+
+        assert len(env.sender.sent) == MAX_CHALLENGES_PER_EMAIL_HOUR  # aucun courriel de plus
+        # Une autre adresse n'est pas touchée.
+        await start.execute(email="autre@exemple.fr", consent=CONSENT, throttle_key="k")
+
+    async def test_le_plafond_horaire_se_leve_le_plafond_du_jour_tient(
+        self, start: StartEmailLogin, env: IdentityEnv
+    ) -> None:
+        opened = 0
+        while opened < MAX_CHALLENGES_PER_EMAIL_DAY:
+            for _ in range(MAX_CHALLENGES_PER_EMAIL_HOUR):
+                if opened == MAX_CHALLENGES_PER_EMAIL_DAY:
+                    break
+                await start.execute(email=EMAIL, consent=CONSENT, throttle_key=f"o-{opened}")
+                opened += 1
+            env.clock.advance(timedelta(hours=1, minutes=1))
+
+        with pytest.raises(TooManyAttemptsError):
+            await start.execute(email=EMAIL, consent=CONSENT, throttle_key="o-fin")
+
+    async def test_des_essais_simultanes_ne_depassent_pas_cinq(
+        self, start: StartEmailLogin, verify: VerifyEmailLoginCode, env: IdentityEnv
+    ) -> None:
+        started = await start.execute(email=EMAIL, consent=CONSENT, throttle_key="k")
+
+        async def guess(n: int) -> str:
+            try:
+                await verify.execute(
+                    challenge_id=started.challenge_id, code=f"{n:06d}", throttle_key=f"o-{n}"
+                )
+            except LoginCodeInvalidError:
+                return "faux"
+            except (LoginCodeExhaustedError, LoginChallengeExpiredError):
+                return "brûlé"  # épuisé, puis clos : le parcours ne sert plus
+            return "juste"
+
+        good = env.sender.last_code_for("marc@exemple.fr")
+        wrong = [n for n in range(100, 140) if f"{n:06d}" != good]
+        results = await asyncio.gather(*(guess(n) for n in wrong))
+
+        assert results.count("juste") == 0
+        # Cinq essais comptés, pas quarante : chacun est réservé avant la comparaison.
+        assert env.challenges.rows[started.challenge_id].attempts == MAX_CODE_ATTEMPTS
+        assert results.count("faux") + results.count("brûlé") == len(wrong)
+        assert results.count("brûlé") >= len(wrong) - MAX_CODE_ATTEMPTS
+        # Le bon code lui-même ne passe plus : le parcours est brûlé.
+        with pytest.raises((LoginCodeExhaustedError, LoginChallengeExpiredError)):
+            await verify.execute(challenge_id=started.challenge_id, code=good, throttle_key="k")

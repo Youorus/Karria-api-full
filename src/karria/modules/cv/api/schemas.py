@@ -10,12 +10,13 @@ c'est là que la clé objet devient une URL signée, et nulle part ailleurs.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from karria.modules.cv.application import ImportResult
 from karria.modules.cv.domain import (
@@ -181,6 +182,10 @@ class DraftPresenter:
         return {**data, "image_url": url}
 
 
+#: Taille maximale du jet à corriger, une fois sérialisé (un chapitre fait quelques Ko).
+CORRECTION_MAX_CHARS = 20_000
+
+
 class InterpretRequest(BaseModel):
     """Une réponse libre à interpréter pour un chapitre."""
 
@@ -195,6 +200,19 @@ class InterpretRequest(BaseModel):
     correction_of: dict[str, Any] | None = Field(
         default=None, description="Le jet à corriger ; la réponse dit alors ce qui ne va pas."
     )
+
+    @field_validator("correction_of")
+    @classmethod
+    def _bounded_correction(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Un jet de chapitre tient en quelques kilo-octets : au-delà, ce n'en est pas un.
+
+        Ce dictionnaire est recopié dans la consigne du modèle ; sans borne il
+        en faisait un canal de dépense illimitée (audit du 2026-11-20).
+        """
+        if value is not None and len(json.dumps(value, ensure_ascii=False)) > CORRECTION_MAX_CHARS:
+            msg = "Le jet à corriger est trop volumineux."
+            raise ValueError(msg)
+        return value
 
 
 class InterpretationRead(BaseModel):

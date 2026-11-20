@@ -214,6 +214,19 @@ class LoginChallengeRepository(Protocol):
         """
         ...
 
+    async def claim_attempt(self, challenge_id: UUID, *, limit: int) -> bool:
+        """Compte un essai **avant** de comparer le code, de façon atomique.
+
+        `False` si le parcours a déjà atteint `limit` : des requêtes
+        simultanées ne peuvent pas toutes lire « zéro essai » (audit du
+        2026-11-20).
+        """
+        ...
+
+    async def opened_for_email(self, email: str, *, since: datetime) -> int:
+        """Parcours ouverts pour cette adresse depuis `since`, toutes origines confondues."""
+        ...
+
     async def purge_before(self, moment: datetime) -> int:
         """Supprime les parcours périmés depuis assez longtemps."""
         ...

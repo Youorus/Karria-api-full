@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from karria.modules.cv.api.schemas import CORRECTION_MAX_CHARS, InterpretRequest
 from karria.modules.cv.domain import (
     CHAPTER_SCHEMAS,
     Chapter,
@@ -165,3 +166,15 @@ class TestValidationParChapitre:
 def test_des_missions_qui_ne_sont_ni_texte_ni_liste_sont_refusees() -> None:
     with pytest.raises(ValidationError):
         Experience(position="x", company="y", missions=42)  # type: ignore[arg-type]
+
+
+class TestJetACorriger:
+    def test_un_jet_demesure_est_refuse(self) -> None:
+        ok = InterpretRequest(chapter=Chapter.IDENTITY, answer="Awa", correction_of={"a": "b"})
+        assert ok.correction_of == {"a": "b"}
+        with pytest.raises(ValidationError):
+            InterpretRequest(
+                chapter=Chapter.IDENTITY,
+                answer="Awa",
+                correction_of={"a": "x" * (CORRECTION_MAX_CHARS + 1)},
+            )

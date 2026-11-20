@@ -66,6 +66,13 @@ MAX_CODE_SENDS: Final = 4
 #: combinaisons rendent la force brute inopérante ; au-delà, le code est
 #: brûlé et il faut en redemander un (`essais >= 5` dans le simulateur).
 MAX_CODE_ATTEMPTS: Final = 5
+#: Parcours ouverts par adresse, toutes origines confondues, comptés en base :
+#: sans ce plafond, changer d'adresse IP (ou tomber sur un autre processus)
+#: donnait des essais illimités sur un code à six chiffres (audit du 2026-11-20 :
+#: ≈ 800 essais par 5 minutes). Cinq parcours par heure et douze par jour bornent
+#: la devinette à 240 essais par jour, soit 0,024 % de chance.
+MAX_CHALLENGES_PER_EMAIL_HOUR: Final = 5
+MAX_CHALLENGES_PER_EMAIL_DAY: Final = 12
 
 
 class LoginChallengeStatus(StrEnum):
@@ -193,6 +200,12 @@ class LoginChallenge:
         attempts = self.attempts + 1
         status = LoginChallengeStatus.FAILED if attempts >= MAX_CODE_ATTEMPTS else self.status
         return replace(self, attempts=attempts, status=status, updated_at=at)
+
+    def burnt_if_exhausted(self, *, at: datetime) -> LoginChallenge:
+        """Le parcours, brûlé si ses essais — déjà comptés en base — sont épuisés."""
+        if self.attempts < MAX_CODE_ATTEMPTS or self.status is LoginChallengeStatus.FAILED:
+            return self
+        return replace(self, status=LoginChallengeStatus.FAILED, updated_at=at)
 
     def ensure_attempt_allowed(self) -> None:
         """Vérifie qu'un essai de plus est permis.
