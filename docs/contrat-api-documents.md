@@ -218,7 +218,50 @@ de pied discrète : « CV réalisé avec Karria · karria.fr/app » (« Lettre r
 `https://karria.fr/app?utm_source=document&utm_medium=cv|letter`. En HTML elle est posée en
 absolu au bas de la feuille `.page`, hors du flux et sans ancre `data-chemin` : elle ne déplace
 rien et ne change pas `pages` ; l'atelier (rendu ancré) la montre aussi. En DOCX c'est le pied de
-section, dans la marge basse. Aucun champ ni paramètre ne la pilote.
+section, dans la marge basse. ~~Aucun champ ni paramètre ne la pilote.~~ Depuis le 2026-11-20
+elle est le **filigrane** de la règle ci-dessous.
+
+### Le filigrane : trois CV sans, puis avec — jamais de blocage (2026-11-20, ADR-0040)
+
+- Chaque mois civil (UTC), les **trois premiers CV exportés** d'un compte gratuit sortent
+  **sans** la ligne de pied. À partir du quatrième elle est posée. Un abonné « Karria sans
+  pub » n'en a jamais. **Aucun export n'est refusé** : le fichier existe toujours.
+- **Une génération n'est pas un fichier** : les exports sans filigrane faits dans la
+  demi-heure qui suit le premier comptent pour une seule (Finaliser, Optimiser, retour de
+  l'atelier = un CV), et restent sans filigrane pendant cette demi-heure. `used` compte des
+  générations.
+- Une lettre suit l'état du compte au moment de son export (filigranée si le prochain CV le
+  serait) ; elle ne consomme rien. Un CV filigrané ne consomme rien non plus.
+- `GeneratedCv.watermarked` (`bool`) : ce document porte le filigrane. C'est le signal pour
+  proposer l'abonnement **après** l'export (« Retire le filigrane et soutiens Karria —
+  4,99 € par mois »), sans retenir le téléchargement.
+- `Rendu.watermark` (`bool | null`) du rendu ancré (§ 1) : l'aperçu porte le filigrane que
+  l'export portera ; `null` pour l'exemple d'un modèle.
+- **`GET /cv/me/generated-cvs/allowance` → `200`**
+
+  ```json
+  {
+    "subscriber": false,
+    "free_per_month": 3,
+    "used": 2,
+    "remaining": 1,
+    "watermark_next": false,
+    "resets_at": "2026-12-01T00:00:00Z"
+  }
+  ```
+
+  `used` : CV exportés sans filigrane depuis le début du mois ; `watermark_next` : le
+  prochain export sera filigrané ; `resets_at` : début du mois suivant. Pour un abonné,
+  `watermark_next` est toujours `false`.
+
+### La précision sous le poste visé (2026-11-20, ADR-0040)
+
+`identity.availability` (chaîne ≤ 150 caractères, facultative, `null` ou absente : rien) :
+ce que la personne cherche et quand elle est disponible — « Recherche alternance 24 mois ·
+Disponible immédiatement ». Même champ dans `GET` / `PUT /cv/me`, dans le `cv` du rendu ancré
+et de l'export. Elle est écrite sur sa ligne sous le poste visé, alignée comme lui ; son
+texte porte `data-chemin="identity.availability"`. Prénom et nom sont désormais rendus dans
+**un seul caractère** (même police, même graisse, même corps), quel que soit le modèle.
 
 ---
 

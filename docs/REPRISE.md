@@ -3,7 +3,94 @@
 > Document de passation. À lire en premier par toute personne ou IA qui
 > reprend le travail, avec `AGENTS.md`. Mis à jour à chaque fin de session.
 
-**Dernière mise à jour : 2026-11-16**
+**Dernière mise à jour : 2026-11-20**
+
+### Session du 2026-11-20 — revue avant campagne sponsorisée (rien n'est commité ni déployé)
+
+Demande de Marc : zéro échec avant le marketing payant. État au moment d'écrire :
+
+- **Santé prod (19/11)** : API, worker, collecteur sains ; aucune 5xx sur 72 h ; 30 449
+  offres en 24 h. **Aucune sauvegarde automatique de la base** (ni cron ni Dokploy) — à
+  décider. `karria.fr/app`, `/offre/<id>`, `/paiement`, AASA et assetlinks répondent 404
+  (la branche `partage` de `karria-landing` n'est pas en ligne).
+- **Logos** : `offers.fetch_logos` échouait ~84 fois par jour depuis le 25/10 (4 334
+  « domaines » V1 qui sont des fils d'Ariane ; `UnicodeError` non attrapée). Corrigé dans
+  `offers/infrastructure/logos.py` et `offers/domain/companies.py`, testé, **non déployé**.
+- **Modèles de CV — revue visuelle des 9 modèles publiés** (banc local : spécifications
+  de prod + polices publiques + Chrome sans tête, quatre CV d'essai : court, nom et
+  poste très longs, presque vide, chargé avec photo). Défauts trouvés en prod :
+  corps de « Portrait Capitales » renvoyé en page 2 (coordonnées de pied de page prises
+  pour de l'en-tête par le script), pictogrammes sur le texte et poste visé réduit à 5 pt
+  au bord de page (Frise Graphite, Meridian, Rose Poudré), prénom et nom de corps et de
+  graisses différents, nom long replié sur quatre lignes, frise traversant « Langues »
+  (Minimalist), école absente (Frise Pharmacie), titre posé sur un filet, bande remontant
+  sous la photo.
+- **Corrigé** (moteurs HTML/PDF et DOCX, `make lint typecheck boundaries` verts,
+  3 670 tests unitaires) :
+  - `documents/infrastructure/header_layout.py` (**nouveau**) : le bloc de titre posé
+    comme un tout pour le CV d'une personne (l'exemple de galerie est inchangé) — nom
+    dans **un seul caractère** avec une réduction commune, poste visé aligné comme le nom
+    et jamais sous 80 % (sinon deux lignes), **précision** sous le poste visé, coordonnées
+    réalignées sur leur bord commun. Les éléments posés portent `laid`.
+  - **Nouveau champ `identity.availability`** (≤ 150 car., facultatif, JSON : pas de
+    migration) : « Recherche alternance 24 mois · Disponible immédiatement ». Chemin
+    d'atelier `identity.availability`. **L'app ne le propose pas encore.**
+  - `html_renderer.py` : `data-hb` (seuls les textes au-dessus de la bande la poussent),
+    pied de première page respecté en mode deux pages, frise bornée à l'élément suivant,
+    marge de première rubrique ≥ 85 %, écart de bande gardé sous un filet, réserve de la
+    photo (`photo_floor`), `band_floor` en `calc(… - écart × --k)`.
+  - `domain/view.py` : l'école prend la place du lieu, ou suit le diplôme si la marge est
+    étroite (`school_placement`).
+  - `docx_renderer.py` : même mise en page, piles regroupées par bord partagé (ordre de
+    lecture nom → poste → précision vérifié sur les 9 modèles).
+- **Filigrane (ADR-0040, proposée)** : `domain/watermark.py`, `application/allowance.py`,
+  colonne `documents_generated_cvs.watermarked` (**migration 24, à appliquer avant le
+  code**), `GeneratedCv.watermarked`, `Rendu.watermark`,
+  `GET /cv/me/generated-cvs/allowance`, port `SubscriptionReader` de `documents` branché sur
+  `payments` dans `bootstrap/wiring.py`. Trois CV sans filigrane par mois civil UTC, puis le
+  filigrane ; jamais chez un abonné ; rien n'est bloqué. **Une génération = les exports
+  sans filigrane d'une même demi-heure** (l'écran « Finaliser » de l'app exporte dès son
+  ouverture). 3 691 tests unitaires.
+- **App (`karria_app`, non commitée, aucune build)** : champ « Recherche et disponibilité »,
+  ligne d'information et feuille non bloquante de filigrane, proposition au quota de
+  portraits, « sans pub » gardé entre deux lancements, annonces (ordre de destruction,
+  nouvelle demande après une absence), revérification de la mise à jour obligatoire,
+  demande d'avis store (`expo-store-review`, **nouvelle build nécessaire**) et lien « Noter
+  Karria ». `npm run check` : 843 tests. Rien n'a tourné sur appareil.
+- **Tenue en charge (mesurée en prod le 20/11, puis arrêtée : serveur partagé)** : le fil
+  plafonnait à **8 requêtes par seconde** (p50 1,2 s à 10 simultanés, 7,3 s à 60) —
+  `SELECT COUNT(*)` sur 775 000 offres à chaque page (285 ms, PostgreSQL à 760 % de CPU,
+  charge système 29), et deux `GROUP BY` complets à chaque `filter-options` (676 ms). La page
+  elle-même coûte < 1 ms. **Corrigé, non déployé** : total gardé 2 min par filtre et options
+  gardées 10 min, par processus (`offers/infrastructure/repositories.py`,
+  `forget_feed_totals`), index partiel du fil (**migration 25**), quota de
+  `GET /app/release` porté de 60 à 1 200 par origine et par 10 min. **À remesurer après
+  déploiement.**
+- **E-mails** : `POST /auth/email/start` vers l'adresse d'administration → `mail.sent`
+  (accepté par le SMTP en 0,7 s). Le fournisseur est **`smtp.gmail.com`** : plafond
+  d'environ 2 000 messages par jour sur un compte Workspace, et l'envoi est fait dans la
+  requête — risque réel pendant une campagne (codes de connexion). À décider : un
+  fournisseur transactionnel.
+- **Fil d'offres, essais fonctionnels en prod** (compte de démonstration) : pagination sans
+  doublon, tri par fraîcheur, filtres contrat / ville / les deux exacts, `nearest` refusé
+  sans lieu (422), limite > 50 refusée, détail 200 / inconnu 404, invité 200,
+  `saved_only` invité 401. Un `contract_types` inconnu est ignoré sans erreur. L'assistant
+  n'a pas été essayé (le compte de démonstration a retiré son accord IA).
+- **Autres constats d'exploitation** : `karria-minio` est à 1 017 Mio sur 1 Gio de limite
+  mémoire ; quota invité du fil 240 lectures par 10 min **par adresse IP** (adresses
+  partagées des opérateurs mobiles).
+- **Constats non traités** : polices `Lora-800`, `Lato-500`, `Lato-600` absentes du
+  bucket public `assets` (le navigateur prend la graisse voisine) ; « Portrait
+  Capitales » reste un dessin à petit corps et à pied de page chargé ; aucun PDF
+  Gotenberg ni aucun appareil n'a été regardé (captures Chrome seulement).
+- **Audit de l'app** (lecture seule) : publicités natives avec les vrais identifiants ;
+  **aucune demande d'avis store** ; mise à jour obligatoire fonctionnelle mais inactive
+  (tout build en retard est bloqué dès que `LATEST_BUILD` est posé) ; le drapeau « sans
+  pub » n'est pas gardé entre deux lancements ; message UMP à vérifier dans AdMob.
+- **Reste** (demandes de Marc du 20/11) : dans l'app, la proposition d'abonnement à 4,99 €
+  quand `watermarked` est vrai et au quota de 3 portraits IA, et le champ « précision » ; demande d'avis store ;
+  correctifs publicité ; essais des e-mails et codes ; essais de la recherche ; tenue à
+  5 000 utilisateurs et coût d'IA ; sauvegarde de la base.
 
 ### Session du 2026-11-16 (soir) — prêt pour les revues d’Apple et de Google (ADR-0039)
 
