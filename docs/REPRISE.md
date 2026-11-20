@@ -30,6 +30,31 @@ tourné sur aucune base.
   migration 29 **avant** le code (`docs/DEPLOIEMENT.md`) ; ajouter la phrase à la politique de
   confidentialité du site (`karria-landing`, `app/confidentialite/page.tsx`, section 1) — la
   version acceptée (`1.0`) n'a **pas** été incrémentée.
+### Session du 2026-11-20 (nuit) — deux modèles open source rejoués hors ligne (Fable) — branche `feat/modeles-oss`, NON poussée, rien en production
+
+Rejoués depuis leur `labels.json` (aucun appel à un modèle), rendus par Chrome sans tête et
+mesurés par `fidelity.measure` — **mesure locale, pas celle de Gotenberg en production**.
+
+- **049 « Colonne Portrait »** : 0,895 → **0,931** (SSIM 0,891 / mots 0,921 / style 1 / décor 1),
+  porte locale passée. Règles : liste **en cadres** (`cell` : un cercle par compétence, libellé
+  centré, corps commun réduit ; une liste empruntée se rend sans cadres), rubrique **centrée**
+  (`centered`), étiquette en **pictogrammes** rastérisée (`label.asset`), adresse sur deux lignes,
+  missions et dates **sans emplacement** repliées dans `item_text` (`domain/view.py`).
+  Vrai CV : une page (`court`, `long`, `nu`) ; le CV `plein` du banc fait deux pages.
+- **015 « Classique Azur »** : 0,865 → **0,923** (SSIM **0,834 < 0,88** / mots 0,990 / style 1 /
+  décor 1) : **reste en revue**. Règles : puce **tapée** (`marker.shape = text`), filet répété
+  = décor d'élément, intitulé en **deux polices** → titre + sous-titre (`joiners`), rubrique
+  **intercalée** rendue à ses éléments, pied de page du modèle (champ d'en-tête répété, hors de la
+  bande du pied Karria), filet dans le nom propre à l'exemple, bande suivante tenue à sa place,
+  coordonnées empilées poussées ensemble. **Pas prêt** : le nom en petites capitales et les
+  libellés gras « Status: » ne sont pas rendus, et surtout le modèle n'a aucune rubrique de
+  liste — un vrai CV y perd compétences, langues et centres d'intérêt (le plan range
+  « Techs: … » en rubrique libre ; à réétiqueter en listes avec étiquette).
+- Vérifié : `ruff`, `mypy`, `make boundaries`, 3 806 tests unitaires ; les 45 rendus HTML des neuf
+  spécifications publiées du banc sont identiques octet pour octet avant/après. **Non vérifié** :
+  `make check` complet (pas de base), Gotenberg, le DOCX mesuré, une réingestion réelle.
+- Outils : scratchpad `…/oss-travail/` (`assemble.py`, `diag.py`, `lignes.py`, `tiles.py`,
+  `publies.py`). L'ADR-0037 § 2 n'a pas reçu ces règles (à compléter à la fusion).
 
 ### Session du 2026-11-20 (fin) — audit de sécurité avant campagne : EN PRODUCTION (`43bb91b`)
 

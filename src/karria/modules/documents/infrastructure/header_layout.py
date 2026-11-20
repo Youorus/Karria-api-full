@@ -719,7 +719,9 @@ class _HeaderLayout:
             )
             if min(right, x1) - max(left, x0) > 1.0:
                 e["y_mm"] = round(y + delta, 2)
-                moved.append(e)
+                # Un champ sans valeur (pas de site) n'entraîne personne : rien ne s'écrit là.
+                if self.value(e):
+                    moved.append(e)
         # Des coordonnées empilées descendent ensemble : la plus longue seule
         # poussée (une adresse de site) tombait sur la ligne d'après.
         for stack in self.contact_stacks_before(moved, delta):

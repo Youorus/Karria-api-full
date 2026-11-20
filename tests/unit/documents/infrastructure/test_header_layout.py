@@ -489,3 +489,15 @@ class TestPileDeCoordonneesPoussee:
         assert deltas["website"] > 0
         assert deltas["email"] == deltas["phone"] == deltas["website"]
         assert deltas["address"] == 0
+        # Sans site, rien ne s'écrit à sa place : le courriel et le téléphone restent.
+        bare = a_spec([name, headline, *[dict(e) for e in contact]])
+        still = by_field(
+            layout_header(
+                bare, {**view, "header": {**view["header"], "website": ""}}, fonts, photo=False
+            )
+        )
+        assert all(
+            still[f]["y_mm"] == e["y_mm"]
+            for f, e in by_field(bare).items()
+            if f in ("email", "phone")
+        )
