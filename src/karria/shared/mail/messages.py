@@ -128,6 +128,10 @@ class MailMessage(StrEnum):
     #: Une personne vient d'écrire à l'équipe dans « Parler à l'équipe »
     #: (module `support`). Adressé à l'équipe, jamais à la personne.
     SUPPORT_NEW_MESSAGE = "support_new_message"
+    #: Alerte à l'équipe : un compte vient d'être créé. Adressé à l'équipe,
+    #: jamais à la personne (demande de Marc, 2026-11-20 : suivre le flux
+    #: d'inscriptions pendant la campagne).
+    SIGNUP_ALERT = "signup_alert"
     #: Les documents d'une personne (CV, lettre) en pièces jointes, à
     #: l'adresse qu'elle a choisie — la sienne ou une autre (ADR-0031).
     #: Signé de son nom ; aucun texte libre.
@@ -202,6 +206,29 @@ REGISTRY: Final[dict[MailMessage, MailTemplate]] = {
             Language.EN: (
                 "You receive this message because you are on duty for « Talk to the "
                 "team » (SUPPORT__TEAM_EMAIL)."
+            ),
+        },
+    ),
+    MailMessage.SIGNUP_ALERT: MailTemplate(
+        # L'adresse dans l'objet : la liste des messages suffit à suivre les
+        # inscriptions, sans en ouvrir aucun.
+        subject={
+            Language.FR: "Karria — nouvelle inscription de $email",
+            Language.EN: "Karria — new sign-up from $email",
+        },
+        template="signup_alert",
+        category=MailCategory.ACTION,
+        preview={
+            Language.FR: "Un compte vient d'être créé sur Karria ($total au total).",
+            Language.EN: "An account has just been created on Karria ($total in total).",
+        },
+        footer_note={
+            Language.FR: (
+                "Vous recevez cette alerte parce que votre adresse est celle de "
+                "l'équipe (SUPPORT__TEAM_EMAIL)."
+            ),
+            Language.EN: (
+                "You receive this alert because your address is the team's (SUPPORT__TEAM_EMAIL)."
             ),
         },
     ),

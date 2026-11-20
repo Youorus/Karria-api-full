@@ -32,11 +32,12 @@ from fastapi import FastAPI
 
 from karria.bootstrap.modules import ENABLED_MODULES, register_event_subscriptions
 from karria.bootstrap.orm import TORTOISE_ORM
-from karria.bootstrap.wiring import subscribe_bridges
+from karria.bootstrap.wiring import subscribe_bridges, subscribe_signup_alerts
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.events import EventBus
 from karria.shared.logging import get_logger
+from karria.shared.mail import build_mailer
 from karria.shared.queue import build_queue_app
 from karria.shared.realtime import build_broker
 from karria.shared.storage import build_object_storage
@@ -88,6 +89,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # oublient la personne) : ici et pas plus haut, parce que l'oubli du
         # CV efface des objets et a besoin du stockage ouvert.
         subscribe_bridges(bus, storage=storage)
+        # L'équipe est prévenue de chaque inscription (plafonné par heure).
+        subscribe_signup_alerts(bus, build_mailer(settings.mail), settings)
 
         logger.info(
             "application.started",

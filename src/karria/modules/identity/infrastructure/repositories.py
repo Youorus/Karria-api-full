@@ -84,6 +84,13 @@ class TortoiseUserRepository:
         row = await UserModel.get_or_none(id=user_id)
         return None if row is None else _to_user(row)
 
+    async def counts(self, *, since: datetime) -> tuple[int, int]:
+        """Comptes au total, et créés depuis `since` (suivi d'exploitation, hors port)."""
+        return (
+            await UserModel.all().count(),
+            await UserModel.filter(created_at__gte=since).count(),
+        )
+
     async def find_by_email(self, email: EmailAddress) -> User | None:
         """Retourne le compte portant cette adresse, ou `None`."""
         row = await UserModel.get_or_none(email=email.value)

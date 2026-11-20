@@ -65,6 +65,12 @@ CONTEXTE: Final[dict[str, Any]] = {
     "preview": "Le fil ne se charge plus depuis ce matin.",
     "kind_label": "texte",
     "console_url": "https://api.karria.fr/api/v1/internal/support/console",
+    # Ce que l'alerte d'inscription passe à l'équipe.
+    "email": "awa@exemple.fr",
+    "signed_up_at": "20/11/2026 à 21:05 (heure de Paris)",
+    "total": 37,
+    "last_day": 4,
+    "hourly_cap": 20,
     # Ce que `documents` passe pour transmettre des pièces jointes (ADR-0031).
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf\n- Lettre de motivation - Acme.pdf",
@@ -264,6 +270,7 @@ OBJETS_FR: Final[dict[MailMessage, str]] = {
     MailMessage.WELCOME: "Bienvenue sur Karria, Awa",
     MailMessage.SMTP_TEST: "Test SMTP Karria",
     MailMessage.SUPPORT_NEW_MESSAGE: "Karria — un mot de awa@exemple.fr",
+    MailMessage.SIGNUP_ALERT: "Karria — nouvelle inscription de awa@exemple.fr",
     MailMessage.DOCUMENTS_SENT: "Des documents envoyés depuis Karria",
     MailMessage.PURCHASE_COFFEE: "Merci pour le café",
     MailMessage.PURCHASE_TEMPLATE: "Votre modèle de CV est à vous",

@@ -16,6 +16,7 @@ Un test substitue n'importe lequel par `app.dependency_overrides`.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Annotated, Final
 from uuid import UUID
@@ -56,6 +57,7 @@ from karria.modules.identity.domain import (
     ReviewAccess,
     SocialProvider,
     SocialProviderUnavailableError,
+    UserNotFoundError,
 )
 from karria.modules.identity.infrastructure import (
     AppleTokenVerifier,
@@ -516,6 +518,27 @@ GetAiConsentStatusDep = Annotated[GetAiConsentStatus, Depends(get_ai_consent_sta
 AcceptAiConsentDep = Annotated[AcceptAiConsent, Depends(get_accept_ai_consent)]
 RevokeAiConsentDep = Annotated[RevokeAiConsent, Depends(get_revoke_ai_consent)]
 EnsureAiConsentDep = Annotated[EnsureAiConsent, Depends(get_ensure_ai_consent)]
+
+
+class TortoiseSignupDirectory:
+    """Ce que l'alerte d'inscription lit des comptes (`bootstrap/wiring.SignupAlerts`)."""
+
+    async def account(self, user_id: UUID) -> tuple[str | None, datetime]:
+        """L'adresse et la date de création du compte."""
+        user = await TortoiseUserRepository().find_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError
+        return user.email.value, user.created_at
+
+    async def counts(self) -> tuple[int, int]:
+        """Comptes au total, et créés depuis vingt-quatre heures."""
+        return await TortoiseUserRepository().counts(since=SystemClock().now() - timedelta(days=1))
+
+
+def get_signup_directory() -> TortoiseSignupDirectory:
+    """Le lecteur de comptes de l'alerte d'inscription, hors requête."""
+    return TortoiseSignupDirectory()
+
 
 __all__ = [
     "AcceptAiConsentDep",

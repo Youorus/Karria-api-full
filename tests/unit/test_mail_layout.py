@@ -21,6 +21,12 @@ CONTEXTE = {
     "preview": "Aperçu.",
     "kind_label": "texte",
     "console_url": "https://api.karria.fr/console",
+    # Ce que l'alerte d'inscription passe à l'équipe.
+    "email": "awa@exemple.fr",
+    "signed_up_at": "20/11/2026 à 21:05 (heure de Paris)",
+    "total": 37,
+    "last_day": 4,
+    "hourly_cap": 20,
     "sender_name": "Awa Diallo",
     "documents": "- CV - Awa Diallo.pdf",
     "count": 1,

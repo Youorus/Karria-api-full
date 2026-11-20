@@ -32,6 +32,7 @@ from karria.modules.identity.api.dependencies import (
     get_ensure_ai_consent,
     get_main_device_lookup,
     get_resolve_session,
+    get_signup_directory,
 )
 from karria.modules.identity.application import (
     AccountDeleted,
@@ -70,4 +71,5 @@ __all__ = [
     "get_ensure_ai_consent",
     "get_main_device_lookup",
     "get_resolve_session",
+    "get_signup_directory",
 ]

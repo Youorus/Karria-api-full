@@ -96,8 +96,10 @@ efface les dossiers de candidature ; `applications.DossierApplied` /
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import TYPE_CHECKING, Annotated, Any, Final
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Any, Final, Protocol
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, Request
 from pydantic import BaseModel, ValidationError
@@ -174,6 +176,7 @@ from karria.modules.identity import (
     MainDeviceSnapshot,
     ResolveSession,
     UserNotFoundError,
+    UserRegistered,
     get_current_user_reader,
     get_ensure_ai_consent,
     get_main_device_lookup,
@@ -230,9 +233,12 @@ from karria.shared.auth import (
     get_token_resolver,
     resolve_principal,
 )
-from karria.shared.config import get_settings
+from karria.shared.config import Settings, get_settings
 from karria.shared.errors import EntityNotFoundError
+from karria.shared.http import SlidingWindowLimiter
+from karria.shared.i18n import Language
 from karria.shared.logging import get_logger
+from karria.shared.mail import Mailer, MailMessage, OutgoingMail
 from karria.shared.push import PushMessage
 
 if TYPE_CHECKING:
@@ -817,6 +823,91 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_documents_subscription_reader] = subscription_reader_from_payments
 
     logger.debug("bootstrap.modules_wired", bindings=20)
+
+
+#: Alertes d'inscription envoyées par heure, au plus. La boîte d'envoi (Gmail,
+#: environ 2 000 messages par jour) sert d'abord aux codes de connexion : une
+#: campagne qui inscrit des centaines de personnes ne doit pas la saturer.
+SIGNUP_ALERTS_PER_HOUR: Final = 20
+_TEAM_TIMEZONE: Final = ZoneInfo("Europe/Paris")
+
+
+class SignupAlerts:
+    """Écrit à l'équipe à chaque compte créé (demande de Marc, 2026-11-20).
+
+    Ici et pas dans `identity` : prévenir l'équipe est du suivi d'exploitation,
+    qui croise le compte et le courriel. Le compte est **relu** — l'événement ne
+    porte que l'identifiant. Une alerte qui échoue ne casse rien : le compte
+    existe déjà, l'échec est journalisé.
+    """
+
+    def __init__(
+        self,
+        *,
+        users: SignupDirectory,
+        mailer: Mailer,
+        recipient: str,
+        limiter: SlidingWindowLimiter | None = None,
+    ) -> None:
+        self._users = users
+        self._mailer = mailer
+        self._recipient = recipient.strip()
+        self._limiter = limiter or SlidingWindowLimiter(
+            max_hits=SIGNUP_ALERTS_PER_HOUR, window_seconds=3_600
+        )
+
+    async def on_registered(self, event: UserRegistered) -> None:
+        """Envoie l'alerte, si un destinataire est configuré et le plafond pas atteint."""
+        if not self._recipient:
+            return
+        if self._limiter.hit("signup-alert") is not None:
+            logger.info("alerts.signup_alert_capped", user_id=str(event.user_id))
+            return
+        try:
+            email, created_at = await self._users.account(event.user_id)
+            total, last_day = await self._users.counts()
+            await self._mailer.send(
+                OutgoingMail(
+                    message=MailMessage.SIGNUP_ALERT,
+                    to=self._recipient,
+                    context={
+                        "email": email or "(sans adresse)",
+                        "signed_up_at": created_at.astimezone(_TEAM_TIMEZONE).strftime(
+                            "%d/%m/%Y à %H:%M (heure de Paris)"
+                        ),
+                        "total": total,
+                        "last_day": last_day,
+                        "hourly_cap": SIGNUP_ALERTS_PER_HOUR,
+                    },
+                    language=Language.FR,
+                )
+            )
+        except Exception:
+            logger.exception("alerts.signup_alert_failed", user_id=str(event.user_id))
+            return
+        logger.info("alerts.signup_alert_sent", user_id=str(event.user_id))
+
+
+class SignupDirectory(Protocol):
+    """Ce que l'alerte lit des comptes."""
+
+    async def account(self, user_id: UUID) -> tuple[str | None, datetime]:
+        """L'adresse et la date de création du compte."""
+        ...
+
+    async def counts(self) -> tuple[int, int]:
+        """Comptes au total, et créés depuis vingt-quatre heures."""
+        ...
+
+
+def subscribe_signup_alerts(bus: EventBus, mailer: Mailer, settings: Settings) -> None:
+    """Abonne l'alerte d'inscription ; muette tant que `SUPPORT__TEAM_EMAIL` est vide."""
+    from karria.modules.identity import get_signup_directory  # noqa: PLC0415 - hors requête
+
+    alerts = SignupAlerts(
+        users=get_signup_directory(), mailer=mailer, recipient=settings.support.team_email
+    )
+    bus.subscribe(UserRegistered, alerts.on_registered)
 
 
 def build_forget_everywhere(storage: ObjectStorage) -> Callable[[UUID], Awaitable[None]]:
