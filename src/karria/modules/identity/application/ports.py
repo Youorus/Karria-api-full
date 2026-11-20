@@ -228,7 +228,8 @@ class LoginChallengeRepository(Protocol):
     ) -> int:
         """Parcours ouverts pour cette adresse depuis `since`, toutes origines confondues.
 
-        `failed_only` : seulement ceux où au moins un code faux a été essayé.
+        `failed_only` : seulement ceux où un code faux a été essayé, ou dont le
+        code a été renvoyé (le renvoi efface le compte des essais).
         """
         ...
 

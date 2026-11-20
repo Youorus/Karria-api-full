@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from tortoise.expressions import F
+from tortoise.expressions import F, Q
 
 from karria.modules.identity.domain import (
     AiConsent,
@@ -324,7 +324,9 @@ class TortoiseLoginChallengeRepository:
         """Compte en base : vaut pour tous les processus et toutes les origines."""
         query = LoginChallengeModel.filter(email=email, created_at__gte=since)
         if failed_only:
-            query = query.filter(attempts__gt=0)
+            # Un renvoi remet les essais à zéro : un parcours renvoyé compte donc
+            # aussi, sinon « deviner, renvoyer, deviner » échappait au plafond.
+            query = query.filter(Q(attempts__gt=0) | Q(code_sends__gt=1))
         return await query.count()
 
     async def purge_before(self, moment: datetime) -> int:

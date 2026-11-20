@@ -323,7 +323,9 @@ class InMemoryLoginChallengeRepository:
         return sum(
             1
             for c in self.rows.values()
-            if c.email == email and c.created_at >= since and (c.attempts > 0 or not failed_only)
+            if c.email == email
+            and c.created_at >= since
+            and (c.attempts > 0 or c.code_sends > 1 or not failed_only)
         )
 
     async def purge_before(self, moment: datetime) -> int:
