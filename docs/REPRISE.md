@@ -42,6 +42,21 @@ quatre fois ; la connexion et l'IA sont, elles, comptées en base) ; pas de budg
 d'IA ni de garde contre la création de comptes en masse (M8). Limite assumée : qui connaît
 une adresse peut bloquer une heure sa connexion par code (Apple et Google restent ouverts).
 
+**Troisième lot (soir), déployé, migration 28 appliquée (3 766 tests) :**
+
+- trois optimisations pour les ATS par mois sans abonnement (`429 optimization_quota_exceeded`),
+  illimité pour un abonné ; compteur dans `GET /cv/me/generated-cvs/allowance` ;
+- CV sans filigrane et optimisations comptés dans `documents_export_usage`, plus sur les
+  exports (supprimer ses exports remettait les compteurs à zéro) ;
+- modèle « Portrait Capitales » dépublié en base à la demande de Marc (réversible :
+  `published_version_id` = `05f7bd31-5309-4beb-9dc4-d97cee2f9563`, version 5) ;
+- migrations : lancer `aerich upgrade` dans `sh -c "…"` — appelé directement après le nom
+  de l'image, il a répondu deux fois « No upgrade items found » sans rien appliquer.
+
+**À décider par Marc :** aligner sur trois par mois l'import de CV (5) et le CV adapté à une
+offre (20) ; conversation gratuite à 15 messages par jour. Rapport de coûts :
+`~/Documents/Karria_Couts_Capacite_Revenus.pdf`.
+
 **Infra, attend l'accord de Marc :** pare-feu inactif, panneau Dokploy en HTTP sur
 :3000, ports Swarm 2377/7946 ouverts, redémarrage en attente, aucune sauvegarde
 automatique de la base.
