@@ -119,6 +119,21 @@ une adresse peut bloquer une heure sa connexion par code (Apple et Google resten
 offre (20) ; conversation gratuite à 15 messages par jour. Rapport de coûts :
 `~/Documents/Karria_Couts_Capacite_Revenus.pdf`.
 
+**Nuit du 20 au 21 novembre — modèle « Colonne Portrait » publié, pays d'inscription en production :**
+
+- `oss-049-colonne-portrait` (modèle open source MIT, `best-resume-ever`) : version 2 **publiée à la main**
+  après revue visuelle (côte à côte, vrais CV avec et sans photo, DOCX converti par Gotenberg). La porte
+  l'avait retenue sur un seul critère (`ssim_tolerant` 0,831 < 0,84, score 0,904) : le portrait d'exemple
+  généré diffère de l'avatar du PDF. Piste notée, non faite : mesurer avec la photo du PDF et réserver le
+  portrait aux aperçus.
+- En revue, non publiés : `oss-015` (0,86, pas de rubrique de liste : hors de portée sans redessiner),
+  `oss-010`, `oss-045`, `oss-048`, `oss-050`, `oss-054`. Sources et licences :
+  `~/Documents/Karria_CV_OpenSource/` (73 modèles, `INDEX.md`).
+- Pays d'inscription (ADR-0042, migration 29) en production ; phrase ajoutée à `karria.fr/confidentialite`.
+- **Migrations** : `aerich upgrade` a répondu trois fois « No upgrade items found » au premier lancement
+  sans rien appliquer ; relancé, il applique. Toujours vérifier la table ou la colonne en base **avant**
+  de pousser le code.
+
 **Infra, attend l'accord de Marc :** pare-feu inactif, panneau Dokploy en HTTP sur
 :3000, ports Swarm 2377/7946 ouverts, redémarrage en attente, aucune sauvegarde
 automatique de la base.
