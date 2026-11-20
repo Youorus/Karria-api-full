@@ -5,6 +5,32 @@
 
 **Dernière mise à jour : 2026-11-20**
 
+### Session du 2026-11-20 (nuit) — pays d'inscription (ADR-0042) : branche locale `feat/pays-inscription`, RIEN en production
+
+Demande de Marc : savoir d'où viennent les inscrits sans le leur demander, et le lire dans
+l'alerte d'inscription. **Rien n'est poussé, déployé ni appliqué** ; la migration 29 n'a
+tourné sur aucune base.
+
+- **Compte** : `identity_users.signup_region` (2 lettres) et `signup_timezone` (64), écrits
+  une fois — à la création, sinon à la première occasion — jamais remplacés (`save` ne les
+  écrit pas ; `fill_signup_origin` ne remplit qu'une colonne vide).
+- **Contrat** : `region` et `timezone` facultatifs sur `POST /auth/email/verify`,
+  `/auth/social/google`, `/auth/social/apple`. Forme stricte ; hors forme = ignoré, jamais 422.
+- **Repli** (app déjà installée) : `devices.DeviceDeclared` → `identity.RecordSignupOrigin`,
+  abonné dans `bootstrap/wiring.subscribe_bridges`.
+- **Alerte** : objet « … de x@y.fr — Belgique », corps avec pays et fuseau ; « pays inconnu »
+  sinon ; pas de second courriel quand la région arrive par le repli.
+- **Lecture** : `uv run python -m scripts.signups [--since AAAA-MM]` (lecture seule).
+- **Suite** : ruff, format, mypy, frontières verts ; `tests/unit` vert. **Non exécutés** : les
+  tests d'intégration ajoutés (`tests/integration/test_identity_repositories.py` — le port 5432
+  local a refusé la connexion), donc ni le SQL de la migration 29, ni la mise à jour
+  conditionnelle, ni la requête de `signups_by_month` n'ont tourné contre PostgreSQL.
+  `tests/e2e/test_auth_api.py` : 2 échecs **antérieurs** à cette branche (mêmes sur `66c309e`).
+- **À faire par Marc** : relire l'ADR-0042 ; `make test-integration` avec la base de test ;
+  migration 29 **avant** le code (`docs/DEPLOIEMENT.md`) ; ajouter la phrase à la politique de
+  confidentialité du site (`karria-landing`, `app/confidentialite/page.tsx`, section 1) — la
+  version acceptée (`1.0`) n'a **pas** été incrémentée.
+
 ### Session du 2026-11-20 (fin) — audit de sécurité avant campagne : EN PRODUCTION (`43bb91b`)
 
 Audit du code (lecture seule) : aucun constat critique, aucun accès aux données d'autrui.
