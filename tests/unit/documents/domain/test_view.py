@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
 from karria.modules.documents.domain.view import (
     TITLES_FR,
+    folded_text,
     from_cv,
     from_sample,
     grouped,
     period,
     separator,
     short_url,
+    slot_roles,
     spec_sections,
     year,
 )
@@ -324,3 +326,93 @@ class TestDepuisLExemple:
         view = from_sample(_spec(), {})
         assert view["sections"] == []
         assert view["header"]["first_name"] == ""
+
+
+class TestRolesSansEmplacement:
+    """Un modèle sans puces ni dates de formation : rien du CV ne disparaît."""
+
+    CV: ClassVar[dict[str, Any]] = {
+        "identity": {"first_name": "Awa", "last_name": "Diallo"},
+        "experiences": [
+            {
+                "position": "Vendeuse",
+                "company": "Zara",
+                "start_date": "2021",
+                "end_date": "2023",
+                "missions": ["Conseiller les clients", "Tenir la caisse"],
+            },
+            {"position": "Stagiaire", "company": "Fnac", "description": "Mise en rayon."},
+        ],
+        "educations": [
+            {"degree": "Bac pro", "school": "Lycée", "end_date": "2020", "description": "Mention"},
+            {"degree": "Brevet", "school": "Collège"},
+        ],
+    }
+
+    @staticmethod
+    def _slots(*roles: str) -> list[dict[str, Any]]:
+        return [{"roles": [role]} for role in roles]
+
+    def test_les_roles_dune_rubrique_comptent_la_colonne_laterale(self) -> None:
+        section = _section(
+            "experiences",
+            slots=self._slots("item_title"),
+            side={"slots": self._slots("item_dates")},
+        )
+        assert slot_roles(section) == {"item_title", "item_dates"}
+        assert slot_roles({}) == set()
+
+    def test_un_role_se_replie_seulement_sil_manque_et_que_le_texte_existe(self) -> None:
+        assert folded_text({"item_title", "item_text"}, "bullet")
+        assert not folded_text({"item_title", "item_text", "bullet"}, "bullet")
+        assert not folded_text({"item_title"}, "bullet")
+        assert not folded_text(set(), "bullet")
+
+    def test_les_missions_sans_puces_prennent_le_texte_une_ligne_chacune(self) -> None:
+        spec = _spec(
+            _section("experiences", slots=self._slots("item_title", "item_dates", "item_text")),
+            _section("educations"),
+        )
+        section = _by_kind(from_cv(spec, self.CV))["experiences"]
+        first, second = section["items"]
+        assert first["bullet"] == []
+        assert first["item_text"] == ["Conseiller les clients", "Tenir la caisse"]
+        assert section["paths"][0]["item_text"] == [
+            "experiences.0.missions.0",
+            "experiences.0.missions.1",
+        ]
+        assert section["paths"][0]["bullet"] == []
+        # Sans mission, la description garde sa place et son chemin.
+        assert second["item_text"] == "Mise en rayon."
+        assert section["paths"][1]["item_text"] == "experiences.1.description"
+
+    def test_un_modele_a_puces_garde_ses_puces(self) -> None:
+        spec = _spec(
+            _section("experiences", slots=self._slots("item_title", "bullet", "item_text")),
+            _section("educations"),
+        )
+        first = _by_kind(from_cv(spec, self.CV))["experiences"]["items"][0]
+        assert first["bullet"] == ["Conseiller les clients", "Tenir la caisse"]
+        assert first["item_text"] is None
+
+    def test_les_dates_dune_formation_sans_emplacement_ouvrent_son_texte(self) -> None:
+        spec = _spec(
+            _section("experiences"),
+            _section("educations", slots=self._slots("item_title", "item_text")),
+        )
+        section = _by_kind(from_cv(spec, self.CV))["educations"]
+        assert section["items"][0]["item_text"] == ["2020", "Mention"]
+        assert section["paths"][0]["item_text"] == [
+            "educations.0.dates",
+            "educations.0.description",
+        ]
+        assert section["items"][1]["item_text"] == []
+
+    def test_une_formation_qui_a_ses_dates_garde_sa_description(self) -> None:
+        spec = _spec(
+            _section("experiences"),
+            _section("educations", slots=self._slots("item_title", "item_dates", "item_text")),
+        )
+        section = _by_kind(from_cv(spec, self.CV))["educations"]
+        assert section["items"][0]["item_text"] == "Mention"
+        assert section["paths"][0]["item_text"] == "educations.0.description"

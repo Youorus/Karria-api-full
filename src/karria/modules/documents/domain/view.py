@@ -106,6 +106,27 @@ def spec_sections(spec: Json) -> dict[str, Json]:
     return {s["kind"]: s for b in spec["bands"] for c in b["columns"] for s in c["sections"]}
 
 
+def slot_roles(section_spec: Json) -> set[str]:
+    """Les rôles auxquels une rubrique du modèle donne un emplacement (contenu et colonne latérale)."""
+    side = section_spec.get("side") or {}
+    return {
+        role
+        for slot in [*section_spec.get("slots", []), *side.get("slots", [])]
+        for role in slot["roles"]
+    }
+
+
+def folded_text(roles: set[str], role: str) -> bool:
+    """Un rôle sans emplacement se replie-t-il dans le texte de l'élément ?
+
+    Un modèle dont l'exemple décrit chaque poste d'une phrase n'a ni puces ni,
+    parfois, de dates pour une formation : les missions et les dates d'une
+    personne disparaissaient du rendu. Elles prennent l'emplacement du texte
+    (`item_text`), une ligne chacune, quand le modèle en a un.
+    """
+    return bool(roles) and role not in roles and "item_text" in roles
+
+
 def school_placement(edu_spec: Json) -> tuple[bool, bool]:
     """Où écrire l'établissement quand le modèle ne lui a pas donné d'emplacement.
 
@@ -116,11 +137,7 @@ def school_placement(edu_spec: Json) -> tuple[bool, bool]:
     lieu non plus, elle suit le diplôme, comme l'entreprise suit le poste.
     """
     side = edu_spec.get("side") or {}
-    roles = {
-        role
-        for slot in [*edu_spec.get("slots", []), *side.get("slots", [])]
-        for role in slot["roles"]
-    }
+    roles = slot_roles(edu_spec)
     if not roles or "item_subtitle" in roles:
         return False, False
     narrow_side = any("item_location" in slot["roles"] for slot in side.get("slots", [])) and (
@@ -196,10 +213,13 @@ def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique aprè
     )
     has_subtitle = any("item_subtitle" in slot["roles"] for slot in exp_slots)
     sep = separator([exp_spec.get("title_sep", "")])
+    missions_as_text = folded_text(slot_roles(exp_spec), "bullet")
     items = []
     paths = []
     for i, e in enumerate(cv.get("experiences") or []):
         missions = list(e.get("missions") or [])
+        mission_paths = [f"experiences.{i}.missions.{j}" for j in range(len(missions))]
+        folded = missions_as_text and bool(missions)
         items.append(
             {
                 "item_title": e["position"]
@@ -210,8 +230,10 @@ def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique aprè
                     e.get("start_date"), e.get("end_date"), current=bool(e.get("is_current"))
                 ),
                 "item_location": e.get("location"),
-                "bullet": missions,
-                "item_text": e.get("description") if not missions else None,
+                "bullet": [] if folded else missions,
+                "item_text": missions
+                if folded
+                else (e.get("description") if not missions else None),
             }
         )
         paths.append(
@@ -220,8 +242,8 @@ def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique aprè
                 "item_subtitle": f"experiences.{i}.company",
                 "item_dates": f"experiences.{i}.dates",
                 "item_location": f"experiences.{i}.location",
-                "bullet": [f"experiences.{i}.missions.{j}" for j in range(len(missions))],
-                "item_text": f"experiences.{i}.description",
+                "bullet": [] if folded else mission_paths,
+                "item_text": mission_paths if folded else f"experiences.{i}.description",
             }
         )
     if items:
@@ -231,20 +253,33 @@ def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique aprè
     edu_spec = kinds.get("educations", {})
     school_as_location, school_in_title = school_placement(edu_spec)
     edu_sep = separator([edu_spec.get("title_sep", "")])
+    dates_as_text = folded_text(slot_roles(edu_spec), "item_dates")
     for i, e in enumerate(cv.get("educations") or []):
         school = e.get("school")
+        dates = period(
+            e.get("start_date"), e.get("end_date"), current=bool(e.get("is_in_progress"))
+        )
+        # Les dates sans emplacement ouvrent le texte de la formation, devant sa description.
+        text_lines = [
+            (text, path)
+            for text, path in (
+                (dates, f"educations.{i}.dates"),
+                (e.get("description"), f"educations.{i}.description"),
+            )
+            if text
+        ]
         items.append(
             {
                 "item_title": f"{e['degree']}{edu_sep}{school}"
                 if school_in_title and school
                 else e["degree"],
                 "item_subtitle": school,
-                "item_dates": period(
-                    e.get("start_date"), e.get("end_date"), current=bool(e.get("is_in_progress"))
-                ),
+                "item_dates": dates,
                 "item_location": school if school_as_location and school else e.get("location"),
                 "bullet": [],
-                "item_text": e.get("description"),
+                "item_text": [text for text, _ in text_lines]
+                if dates_as_text
+                else e.get("description"),
             }
         )
         paths.append(
@@ -258,7 +293,9 @@ def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique aprè
                 if school_as_location and school
                 else f"educations.{i}.location",
                 "bullet": [],
-                "item_text": f"educations.{i}.description",
+                "item_text": [path for _, path in text_lines]
+                if dates_as_text
+                else f"educations.{i}.description",
             }
         )
     if items:
