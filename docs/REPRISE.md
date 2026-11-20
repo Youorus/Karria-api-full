@@ -56,10 +56,10 @@ mesurés par `fidelity.measure` — **mesure locale, pas celle de Gotenberg en p
 - **Suite (même nuit), 049 seulement** : sans photo, la colonne qui commençait par le portrait
   remonte (`head_margin`) ; les missions repliées gardent un blanc entre elles (`repeat_margin`) ;
   le titre d'une rubrique suit toujours son premier élément à la pliure (script d'ajustement) ;
-  DOCX : chaque colonne à sa marge de tête mesurée, liste en cadres rendue en liste simple,
-  étiquette en pictogrammes en image flottante. **Change le DOCX de modèles publiés** :
-  `sacha-dubois` (colonne des expériences 57 mm plus bas, sous la photo comme en PDF) et `cv9`
-  (colonne Contact 10 mm plus bas) — à regarder dans Word avant fusion ; leur HTML/PDF est
+  DOCX : une colonne ne descend sous le portrait que si la photo est posée et entre dans le
+  tableau de la bande (`photo_lift`), liste en cadres rendue en liste simple, étiquette en
+  pictogrammes en image flottante. Le `document.xml` des neuf modèles publiés du banc (exemple,
+  CV plein avec et sans photo) est **identique à `main`** ; leur HTML est
   identique hors script d'ajustement. La porte de production juge un **rendu final refait avec
   le portrait généré** (`IngestTemplate`, pas une passe de la boucle) : simulé avec le portrait
   de la version en revue, 049 donne 0,910 (SSIM 0,843 pour un plancher de 0,84) — de justesse.

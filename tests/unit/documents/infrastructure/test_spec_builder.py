@@ -1812,15 +1812,13 @@ class TestDocxDuneListeEnCadres:
         assert len(document.element.xpath("//wp:anchor//pic:pic")) == 1
         assert {"a@b.fr", "0612"} <= set(self._paragraphs(document))
 
-    def test_une_colonne_garde_sa_marge_de_tete_par_rapport_a_sa_voisine(self) -> None:
-        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
-
+    def _two_columns(self) -> tuple[Json, Json]:
         lines = [
-            raw_line("L1", "JEAN", 20, 10, h=8, size=20, font=BOLD),
+            raw_line("L1", "JEAN", 90, 10, h=8, size=20, font=BOLD),
             raw_line("L2", "EXPERIENCE", 90, 50, size=11, font=BOLD, caps=True),
             raw_line("L3", "Vendeur", 90, 57),
-            raw_line("L4", "CONTACT", 20, 80, size=11, font=BOLD, caps=True),
-            raw_line("L5", "a@b.fr", 20, 87, w=14),
+            raw_line("L4", "CONTACT", 20, 90, size=11, font=BOLD, caps=True),
+            raw_line("L5", "a@b.fr", 20, 97, w=14),
         ]
         roles = [
             ("full_name", "header", 0),
@@ -1830,10 +1828,74 @@ class TestDocxDuneListeEnCadres:
             ("email", "contact", 0),
         ]
         spec, sample, _ = builder(lines, roles).build()
-        columns = spec["bands"][0]["columns"]
-        columns[0]["sections"][0]["margin_top_mm"] = 30.0
-        paragraphs = self._paragraphs(self._docx(spec, from_sample(spec, sample)))
-        contact, experience = paragraphs["CONTACT"], paragraphs["EXPERIENCE"]
-        # « Contact » commence 30 mm sous « Experience », comme dans le modèle.
-        assert contact.paragraph_format.space_before.mm == pytest.approx(30.0, abs=0.1)
-        assert not experience.paragraph_format.space_before
+        spec["bands"][0]["columns"][0]["sections"][0]["margin_top_mm"] = 40.0
+        # Le portrait : dans la colonne de gauche, du haut de la bande à « Contact ».
+        spec["header"]["photo"] = {
+            "x_mm": 20.0,
+            "y_mm": 50.0,
+            "w_mm": 40.0,
+            "h_mm": 36.0,
+            "shape": "rect",
+            "sample_object_position": "50% 50%",
+            "sample_file": "sample_photo.png",
+        }
+        return spec, sample
+
+    def _lift(self, spec: Json, sample: Json, photo: bytes | None) -> tuple[Any, Any]:
+        import io  # noqa: PLC0415
+
+        import docx  # noqa: PLC0415
+
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+
+        view = from_sample(spec, sample)
+        data = DocxRenderer(spec, view, cv_font_set(), photo=photo).render({})
+        paragraphs = self._paragraphs(docx.Document(io.BytesIO(data)))
+        return (
+            paragraphs["CONTACT"].paragraph_format.space_before,
+            paragraphs["EXPERIENCE"].paragraph_format.space_before,
+        )
+
+    def test_avec_la_photo_la_colonne_passe_sous_le_portrait(self) -> None:
+        spec, sample = self._two_columns()
+        contact, experience = self._lift(spec, sample, png(40, 36))
+        # « Contact » commence 40 mm sous le haut de la bande, comme dans le modèle.
+        assert contact.mm == pytest.approx(40.0, abs=0.1)
+        assert not experience
+
+    def test_sans_photo_la_colonne_commence_en_haut_de_la_bande(self) -> None:
+        spec, sample = self._two_columns()
+        contact, experience = self._lift(spec, sample, None)
+        assert not contact
+        assert not experience
+
+    def test_une_photo_hors_de_la_colonne_ou_au_dessus_de_la_bande_ne_descend_rien(self) -> None:
+        spec, sample = self._two_columns()
+        spec["header"]["photo"]["x_mm"] = 150.0
+        assert not self._lift(spec, sample, png(40, 36))[0]
+        spec, sample = self._two_columns()
+        # Toute dans l'en-tête : elle finit au-dessus du tableau de la bande.
+        spec["header"]["photo"].update(y_mm=5.0, h_mm=30.0)
+        assert not self._lift(spec, sample, png(40, 36))[0]
+
+    def test_la_part_deja_prise_par_len_tete_se_retire(self) -> None:
+        from karria.modules.documents.domain.view import from_sample  # noqa: PLC0415
+        from karria.modules.documents.infrastructure.docx_renderer import DocxRenderer  # noqa: PLC0415
+
+        spec, sample = self._two_columns()
+        renderer = DocxRenderer(spec, from_sample(spec, sample), cv_font_set(), photo=png(40, 36))
+        column = spec["bands"][0]["columns"][0]
+        first = (column["sections"][0], {}, False)
+        renderer.header_bottom = 30.0
+        assert renderer.photo_lift(0, column, first) == 40.0
+        # Des coordonnées d'en-tête descendues jusqu'à 75 mm : le tableau part de là,
+        # il ne reste que 15 mm à descendre pour commencer à 90 mm.
+        renderer.header_bottom = 75.0
+        assert renderer.photo_lift(0, column, first) == 15.0
+        # Le tableau part déjà sous le portrait : rien.
+        renderer.header_bottom = 88.0
+        assert renderer.photo_lift(0, column, first) == 0.0
+        # … ou à un demi-millimètre de son bas (86 mm) : la rubrique est déjà sous lui.
+        renderer.header_bottom = 85.5
+        assert renderer.photo_lift(0, column, first) == 0.0

@@ -68,6 +68,9 @@ from karria.shared.images import crop_to_frame
 
 Json = dict[str, Any]
 
+#: En deçà, le bas du portrait ne dépasse pas vraiment le haut du tableau d'une bande (mm).
+PHOTO_INTRUSION_MM: Final = 1.0
+
 ROLE_FR: Final[dict[str, str]] = {
     "section_title": "Titre de section",
     "item_title": "Intitulé",
@@ -812,16 +815,12 @@ class DocxRenderer:
             no_borders(table)
             table.alignment = WD_TABLE_ALIGNMENT.LEFT
             set_widths(table, [max(w, 0.5) for _, w in widths])
-            # Chaque colonne commence à sa marge de tête mesurée, comptée depuis la
-            # colonne la plus haute : « Contact » sous le portrait ne remonte pas
-            # sous lui (toutes les colonnes partaient du haut de la bande).
-            heads = [
-                column_head(self.spec, bi, cols[n], col[0], photo=self.photo is not None)
-                if col
-                else None
+            # Une colonne qui commence par le portrait passe sous lui — seulement
+            # quand la photo est posée (`photo_lift`).
+            lifts = [
+                self.photo_lift(bi, cols[n], col[0]) if col else 0.0
                 for n, col in enumerate(band["columns"])
             ]
-            head_min = min((h for h in heads if h is not None), default=0.0)
             ci = 0
             for i, (kind, _) in enumerate(widths):
                 if kind != "col":
@@ -831,15 +830,40 @@ class DocxRenderer:
                 for n, (s, sec, _) in enumerate(band["columns"][ci]):
                     # Les premières lignes de toutes les colonnes s'alignent : une
                     # colonne dont le titre a un interligne plus grand part plus haut.
-                    lift = (
-                        max(col_extra) - col_extra[ci] + (heads[ci] or 0.0) - head_min
-                        if n == 0
-                        else 0.0
-                    )
+                    lift = max(col_extra) - col_extra[ci] + lifts[ci] if n == 0 else 0.0
                     self.section(cell, s, sec, cols[ci]["w_mm"], first=n == 0, lift=lift)
                 if not cell.paragraphs:
                     cell.add_paragraph()
                 ci += 1
+
+    def photo_lift(self, index: int, column: Json, first: tuple[Json, Json, bool]) -> float:
+        """Ce dont la première rubrique d'une colonne descend pour passer sous le portrait (mm).
+
+        Les colonnes d'une bande partent toutes du haut de leur tableau. Quand
+        la photo est **posée**, dans la colonne, et que la rubrique commence
+        sous elle dans le modèle, la rubrique garde sa marge de tête mesurée —
+        sans quoi « Contact » s'écrivait sous le portrait, qui flotte sans
+        habillage. La part de cette marge que les textes d'en-tête ont déjà
+        prise en descendant le tableau (des coordonnées sous la photo) s'en
+        retire. Sans photo, rien : la colonne commence en haut de la bande,
+        sans trou à la place du portrait.
+        """
+        frame = self.spec["header"].get("photo") if self.photo else None
+        if not frame:
+            return 0.0
+        head = column_head(self.spec, index, column, first, photo=True)
+        band_top = float(self.spec["bands"][index]["y_sample"])
+        table_top = max(band_top, self.header_bottom) if index == 0 else band_top
+        left, width = float(frame["x_mm"]), float(frame["w_mm"])
+        low = float(frame["y_mm"]) + float(frame["h_mm"])
+        shared = min(left + width, float(column["x_mm"]) + float(column["w_mm"])) - max(
+            left, float(column["x_mm"])
+        )
+        # Un portrait qui n'entre dans le tableau que d'un millimètre ne gêne rien :
+        # la rubrique est déjà sous lui.
+        if shared < width / 2 or not table_top + PHOTO_INTRUSION_MM < low <= band_top + head + 1.0:
+            return 0.0
+        return max(0.0, head - (table_top - band_top))
 
     def section(  # noqa: PLR0912, PLR0915 - le gabarit d'une rubrique, dans l'ordre du modèle
         self,
