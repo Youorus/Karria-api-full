@@ -85,7 +85,52 @@ class TestTotalDuFil:
         await _feed_total(query, dated)
         assert query.counts == 2
 
-    async def test_un_cache_plein_repart_de_zero(self, query: CountedQuery) -> None:
+    async def test_un_cache_plein_chasse_le_plus_ancien_pas_le_fil_sans_filtre(
+        self, query: CountedQuery
+    ) -> None:
         for n in range(repositories.FEED_TOTAL_CACHE_SIZE + 3):
+            await _feed_total(query, OfferFilters())  # relu sans cesse : il reste frais
             await _feed_total(query, OfferFilters(cities=(f"Ville {n}",)))
         assert len(repositories._feed_totals) <= repositories.FEED_TOTAL_CACHE_SIZE
+        assert len(repositories._feed_locks) <= repositories.FEED_TOTAL_CACHE_SIZE
+        before = query.counts
+        await _feed_total(query, OfferFilters())
+        assert query.counts == before  # le total sans filtre n'a pas été chassé
+
+    async def test_une_longue_liste_de_villes_nest_pas_gardee(self, query: CountedQuery) -> None:
+        many = OfferFilters(cities=tuple(f"Ville {n}" for n in range(6)))
+        await _feed_total(query, many)
+        await _feed_total(query, many)
+        assert query.counts == 2
+        assert not repositories._feed_totals
+
+    async def test_un_filtre_lent_ne_retient_pas_les_autres(
+        self, query: CountedQuery, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = asyncio.Event()
+        slow = CountedQuery(7)
+
+        async def blocked() -> int:
+            await gate.wait()
+            return 7
+
+        monkeypatch.setattr(slow, "count", blocked)
+        monkeypatch.setattr(
+            repositories, "_apply_filters", lambda q, f: slow if f.cities else query
+        )
+        pending = asyncio.create_task(_feed_total(query, OfferFilters(cities=("Lente",))))
+        await asyncio.sleep(0)
+        # Le fil sans filtre répond pendant que l'autre filtre compte encore.
+        assert await asyncio.wait_for(_feed_total(query, OfferFilters()), 1) == 540_000
+        gate.set()
+        assert await pending == 7
+
+    async def test_un_total_perime_en_recalcul_sert_la_valeur_precedente(
+        self, query: CountedQuery, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _feed_total(query, OfferFilters())
+        later = repositories.time.monotonic() + repositories.FEED_TOTAL_TTL_SECONDS + 1
+        monkeypatch.setattr(repositories.time, "monotonic", lambda: later)
+        totals = await asyncio.gather(*(_feed_total(query, OfferFilters()) for _ in range(20)))
+        assert set(totals) == {540_000}
+        assert query.counts == 2

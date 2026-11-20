@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Final
@@ -405,13 +406,16 @@ class TortoiseOfferRepository:
         if offer_ids is not None:
             return await self._count_options(offer_ids)
         kept = _all_filter_options
-        if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
-            async with _recount:
-                kept = _all_filter_options
-                if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
-                    contracts, cities = await self._count_options(None)
-                    kept = (time.monotonic(), contracts, cities)
-                    _remember_filter_options(kept)
+        fresh = kept is not None and time.monotonic() - kept[0] <= FILTER_OPTIONS_TTL_SECONDS
+        if kept is not None and (fresh or _options_lock.locked()):
+            # Périmées mais déjà en recalcul : on sert les précédentes, sans attendre.
+            return dict(kept[1]), dict(kept[2])
+        async with _options_lock:
+            kept = _all_filter_options
+            if kept is None or time.monotonic() - kept[0] > FILTER_OPTIONS_TTL_SECONDS:
+                contracts, cities = await self._count_options(None)
+                kept = (time.monotonic(), contracts, cities)
+                _remember_filter_options(kept)
         return dict(kept[1]), dict(kept[2])
 
     @staticmethod
@@ -493,14 +497,21 @@ def distance_sql(latitude: str, longitude: str, near: tuple[float, float]) -> st
 #: seconde au plus, 7 s d'attente à 60). Le total affiché peut avoir deux minutes.
 FEED_TOTAL_TTL_SECONDS: Final = 120.0
 FEED_TOTAL_CACHE_SIZE: Final = 256
-_feed_totals: dict[tuple[tuple[str, ...], tuple[str, ...]], tuple[float, int]] = {}
-#: Un seul recalcul à la fois par processus (total du fil, options de filtre).
-_recount = asyncio.Lock()
-
-
+#: Au-delà, un filtre n'est pas gardé : une liste de villes arbitraire ne doit pas
+#: pouvoir remplir le cache ni en chasser le total du fil sans filtre.
+FEED_TOTAL_MAX_CITIES: Final = 5
+#: Attente maximale du compte fait par une autre requête, avant de compter soi-même.
+FEED_TOTAL_WAIT_SECONDS: Final = 5.0
+_FeedKey = tuple[tuple[str, ...], tuple[str, ...]]
+_feed_totals: OrderedDict[_FeedKey, tuple[float, int]] = OrderedDict()
+#: Un recalcul à la fois **par filtre** : un filtre lent ne retient pas les autres
+#: (revue de sécurité du 2026-11-20 : un verrou commun se laissait bloquer par des
+#: filtres inventés à la chaîne).
+_feed_locks: dict[_FeedKey, asyncio.Lock] = {}
 #: Les options de filtre de tout le fil, gardées dix minutes (instant, contrats, villes).
 FILTER_OPTIONS_TTL_SECONDS: Final = 600.0
 _all_filter_options: tuple[float, dict[ContractType, int], dict[str, int]] | None = None
+_options_lock = asyncio.Lock()
 
 
 def _remember_filter_options(kept: tuple[float, dict[ContractType, int], dict[str, int]]) -> None:
@@ -512,6 +523,7 @@ def forget_feed_totals() -> None:
     """Oublie les totaux et les options gardés (essais, ou après une purge massive)."""
     global _all_filter_options  # noqa: PLW0603 - un cache de processus, borné à une entrée
     _feed_totals.clear()
+    _feed_locks.clear()
     _all_filter_options = None
 
 
@@ -519,27 +531,52 @@ async def _feed_total(query: Any, filters: OfferFilters) -> int:
     """Le nombre d'offres du fil pour ces filtres, compté au plus toutes les deux minutes.
 
     Les offres écartées par la personne se retranchent du total gardé (sans
-    recompter) ; un filtre de date, propre à chaque appel, se compte à chaque fois.
+    recompter). Ne sont pas gardés : un filtre de date (propre à chaque appel)
+    et une longue liste de villes. Pendant qu'un filtre se recompte, les autres
+    requêtes reçoivent sa valeur précédente ; sans valeur précédente, elles
+    attendent le compte en cours, cinq secondes au plus.
     """
-    if filters.published_after is not None:
+    if filters.published_after is not None or len(filters.cities or ()) > FEED_TOTAL_MAX_CITIES:
         return int(await query.count())
-    key = (tuple(sorted(filters.contract_types or ())), tuple(sorted(filters.cities or ())))
+    key: _FeedKey = (
+        tuple(sorted(filters.contract_types or ())),
+        tuple(sorted(filters.cities or ())),
+    )
+    dismissed = len(filters.exclude_offer_ids or ())
     kept = _feed_totals.get(key)
-    if kept is None or time.monotonic() - kept[0] > FEED_TOTAL_TTL_SECONDS:
-        # Un seul compte à la fois : à l'expiration, trente requêtes simultanées
-        # recomptaient toutes (mesuré le 2026-11-20) ; les autres attendent le résultat.
-        async with _recount:
-            kept = _feed_totals.get(key)
-            if kept is None or time.monotonic() - kept[0] > FEED_TOTAL_TTL_SECONDS:
-                base = _apply_filters(
-                    OfferModel.filter(is_active=True, duplicate_of__isnull=True),
-                    OfferFilters(contract_types=filters.contract_types, cities=filters.cities),
-                )
-                if len(_feed_totals) >= FEED_TOTAL_CACHE_SIZE:
-                    _feed_totals.clear()
-                kept = (time.monotonic(), int(await base.count()))
-                _feed_totals[key] = kept
-    return max(0, kept[1] - len(filters.exclude_offer_ids or ()))
+    if kept is not None and time.monotonic() - kept[0] <= FEED_TOTAL_TTL_SECONDS:
+        return max(0, kept[1] - dismissed)
+    lock = _feed_locks.setdefault(key, asyncio.Lock())
+    if kept is not None and lock.locked():
+        return max(0, kept[1] - dismissed)  # périmé, déjà en recalcul : la valeur précédente
+    try:
+        async with asyncio.timeout(FEED_TOTAL_WAIT_SECONDS):
+            await lock.acquire()
+    except TimeoutError:
+        return max(0, int(await query.count()))
+    try:
+        kept = _feed_totals.get(key)
+        if kept is None or time.monotonic() - kept[0] > FEED_TOTAL_TTL_SECONDS:
+            base = _apply_filters(
+                OfferModel.filter(is_active=True, duplicate_of__isnull=True),
+                OfferFilters(contract_types=filters.contract_types, cities=filters.cities),
+            )
+            kept = (time.monotonic(), int(await base.count()))
+            _feed_totals[key] = kept
+            _feed_totals.move_to_end(key)
+            while len(_feed_totals) > FEED_TOTAL_CACHE_SIZE:
+                # Le plus ancien sort ; le fil sans filtre, recompté souvent, reste.
+                _feed_totals.popitem(last=False)
+    finally:
+        lock.release()
+        if not lock.locked() and key not in _feed_totals:
+            _feed_locks.pop(key, None)
+        while len(_feed_locks) > FEED_TOTAL_CACHE_SIZE:
+            idle = next((k for k, held in _feed_locks.items() if not held.locked()), None)
+            if idle is None:
+                break
+            _feed_locks.pop(idle)
+    return max(0, kept[1] - dismissed)
 
 
 def _apply_filters(query: Any, filters: OfferFilters) -> Any:
