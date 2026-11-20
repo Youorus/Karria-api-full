@@ -27,6 +27,7 @@ Ce qu'il expose, et pour qui :
 
 from karria.modules.identity.api import router
 from karria.modules.identity.api.dependencies import (
+    build_replay_forgets,
     get_current_user_reader,
     get_ensure_ai_consent,
     get_main_device_lookup,
@@ -64,6 +65,7 @@ __all__ = [
     "UserNotFoundError",
     "UserRegistered",
     "UserSignedIn",
+    "build_replay_forgets",
     "get_current_user_reader",
     "get_ensure_ai_consent",
     "get_main_device_lookup",

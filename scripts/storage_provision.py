@@ -45,6 +45,10 @@ logger = get_logger("scripts.storage_provision")
 _ALREADY_OURS: Final = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
 
 
+#: Jours pendant lesquels une version remplacée ou supprimée reste récupérable.
+NONCURRENT_VERSION_DAYS = 7
+
+
 async def _ensure_bucket(client: Any, name: str, region: str) -> bool:
     """Crée le bucket s'il n'existe pas. Retourne `True` s'il a été créé.
 
@@ -82,19 +86,34 @@ async def _apply_policy(client: Any, name: str, policy: BucketPolicy, settings: 
         VersioningConfiguration={"Status": "Enabled" if policy.versioning else "Suspended"},
     )
 
+    rules: list[dict[str, Any]] = []
     if policy.expire_after_days is not None:
+        rules.append(
+            {
+                "ID": "expiration-automatique",
+                "Status": "Enabled",
+                "Filter": {"Prefix": ""},
+                "Expiration": {"Days": policy.expire_after_days},
+            }
+        )
+    if policy.versioning:
+        # Sur un bucket versionné, « supprimer » ne pose qu'un marqueur : sans
+        # cette règle, un CV ou une lettre supprimés (ou tout un compte) restaient
+        # récupérables indéfiniment dans le stockage (audit du 2026-11-20). Les
+        # versions remplacées ou supprimées s'en vont au bout de quelques jours —
+        # le temps de réparer une erreur — et le marqueur avec elles.
+        rules.append(
+            {
+                "ID": "versions-anciennes",
+                "Status": "Enabled",
+                "Filter": {"Prefix": ""},
+                "NoncurrentVersionExpiration": {"NoncurrentDays": NONCURRENT_VERSION_DAYS},
+                "Expiration": {"ExpiredObjectDeleteMarker": True},
+            }
+        )
+    if rules:
         await client.put_bucket_lifecycle_configuration(
-            Bucket=name,
-            LifecycleConfiguration={
-                "Rules": [
-                    {
-                        "ID": "expiration-automatique",
-                        "Status": "Enabled",
-                        "Filter": {"Prefix": ""},
-                        "Expiration": {"Days": policy.expire_after_days},
-                    }
-                ]
-            },
+            Bucket=name, LifecycleConfiguration={"Rules": rules}
         )
 
     if policy.public_read:

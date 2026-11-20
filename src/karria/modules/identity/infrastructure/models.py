@@ -222,3 +222,21 @@ class DepartureFeedbackModel(BaseDBModel):
     class Meta:
         table = "identity_departure_feedback"
         table_description = "Pourquoi les gens partent. Anonyme : aucun lien vers un compte."
+
+
+class PendingForgetModel(BaseDBModel):
+    """Un compte supprimé dont l'oubli par les autres modules reste à confirmer.
+
+    Écrite **dans la transaction** qui efface le compte ; retirée quand tous
+    les modules (CV, offres, documents, paiement, support…) ont effacé ce
+    qui le concernait. Sans elle, une panne à cet instant laissait ces
+    données sans rejeu possible (audit du 2026-11-20).
+    """
+
+    user_id = fields.UUIDField(unique=True, description="Le compte supprimé.")
+    attempts = fields.IntField(default=0, description="Rejeux qui ont échoué.")
+    last_error = fields.CharField(max_length=300, null=True, description="Dernier échec.")
+
+    class Meta:
+        table = "identity_pending_forgets"
+        table_description = "Comptes supprimés dont l'oubli complet reste à confirmer."

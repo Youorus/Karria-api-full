@@ -34,6 +34,7 @@ c'est ce qui garantit qu'un changement de fournisseur redemande l'accord.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final
@@ -52,6 +53,7 @@ from karria.modules.identity.application.ports import (
     LoginCodeSender,
     LoginThrottle,
     MainDeviceLookup,
+    PendingForgetRepository,
     ProviderIdentityRepository,
     SessionRepository,
     SocialTokenVerifier,
@@ -951,7 +953,9 @@ class DeleteAccount:
         clock: Clock,
         uow: UnitOfWork,
         events: EventBus | None = None,
+        forgets: PendingForgetRepository | None = None,
     ) -> None:
+        self._forgets = forgets
         self._users = users
         self._identities = identities
         self._sessions = sessions
@@ -989,6 +993,10 @@ class DeleteAccount:
             challenges = await self._challenges.delete_for_email(user.email)
             await self._users.delete(user_id)
             await self._departures.add(record)
+            if self._forgets is not None:
+                # Dans la même transaction : si le compte est effacé, l'oubli par
+                # les autres modules est dû, et le worker le rejoue jusqu'au bout.
+                await self._forgets.add(user_id, now)
 
         # Le journal porte l'identifiant — c'est la seule trace qui le relie
         # au départ, et elle sert au support (« j'ai supprimé par erreur »).
@@ -1149,3 +1157,50 @@ class EnsureAiConsent(_AiConsentBase):
             raise AiConsentRequiredError(
                 version=status.disclosure.version, providers=status.disclosure.providers
             )
+
+
+#: Délai avant un rejeu : la réaction immédiate (bus d'événements) passe d'abord.
+FORGET_REPLAY_GRACE = timedelta(minutes=2)
+#: Comptes rejoués par passage.
+FORGET_REPLAY_BATCH = 20
+
+
+class ReplayForgets:
+    """Termine l'oubli des comptes supprimés (audit de sécurité du 2026-11-20).
+
+    La suppression publie `AccountDeleted` sur un bus en mémoire, au plus une
+    fois, erreurs absorbées : une panne de Stripe ou du stockage, ou un
+    redémarrage à cet instant, laissait des données — voire un abonnement
+    encore prélevé. Ici chaque compte inscrit est rejoué (les oublis sont
+    idempotents) et n'est rayé que si **tout** a réussi.
+    """
+
+    def __init__(
+        self,
+        forgets: PendingForgetRepository,
+        forget_everywhere: Callable[[UUID], Awaitable[None]],
+        clock: Clock,
+    ) -> None:
+        self._forgets = forgets
+        self._forget_everywhere = forget_everywhere
+        self._clock = clock
+
+    async def execute(self) -> tuple[int, int]:
+        """Rejoue les oublis dus ; rend (terminés, encore en échec)."""
+        due = await self._forgets.due(
+            before=self._clock.now() - FORGET_REPLAY_GRACE, limit=FORGET_REPLAY_BATCH
+        )
+        done = failed = 0
+        for user_id in due:
+            try:
+                await self._forget_everywhere(user_id)
+            except Exception as exc:
+                failed += 1
+                await self._forgets.failed(user_id, f"{type(exc).__name__}: {exc}")
+                logger.exception("identity.forget_replay_failed", user_id=str(user_id))
+                continue
+            await self._forgets.done(user_id)
+            done += 1
+        if due:
+            logger.info("identity.forgets_replayed", done=done, failed=failed)
+        return done, failed

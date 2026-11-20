@@ -16,19 +16,26 @@ Contrat
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from typing import Final
 
 from karria.bootstrap.orm import TORTOISE_ORM
-from karria.bootstrap.wiring import build_user_notifier, cv_validator_from_cv
+from karria.bootstrap.wiring import (
+    build_forget_everywhere,
+    build_user_notifier,
+    cv_validator_from_cv,
+)
 from karria.modules.applications import register_tasks as register_applications_tasks
 from karria.modules.cv import register_tasks as register_cv_tasks
 from karria.modules.documents import register_tasks as register_documents_tasks
+from karria.modules.identity import build_replay_forgets
 from karria.modules.offers import build_offer_vocabulary
 from karria.modules.offers import register_tasks as register_offers_tasks
 from karria.shared.config import get_settings
 from karria.shared.database import connect, disconnect
 from karria.shared.logging import configure_logging, get_logger
 from karria.shared.queue import App, Status, UniqueViolation, build_queue_app
+from karria.shared.storage import build_object_storage
 
 logger = get_logger(__name__)
 
@@ -46,6 +53,7 @@ WORKER_CONCURRENCY: Final = 3
 #: worker pendant une synchronisation de l'index.
 STALLED_AFTER_SECONDS: Final = 120.0
 TASK_RETRY_STALLED: Final = "queue.retry_stalled"
+TASK_REPLAY_FORGETS: Final = "identity.replay_forgets"
 
 
 def register_queue_maintenance(app: App) -> None:
@@ -90,10 +98,33 @@ async def retry_stalled_jobs(app: App) -> int:
     return len(stalled)
 
 
+def register_account_maintenance(app: App) -> None:
+    """Termine l'oubli des comptes supprimés, toutes les dix minutes.
+
+    La suppression d'un compte inscrit une ligne dans sa transaction ; ce
+    passage rejoue l'oubli de chaque module jusqu'à ce que tout ait réussi
+    (audit de sécurité du 2026-11-20 : sans lui, une panne de Stripe ou du
+    stockage laissait des données, voire un abonnement encore prélevé).
+    """
+
+    @app.periodic(cron="*/10 * * * *", periodic_id=TASK_REPLAY_FORGETS)
+    @app.task(name=TASK_REPLAY_FORGETS, queueing_lock=TASK_REPLAY_FORGETS)
+    async def replay_forgets(timestamp: int) -> None:  # noqa: ARG001 - imposé par les travaux périodiques
+        await replay_pending_forgets()
+
+
+async def replay_pending_forgets() -> tuple[int, int]:
+    """Ouvre le stockage, rejoue les oublis dus ; rend (terminés, en échec)."""
+    async with AsyncExitStack() as resources:
+        storage = await build_object_storage(get_settings(), resources)
+        return await build_replay_forgets(build_forget_everywhere(storage)).execute()
+
+
 def build_worker_app() -> App:
     """L'application de file avec tous les travaux inscrits."""
     app = build_queue_app(get_settings().db)
     register_queue_maintenance(app)
+    register_account_maintenance(app)
     register_offers_tasks(app, notifier=build_user_notifier)
     register_documents_tasks(app)
     # `cv` matérialise chaque nuit les intitulés, entreprises et villes de

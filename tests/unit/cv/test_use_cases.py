@@ -74,6 +74,7 @@ from karria.modules.cv.domain import (
     Identity,
     ModelUnavailableError,
     PhotoEnhanceRefusedError,
+    PhotoEnhanceUnavailableError,
     PhotoMissingError,
     ReceivedFile,
     UnsupportedUploadError,
@@ -594,9 +595,9 @@ class TestQuotas:
     async def test_un_portrait_en_panne_ne_consomme_rien(self) -> None:
         now = datetime(2026, 11, 16, 15, 0, tzinfo=UTC)
         usage = InMemoryAiUsageRepository()
-        upload = self._upload(FakeEnhancer(error=RuntimeError("panne")), usage, now)
+        upload = self._upload(FakeEnhancer(error=PhotoEnhanceUnavailableError()), usage, now)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(PhotoEnhanceUnavailableError):
             await upload.execute(USER, sample_image(), "image/jpeg", enhance=True)
 
         assert await usage.count_since(USER, AiUsage.PORTRAIT, now) == 0

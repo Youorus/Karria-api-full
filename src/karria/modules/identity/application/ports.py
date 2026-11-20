@@ -406,3 +406,23 @@ class JwksSource(Protocol):
     async def refresh(self, url: str) -> dict[str, Any]:
         """Force une relecture : un `kid` inconnu signale une rotation de clés."""
         ...
+
+
+class PendingForgetRepository(Protocol):
+    """Les comptes supprimés dont l'oubli par les autres modules reste à confirmer."""
+
+    async def add(self, user_id: UUID, at: datetime) -> None:
+        """Inscrit le compte (dans la transaction de sa suppression). Idempotent."""
+        ...
+
+    async def due(self, *, before: datetime, limit: int) -> list[UUID]:
+        """Les comptes inscrits avant `before`, les plus anciens d'abord."""
+        ...
+
+    async def done(self, user_id: UUID) -> None:
+        """L'oubli est complet : la ligne s'en va."""
+        ...
+
+    async def failed(self, user_id: UUID, error: str) -> None:
+        """Un rejeu a échoué : il sera retenté."""
+        ...

@@ -58,6 +58,9 @@ from karria.modules.cv.domain import (
     Draft,
     DraftIncompleteError,
     DraftNotFoundError,
+    ModelUnavailableError,
+    PhotoEnhanceRefusedError,
+    PhotoEnhanceUnavailableError,
     PhotoMissingError,
     ReceivedFile,
     SuggestionKind,
@@ -506,7 +509,8 @@ class UploadPhoto:
                 prepared = await asyncio.to_thread(
                     prepare_upload, Bucket.MEDIA, generated.payload, generated.content_type
                 )
-            except BaseException:
+            except (PhotoEnhanceUnavailableError, PhotoEnhanceRefusedError):
+                # Rien n'a été rendu : la panne ou le refus ne consomme pas le portrait.
                 await self._usage.release(reservation)
                 raise
 
@@ -677,8 +681,10 @@ class ImportCv:
         )
         try:
             extracted = await self._extractor.extract(documents)
-        except BaseException:
-            # Le modèle n'a rien lu : la panne ne consomme pas l'import.
+        except ModelUnavailableError:
+            # Le modèle n'a pas répondu : la panne ne consomme pas l'import. Toute
+            # autre issue (réponse inexploitable, « ce n'est pas un CV ») reste
+            # comptée : la lecture a été payée.
             await self._usage.release(reservation)
             raise
 

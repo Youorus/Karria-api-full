@@ -95,7 +95,7 @@ efface les dossiers de candidature ; `applications.DossierApplied` /
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Final
 from uuid import UUID
 
@@ -817,6 +817,37 @@ def wire_modules(app: FastAPI) -> None:
     app.dependency_overrides[get_documents_subscription_reader] = subscription_reader_from_payments
 
     logger.debug("bootstrap.modules_wired", bindings=20)
+
+
+def build_forget_everywhere(storage: ObjectStorage) -> Callable[[UUID], Awaitable[None]]:
+    """L'oubli d'un compte par **tous** les modules, pour le rejeu du worker.
+
+    Les mêmes oublis que les abonnés d'`AccountDeleted` (`subscribe_bridges`),
+    tous tentés même si l'un échoue ; lève si l'un d'eux a échoué, pour que le
+    compte reste inscrit et soit rejoué.
+    """
+    forgets: dict[str, Callable[[UUID], Awaitable[object]]] = {
+        "devices": build_forget_user_devices().execute,
+        "cv": build_forget_user(storage).execute,
+        "offers": build_forget_user_offers().execute,
+        "documents": build_forget_user_documents(storage).execute,
+        "payments": build_forget_user_payments(get_settings()).execute,
+        "support": build_forget_user_support(storage).execute,
+        "applications": build_forget_user_applications().execute,
+    }
+
+    async def forget_everywhere(user_id: UUID) -> None:
+        failures: list[str] = []
+        for module, forget in forgets.items():
+            try:
+                await forget(user_id)
+            except Exception as exc:
+                logger.exception("bootstrap.forget_failed", module=module, user_id=str(user_id))
+                failures.append(f"{module}: {type(exc).__name__}")
+        if failures:
+            raise RuntimeError("; ".join(failures))
+
+    return forget_everywhere
 
 
 def subscribe_bridges(bus: EventBus, *, storage: ObjectStorage) -> None:

@@ -194,6 +194,8 @@ class TestDeleteAccount:
         assert not await env.identities.list_for(user_id)
         assert set(env.challenges.rows) == {autre.id}
         assert await env.users.find_by_email(EmailAddress(EMAIL)) is None
+        # L'oubli par les autres modules est dû : le worker le rejoue jusqu'au bout.
+        assert list(env.forgets.rows) == [user_id]
 
         [record] = env.departures.rows
         assert record.reason is DepartureReason.FOUND_JOB

@@ -104,4 +104,5 @@ def delete_account(env: IdentityEnv) -> DeleteAccount:
         clock=env.clock,
         uow=env.uow,
         events=env.events,
+        forgets=env.forgets,
     )

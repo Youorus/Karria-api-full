@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any
@@ -485,6 +485,9 @@ class IdentityEnv:
     clock: FakeClock
     uow: NullUnitOfWork
     events: CollectingBus
+    forgets: InMemoryPendingForgetRepository = field(
+        default_factory=lambda: InMemoryPendingForgetRepository()  # noqa: PLW0108 - défini plus bas
+    )
 
     @classmethod
     def build(cls) -> IdentityEnv:
@@ -1527,3 +1530,23 @@ class ApplicationsEnv:
             usage=InMemoryAiUsageRepository(),
             subscriptions=FakeSubscriptions(),
         )
+
+
+class InMemoryPendingForgetRepository:
+    """Implémentation en mémoire du port `PendingForgetRepository`."""
+
+    def __init__(self) -> None:
+        self.rows: dict[UUID, datetime] = {}
+        self.errors: dict[UUID, list[str]] = {}
+
+    async def add(self, user_id: UUID, at: datetime) -> None:
+        self.rows.setdefault(user_id, at)
+
+    async def due(self, *, before: datetime, limit: int) -> list[UUID]:
+        return [u for u, at in self.rows.items() if at < before][:limit]
+
+    async def done(self, user_id: UUID) -> None:
+        self.rows.pop(user_id, None)
+
+    async def failed(self, user_id: UUID, error: str) -> None:
+        self.errors.setdefault(user_id, []).append(error)

@@ -22,12 +22,25 @@ Audit du code (lecture seule) : aucun constat critique, aucun accès aux donnée
   `X-Forwarded-For` — non éprouvé en prod par un essai, Traefik est exposé en direct ;
 - courriels : une valeur ne peut plus poser de bouton, de lien ni de code.
 
-**Reste de l'audit, non fait :** suppression de compte durable (E5), expiration des
-versions du seau (E6), quotas d'IA mensuels non atomiques (M1), limiteurs en mémoire
-par processus (M4), exports sans frein (M6), `PUT /search/criteria` sans borne (M7),
-décodage d'images et de DOCX dans la boucle (M9), journal d'interactions et file de
-tâches non purgés à la suppression (M10, M11). Limite assumée : qui connaît une
-adresse peut bloquer une heure sa connexion par code (Apple et Google restent ouverts).
+**Second lot (soir), déployé, migration 27 appliquée (3 761 tests) :**
+
+- suppression de compte durable : ligne `identity_pending_forgets` écrite dans la
+  transaction, rejouée par le worker toutes les dix minutes (`identity.replay_forgets`)
+  jusqu'à ce que tous les modules aient réussi ; le journal d'interactions est effacé aussi ;
+- portraits et imports : quota réservé avant le modèle, rendu seulement en cas de panne ;
+  tours de l'assistante un par un par personne (verrou par processus) ;
+- freins par compte : exports 20 par 10 min, `PUT /search/criteria` 30 par 10 min ;
+  intitulés, mots-clés et lieu bornés ;
+- décodage d'images hors de la boucle d'événements ;
+- file de tâches : travaux réussis supprimés, échecs gardés sept jours ;
+- `scripts/storage_provision.py` : expiration des versions non courantes à 7 jours sur
+  les seaux versionnés — **script non relancé en production** (attend l'accord de Marc :
+  les anciennes versions de documents supprimés seront effacées pour de bon).
+
+**Reste, assumé :** limiteurs en mémoire par processus (M4 : chaque plafond vaut jusqu'à
+quatre fois ; la connexion et l'IA sont, elles, comptées en base) ; pas de budget global
+d'IA ni de garde contre la création de comptes en masse (M8). Limite assumée : qui connaît
+une adresse peut bloquer une heure sa connexion par code (Apple et Google restent ouverts).
 
 **Infra, attend l'accord de Marc :** pare-feu inactif, panneau Dokploy en HTTP sur
 :3000, ports Swarm 2377/7946 ouverts, redémarrage en attente, aucune sauvegarde

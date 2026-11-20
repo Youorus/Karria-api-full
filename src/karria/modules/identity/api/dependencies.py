@@ -15,8 +15,10 @@ Un test substitue n'importe lequel par `app.dependency_overrides`.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from typing import Annotated, Final
+from uuid import UUID
 
 from fastapi import Depends, Request
 
@@ -38,6 +40,7 @@ from karria.modules.identity.application import (
     MainDeviceLookup,
     ProviderIdentityRepository,
     RefreshSession,
+    ReplayForgets,
     ResendEmailLoginCode,
     ResolveSession,
     RevokeAiConsent,
@@ -65,6 +68,7 @@ from karria.modules.identity.infrastructure import (
     TortoiseAiConsentRepository,
     TortoiseDepartureFeedbackRepository,
     TortoiseLoginChallengeRepository,
+    TortoisePendingForgetRepository,
     TortoiseProviderIdentityRepository,
     TortoiseSessionRepository,
     TortoiseUserRepository,
@@ -488,7 +492,13 @@ def get_delete_account(
         clock=clock,
         uow=uow,
         events=events,
+        forgets=TortoisePendingForgetRepository(),
     )
+
+
+def build_replay_forgets(forget_everywhere: Callable[[UUID], Awaitable[None]]) -> ReplayForgets:
+    """Le rejeu des oublis, pour le worker (`bootstrap/worker.py`)."""
+    return ReplayForgets(TortoisePendingForgetRepository(), forget_everywhere, SystemClock())
 
 
 StartEmailLoginDep = Annotated[StartEmailLogin, Depends(get_start_email_login)]

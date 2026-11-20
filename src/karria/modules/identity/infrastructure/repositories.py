@@ -38,6 +38,7 @@ from karria.modules.identity.infrastructure.models import (
     AiConsentModel,
     DepartureFeedbackModel,
     LoginChallengeModel,
+    PendingForgetModel,
     ProviderIdentityModel,
     SessionModel,
     UserModel,
@@ -395,4 +396,29 @@ class TortoiseAiConsentRepository:
                 "revoked_at": consent.revoked_at,
             },
             user_id=consent.user_id,
+        )
+
+
+class TortoisePendingForgetRepository:
+    """Implémente `PendingForgetRepository`."""
+
+    async def add(self, user_id: UUID, at: datetime) -> None:
+        await PendingForgetModel.get_or_create(
+            user_id=user_id, defaults={"created_at": at, "updated_at": at}
+        )
+
+    async def due(self, *, before: datetime, limit: int) -> list[UUID]:
+        rows = (
+            await PendingForgetModel.filter(created_at__lt=before)
+            .order_by("attempts", "created_at")
+            .limit(limit)
+        )
+        return [row.user_id for row in rows]
+
+    async def done(self, user_id: UUID) -> None:
+        await PendingForgetModel.filter(user_id=user_id).delete()
+
+    async def failed(self, user_id: UUID, error: str) -> None:
+        await PendingForgetModel.filter(user_id=user_id).update(
+            attempts=F("attempts") + 1, last_error=error[:300]
         )
