@@ -196,6 +196,17 @@ async def _reachable() -> None:
         await connections.close_all()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_feed_caches() -> None:
+    """Le fil garde ses totaux et ses options de filtre en mémoire (deux et dix
+    minutes) : chaque test repart sans rien de gardé."""
+    from karria.modules.offers.infrastructure.repositories import (  # noqa: PLC0415
+        forget_feed_totals,
+    )
+
+    forget_feed_totals()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def migrated_schema() -> None:
     """Repart d'un schéma neuf et applique les migrations, une fois par session.

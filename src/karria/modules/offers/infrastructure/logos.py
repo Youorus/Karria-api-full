@@ -200,7 +200,10 @@ class HttpLogoFetcher:
             addresses = await asyncio.wait_for(
                 asyncio.to_thread(self._resolver, host), DNS_DEADLINE
             )
-        except (OSError, TimeoutError):
+        except (OSError, TimeoutError, UnicodeError):
+            # `UnicodeError` : un nom que l'IDNA refuse (libellé de plus de 63
+            # octets, caractère interdit). Sans lui, un seul domaine mal formé
+            # faisait échouer tout le passage (constaté le 2026-11-19).
             return None
         if not addresses or not all(is_public_address(a) for a in addresses):
             return None

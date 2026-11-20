@@ -195,6 +195,14 @@ class TestTelechargement:
         got = await fetcher(routes({}), resolver=fail).fetch_image("https://nulle.part/l")
         assert got.payload is None
 
+    async def test_un_nom_que_l_idna_refuse_ne_fait_pas_echouer_le_passage(self) -> None:
+        def fail(host: str) -> list[str]:
+            host.encode("idna")
+            raise AssertionError("l'IDNA aurait dû refuser ce nom")
+
+        domain = "msn.com \u203a fr-fr \u203a actualite \u203a france \u203a macron-lui-réserve-t-il-déjà-un-nouveau-poste"
+        assert await fetcher(routes({}), resolver=fail).site_icons(domain) == []
+
     @pytest.mark.parametrize(
         ("address", "public_ip"),
         [("93.184.216.34", True), ("192.168.1.1", False), ("::1", False), ("x", False)],

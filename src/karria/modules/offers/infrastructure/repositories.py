@@ -8,6 +8,7 @@ les options de filtre (agrégats). Tout le reste est l'ORM.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Final
@@ -333,7 +334,7 @@ class TortoiseOfferRepository:
         query = _apply_filters(
             OfferModel.filter(is_active=True, duplicate_of__isnull=True), filters
         )
-        total = await query.count()
+        total = await _feed_total(query, filters)
         if near is None:
             ordered = query.order_by("-published_at", "-id")
         else:
@@ -394,8 +395,19 @@ class TortoiseOfferRepository:
     async def filter_options(
         self, offer_ids: Sequence[UUID] | None
     ) -> tuple[dict[ContractType, int], dict[str, int]]:
-        """Agrégats par contrat et par ville."""
+        """Agrégats par contrat et par ville.
+
+        Sur tout le fil (`offer_ids` absent), deux agrégats parcourent toutes les
+        offres actives : ils sont gardés dix minutes par processus (les options
+        d'un filtre ne changent pas d'une ouverture d'écran à l'autre).
+        """
+        global _all_filter_options  # noqa: PLW0603 - un cache de processus, borné à une entrée
         base = OfferModel.filter(is_active=True, duplicate_of__isnull=True)
+        whole = offer_ids is None
+        if whole:
+            kept = _all_filter_options
+            if kept is not None and time.monotonic() - kept[0] <= FILTER_OPTIONS_TTL_SECONDS:
+                return dict(kept[1]), dict(kept[2])
         if offer_ids is not None:
             if not offer_ids:
                 return {}, {}
@@ -414,10 +426,13 @@ class TortoiseOfferRepository:
             .limit(200)
             .values("city", "n")
         )
-        return (
+        found = (
             {ContractType(str(row["contract_type"])): int(row["n"]) for row in contracts},
             {str(row["city"]): int(row["n"]) for row in cities},
         )
+        if whole:
+            _all_filter_options = (time.monotonic(), dict(found[0]), dict(found[1]))
+        return found
 
 
 class TortoiseIndexOutbox:
@@ -462,6 +477,50 @@ def distance_sql(latitude: str, longitude: str, near: tuple[float, float]) -> st
         f"COS(RADIANS({lat})) * COS(RADIANS({latitude})) * "
         f"POWER(SIN(RADIANS({longitude} - {lon}) / 2), 2)))))"
     )
+
+
+#: Le total du fil se compte au plus une fois par fenêtre et par filtre : compter
+#: 540 000 offres actives à chaque ouverture du fil occupait tous les cœurs de
+#: PostgreSQL dès 10 personnes simultanées (mesuré le 2026-11-20 : 8 requêtes par
+#: seconde au plus, 7 s d'attente à 60). Le total affiché peut avoir deux minutes.
+FEED_TOTAL_TTL_SECONDS: Final = 120.0
+FEED_TOTAL_CACHE_SIZE: Final = 256
+_feed_totals: dict[tuple[tuple[str, ...], tuple[str, ...]], tuple[float, int]] = {}
+
+
+#: Les options de filtre de tout le fil, gardées dix minutes (instant, contrats, villes).
+FILTER_OPTIONS_TTL_SECONDS: Final = 600.0
+_all_filter_options: tuple[float, dict[ContractType, int], dict[str, int]] | None = None
+
+
+def forget_feed_totals() -> None:
+    """Oublie les totaux et les options gardés (essais, ou après une purge massive)."""
+    global _all_filter_options  # noqa: PLW0603 - un cache de processus, borné à une entrée
+    _feed_totals.clear()
+    _all_filter_options = None
+
+
+async def _feed_total(query: Any, filters: OfferFilters) -> int:
+    """Le nombre d'offres du fil pour ces filtres, compté au plus toutes les deux minutes.
+
+    Les offres écartées par la personne se retranchent du total gardé (sans
+    recompter) ; un filtre de date, propre à chaque appel, se compte à chaque fois.
+    """
+    if filters.published_after is not None:
+        return int(await query.count())
+    key = (tuple(sorted(filters.contract_types or ())), tuple(sorted(filters.cities or ())))
+    now = time.monotonic()
+    kept = _feed_totals.get(key)
+    if kept is None or now - kept[0] > FEED_TOTAL_TTL_SECONDS:
+        base = _apply_filters(
+            OfferModel.filter(is_active=True, duplicate_of__isnull=True),
+            OfferFilters(contract_types=filters.contract_types, cities=filters.cities),
+        )
+        if len(_feed_totals) >= FEED_TOTAL_CACHE_SIZE:
+            _feed_totals.clear()
+        kept = (now, int(await base.count()))
+        _feed_totals[key] = kept
+    return max(0, kept[1] - len(filters.exclude_offer_ids or ()))
 
 
 def _apply_filters(query: Any, filters: OfferFilters) -> Any:

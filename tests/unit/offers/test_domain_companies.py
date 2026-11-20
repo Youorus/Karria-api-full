@@ -91,6 +91,12 @@ class TestDomaine:
             ("https://localhost/", None),
             ("https://co.uk", None),
             ("http://[::1", None),
+            ("https://plaisio.gr \u203a list \u203a xartopoleio \u203a promitheies-grafeiou", None),
+            (
+                "https://msn.com \u203a fr-fr \u203a actualite \u203a france \u203a macron-lui-réserve-t-il-déjà",
+                None,
+            ),
+            ("https://solitär.de", "solitär.de"),
             ("", None),
             (None, None),
         ],

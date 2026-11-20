@@ -187,6 +187,23 @@ TWO_LEVEL_SUFFIXES: Final = frozenset(
 )
 
 
+_HOSTNAME: Final = re.compile(rb"[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63})+")
+
+
+def _is_hostname(host: str) -> bool:
+    """Un nom que le DNS sait porter (après IDNA) : lettres, chiffres, tirets, 63 octets par libellé.
+
+    La colonne `website` de la V1 contient des fils d'Ariane de moteur de
+    recherche (« msn.com [chevron] fr-fr [chevron] actualite… », constaté le 2026-11-19) :
+    `urlsplit` les rend tels quels comme hôte.
+    """
+    try:
+        encoded = host.encode("idna")
+    except UnicodeError:
+        return False
+    return _HOSTNAME.fullmatch(encoded) is not None
+
+
 def registrable_domain(url: str | None) -> str | None:
     """L'hôte d'une URL ramené à son domaine enregistrable : « jobs.decathlon.fr » → « decathlon.fr »."""
     if not url:
@@ -198,7 +215,7 @@ def registrable_domain(url: str | None) -> str | None:
         host = (urllib.parse.urlsplit(candidate).hostname or "").strip(".").lower()
     except ValueError:
         return None
-    if not host or "." not in host:
+    if not host or "." not in host or not _is_hostname(host):
         return None
     try:
         ipaddress.ip_address(host)
