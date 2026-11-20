@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -569,7 +570,9 @@ class TestRendus:
         html = HtmlRenderer(spec, view, fonts, photo=None).render()
         # Un poste visé court tient sur une ligne dans sa boîte (14/11 : il ne se
         # replie qu'en dernier recours) ; la boîte garde l'interligne de l'exemple.
-        assert "white-space:nowrap;line-height:5.0" in html
+        assert re.search(
+            r'class="s-header-title-headline"[^>]*white-space:nowrap">Ingénieure<', html
+        )
         # Le poste visé d'une personne s'étend à toute la place disponible, pas
         # à la boîte de l'exemple ; le titre d'une rubrique prend la colonne.
         headline = next(e for e in spec["header"]["elements"] if e["field"] == "headline")

@@ -149,6 +149,10 @@ class GeneratedCvRepository(Protocol):
 
     async def add(self, generated: GeneratedCv) -> None: ...
 
+    async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
+        """Les instants des CV exportés sans filigrane depuis `since` (ADR-0040)."""
+        ...
+
     async def get(self, generated_id: UUID) -> GeneratedCv | None: ...
 
     async def history(

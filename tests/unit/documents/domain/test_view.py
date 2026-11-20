@@ -141,6 +141,7 @@ class TestDepuisLeCv:
             "last_name": "Diallo",
             "full_name": "Awa Diallo",
             "headline": "Data Analyst",
+            "availability": "",
             "phone": "06 12 34 56 78",
             "email": "awa@example.fr",
             "address": "Paris",

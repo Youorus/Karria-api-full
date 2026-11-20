@@ -38,6 +38,7 @@ from decimal import Decimal
 from typing import Any, Final
 from uuid import UUID, uuid4
 
+from karria.modules.documents.application.allowance import ReadExportAllowance
 from karria.modules.documents.application.ports import (
     AccountDirectory,
     AtsExplainer,
@@ -125,6 +126,7 @@ from karria.modules.documents.domain.templates import (
     slugify,
 )
 from karria.modules.documents.domain.view import from_cv, from_sample
+from karria.modules.documents.domain.watermark import ALWAYS_WATERMARKED, ExportAllowance
 from karria.shared.clock import Clock
 from karria.shared.database import NullUnitOfWork, UnitOfWork
 from karria.shared.errors.exceptions import InvalidInputError
@@ -522,6 +524,11 @@ class PreviewTemplate:
         return pages, rendered.fit
 
 
+async def export_allowance(reader: ReadExportAllowance | None, user_id: UUID) -> ExportAllowance:
+    """L'état des exports sans filigrane du compte ; sans compteur branché, le filigrane."""
+    return await reader.execute(user_id) if reader is not None else ALWAYS_WATERMARKED
+
+
 class ExportCv:
     """Exporte le CV de la personne en PDF et/ou DOCX, avec son score ATS."""
 
@@ -536,12 +543,14 @@ class ExportCv:
         storage: ObjectStorage,
         jobs: TemplateJobs,
         clock: Clock,
+        allowance: ReadExportAllowance | None = None,
     ) -> None:
         self._renderer, self._templates, self._owned = renderer, templates, owned
         self._generated, self._engine, self._storage = generated, engine, storage
         self._jobs, self._clock = jobs, clock
+        self._allowance = allowance
 
-    async def execute(
+    async def execute(  # noqa: PLR0915 - l'export se lit d'un trait, étape par étape
         self,
         user_id: UUID,
         *,
@@ -575,6 +584,10 @@ class ExportCv:
         template, version, spec, view, snapshot, photo, assets = await self._renderer.prepare(
             user_id, template_id, ats_safe=safe, cv=cv, primary_color=primary_color
         )
+        # Le filigrane (ADR-0040) : pas les trois premiers CV du mois, jamais chez
+        # un abonné. Il se lit dans la vue ; les deux moteurs le posent ou non.
+        watermark = (await export_allowance(self._allowance, user_id)).watermark
+        view = {**view, "watermark": watermark}
         rendered = await self._engine.render_pdf(spec, view, assets=assets, photo=photo)
         # Ce que la personne a finalisé dans l'atelier est ce qu'elle obtient :
         # aucun resserrement silencieux. Deux pages sont permises et propres
@@ -652,6 +665,7 @@ class ExportCv:
             full_name=" ".join(p for p in (ident.get("first_name"), ident.get("last_name")) if p),
             dossier_id=dossier_id,
             primary_color=primary_color,
+            watermarked=watermark,
         )
         await self._generated.add(generated)
         await self._templates.increment_uses(template.id)
@@ -1462,6 +1476,8 @@ class RenderedDocument:
     pages: int
     warnings: tuple[str, ...]
     letter_style: str | None = None
+    #: Le document porte-t-il le filigrane Karria ? `None` pour l'exemple d'un modèle.
+    watermark: bool | None = None
 
 
 async def stable_photo_url(storage: ObjectStorage, key: str) -> str:
@@ -1510,9 +1526,11 @@ class RenderDocument:
         storage: ObjectStorage,
         logos: LogoFetcher,
         clock: Clock,
+        allowance: ReadExportAllowance | None = None,
     ) -> None:
         self._templates, self._owned, self._cvs = templates, owned, cvs
         self._engine, self._storage, self._logos, self._clock = engine, storage, logos, clock
+        self._allowance = allowance
 
     async def execute(
         self,
@@ -1543,21 +1561,26 @@ class RenderDocument:
         spec = ats_safe_spec(version.spec or {}) if ats_safe else (version.spec or {})
         spec = recolor_spec(spec, primary_color)
         served: str | None = None
+        watermark: bool | None = None
         if sample:
             kind = "sample"
             rendered, warnings = await self._sample(spec, version, primary_color)
         else:
             if template.is_premium and not await self._owned.owns(user_id, template_id):
                 raise TemplateNotOwnedError()
+            # L'aperçu montre ce que l'export donnera : avec ou sans filigrane (ADR-0040).
+            watermark = (await export_allowance(self._allowance, user_id)).watermark
             if letter is not None:
                 kind = "letter"
                 letter_spec, served = letter_spec_for(
                     version, letter_style=letter_style, primary_color=primary_color
                 )
-                rendered, warnings = await self._letter(letter_spec, letter)
+                rendered, warnings = await self._letter(letter_spec, letter, watermark=watermark)
             elif cv is not None:
                 kind = "cv"
-                rendered, warnings = await self._cv(spec, version, user_id, cv, primary_color)
+                rendered, warnings = await self._cv(
+                    spec, version, user_id, cv, primary_color, watermark=watermark
+                )
             else:
                 raise InvalidInputError(
                     "Il faut un CV, une lettre ou l'exemple du modèle.",
@@ -1582,6 +1605,7 @@ class RenderDocument:
             pages=rendered.pages,
             warnings=tuple(warnings),
             letter_style=served,
+            watermark=watermark,
         )
 
     async def _sample(
@@ -1601,10 +1625,10 @@ class RenderDocument:
         return rendered, []
 
     async def _letter(
-        self, spec: dict[str, Any], letter: dict[str, Any]
+        self, spec: dict[str, Any], letter: dict[str, Any], *, watermark: bool = True
     ) -> tuple[RenderedHtml, list[str]]:
         """Une lettre, ancrée, depuis sa spécification de lettre, avec le logo s'il est joignable."""
-        view = from_letter(spec, letter, today=self._clock.now().date())
+        view = {**from_letter(spec, letter, today=self._clock.now().date()), "watermark": watermark}
         warnings = letter_warnings(letter)
         logo_url = (letter.get("recipient") or {}).get("logo_url")
         assets: dict[str, bytes] = {}
@@ -1625,9 +1649,11 @@ class RenderDocument:
         user_id: UUID,
         cv: dict[str, Any],
         primary_color: str | None,
+        *,
+        watermark: bool = True,
     ) -> tuple[RenderedHtml, list[str]]:
         """Le CV reçu, ancré, avec la photo de la personne si le modèle en a la place."""
-        view = from_cv(spec, cv)
+        view = {**from_cv(spec, cv), "watermark": watermark}
         warnings: list[str] = []
         if not view["header"]["headline"]:
             warnings.append("headline_missing")
@@ -1662,9 +1688,11 @@ class ExportLetter:
         storage: ObjectStorage,
         logos: LogoFetcher,
         clock: Clock,
+        allowance: ReadExportAllowance | None = None,
     ) -> None:
         self._templates, self._owned, self._generated = templates, owned, generated
         self._engine, self._storage, self._logos, self._clock = engine, storage, logos, clock
+        self._allowance = allowance
 
     async def execute(
         self,
@@ -1695,7 +1723,9 @@ class ExportLetter:
         spec, served = letter_spec_for(
             version, letter_style=letter_style, primary_color=primary_color
         )
-        view = from_letter(spec, letter, today=self._clock.now().date())
+        # La lettre suit l'état du compte : filigranée si le prochain CV le serait (ADR-0040).
+        watermark = (await export_allowance(self._allowance, user_id)).watermark
+        view = {**from_letter(spec, letter, today=self._clock.now().date()), "watermark": watermark}
         assets: dict[str, bytes] = {}
         logo = await fetch_logo(self._logos, (letter.get("recipient") or {}).get("logo_url"))
         if logo is not None:
@@ -1734,6 +1764,7 @@ class ExportLetter:
             explanation_status=ExplanationStatus.UNAVAILABLE,
             full_name=view["header"]["full_name"],
             kind=DocumentKind.LETTER,
+            watermarked=watermark,
             dossier_id=dossier_id,
             company_name=view["recipient"]["company"],
             primary_color=primary_color,

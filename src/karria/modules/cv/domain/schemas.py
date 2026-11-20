@@ -158,6 +158,10 @@ class Identity(CvModel):
     first_name: Annotated[Text, StringConstraints(max_length=100)]
     last_name: Annotated[Text, StringConstraints(max_length=100)]
     headline: OptionalShortText = None
+    #: La précision écrite sous le poste visé : ce que la personne cherche et
+    #: quand elle est disponible (« Recherche alternance 24 mois · Disponible
+    #: immédiatement »). Facultative ; rien n'est affiché sans elle.
+    availability: OptionalShortText = None
 
 
 class Contact(CvModel):

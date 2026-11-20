@@ -73,7 +73,8 @@ Les branchements d'aujourd'hui
   Sans eux : `offer_not_found`, initiales, `cv_missing`, 503 à la retouche,
   `template_locked` — les refus par défaut du module.
 - `cv.get_subscription_reader`, `applications.get_subscription_reader`,
-  `offers.get_subscription_reader` ← `payments.GetBillingOverview` (ADR-0038).
+  `offers.get_subscription_reader` ← `payments.GetBillingOverview` (ADR-0038) ;
+  `documents.get_subscription_reader` aussi (ADR-0040, le filigrane).
   Sans eux, personne n'est abonné : les plafonds du gratuit s'appliquent à
   tous, abonnés compris — dégradé pour l'abonné, jamais coûteux.
 
@@ -161,6 +162,9 @@ from karria.modules.documents import (
 from karria.modules.documents import build_forget_user as build_forget_user_documents
 from karria.modules.documents import (
     get_account_directory as get_documents_account_directory,
+)
+from karria.modules.documents import (
+    get_subscription_reader as get_documents_subscription_reader,
 )
 from karria.modules.identity import (
     AccountDeleted,
@@ -809,6 +813,8 @@ def wire_modules(app: FastAPI) -> None:
         subscription_reader_from_payments
     )
     app.dependency_overrides[get_offers_subscription_reader] = subscription_reader_from_payments
+    # Sans cette ligne : un abonné garde le filigrane après trois CV dans le mois (ADR-0040).
+    app.dependency_overrides[get_documents_subscription_reader] = subscription_reader_from_payments
 
     logger.debug("bootstrap.modules_wired", bindings=20)
 

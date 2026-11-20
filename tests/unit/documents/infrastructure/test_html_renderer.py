@@ -286,7 +286,7 @@ class TestRendu:
     ) -> None:
         html = render(centered, from_cv(centered, CV), fonts)
         assert re.search(
-            r'class="s-header-headline" style="position:absolute;left:75\.0mm;'
+            r'class="s-header-title-headline"[^>]* style="position:absolute;left:75\.00mm;'
             r"transform:translateX\(-50%\)",
             html,
         )
@@ -415,6 +415,8 @@ class TestEnTete:
     ) -> None:
         view = from_cv(spec, CV)
         renderer = HtmlRenderer(spec, view, fonts, photo=None)
+        # Le moteur travaille sur sa copie posée de la spécification (`header_layout`).
+        spec = renderer.spec
         name, phone = spec["header"]["elements"][0], spec["header"]["elements"][1]
         st = spec["styles"][phone["style"]]
         margin = min(c["x_mm"] for b in spec["bands"] for c in b["columns"])
@@ -698,9 +700,10 @@ class TestEtiquettesGrilleEtFlux:
         assert renderer.column_top_under(-500.0) == spec["first_band_top_mm"]
 
     def test_un_filet_vertical_borne_un_element_dentete(self, spec: Json, fonts: FontSet) -> None:
+        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        spec = renderer.spec  # la copie posée, celle que le moteur lit
         name = spec["header"]["elements"][0]
         st = spec["styles"][name["style"]]
-        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
         free = renderer.header_limit(name, st)
         spec["page_decorations"].append(
             {
@@ -790,23 +793,30 @@ class TestVraiCvEtEnTete:
     def test_la_premiere_bande_garde_la_hauteur_que_lentete_exige(
         self, spec: Json, fonts: FontSet
     ) -> None:
-        band = spec["bands"][0]
         renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        spec = renderer.spec  # la copie posée, celle que le moteur lit
+        band = spec["bands"][0]
         assert renderer.band_floor(0) == 0.0  # rien de l'en-tête ne descend dans la bande
-        name = spec["header"]["elements"][0]
+        elements = spec["header"]["elements"]
+        name = elements[0]
+        saved = name["y_mm"]
         name["y_mm"] = float(band["y_sample"]) + 20.0  # le nom descend dans la bande
         floor = renderer.band_floor(0)
         assert floor > 0.0
         html = renderer.render()
-        assert f"min-height:{floor:.2f}mm" in html
+        # L'écart avec la bande suivante se retranche à sa valeur resserrée (`--k`).
+        assert f"min-height:max(calc({floor:.2f}mm - " in html
         # Un pied de page (plus bas que la bande suivante) ne compte pas.
-        name["y_mm"] = float(spec["bands"][1]["y_sample"]) + 5.0
+        name["y_mm"] = saved
+        phone = next(e for e in elements if e["field"] == "phone")
+        phone["y_mm"] = float(spec["bands"][1]["y_sample"]) + 5.0
         assert renderer.band_floor(0) == 0.0
 
     def test_une_rubrique_reserve_la_place_de_lentete_dans_son_css(
         self, spec: Json, fonts: FontSet
     ) -> None:
         renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
+        spec = renderer.spec  # la copie posée, celle que le moteur lit
         s = spec["bands"][0]["columns"][0]["sections"][0]
         sec = {"kind": s["kind"], "title": "T", "items": []}
         html = renderer.section(s, sec, 60.0, reserve_mm=12.0)
@@ -865,18 +875,22 @@ class TestChampEnBoite:
         el = next(e for e in spec["header"]["elements"] if e["field"] == "headline")
         st = spec["styles"][el["style"]]
         el["box_w_mm"], el["pitch_mm"] = 30.0, 5.0
-        renderer = HtmlRenderer(spec, from_cv(spec, CV), fonts, photo=None)
-        avail = max(30.0, renderer.header_limit(el, st))
         text = "Développeuse full-stack & data"
-        while fonts.width_mm(text, st) <= avail:  # plus long que la place, mais pas de beaucoup
+        while fonts.width_mm(text, st) <= 150.0:  # plus long que la place, mais pas de beaucoup
             text += " senior"
         cv = copy.deepcopy(CV)
         cv["identity"]["headline"] = text
-        html = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None).render()
-        div = self._headline_div(html, esc(text))
-        assert "white-space:nowrap" in div  # 14/11 : sur une ligne plutôt que replié sur le résumé
-        assert "letter-spacing:" in div
-        assert f"width:{avail:.2f}mm" in div
+        renderer = HtmlRenderer(spec, from_cv(spec, cv), fonts, photo=None)
+        div = self._headline_div(renderer.render(), esc(text))
+        # 14/11 : sur une ligne plutôt que replié sur le résumé ; 20/11 : jamais sous
+        # 80 % de son corps (`header_layout`), la réduction est dans le style posé.
+        assert "white-space:nowrap" in div
+        laid = next(e for e in renderer.spec["header"]["elements"] if e["field"] == "headline")
+        fitted = renderer.spec["styles"][laid["style"]]
+        assert laid["laid"]
+        assert "lines" not in laid
+        assert 0.8 * st["size_pt"] <= fitted["size_pt"] <= st["size_pt"]
+        assert fitted["letter_spacing_pt"] <= st["letter_spacing_pt"]
 
     def test_un_poste_vise_interminable_se_replie_a_son_corps(
         self, spec: Json, fonts: FontSet

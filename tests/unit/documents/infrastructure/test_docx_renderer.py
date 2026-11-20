@@ -317,7 +317,9 @@ class TestEnTete:
         phone["x_mm"] = 40.0
         phone["y_mm"] = elements[0]["y_mm"] + 1
         phone.pop("icon")
-        out = unzip(render(spec, from_cv(spec, CV), fonts, assets))
+        # Un nom court : il ne recouvre pas le téléphone posé sur sa ligne.
+        cv = {**CV, "identity": {"first_name": "A", "last_name": "B", "headline": "Ingénieure"}}
+        out = unzip(render(spec, from_cv(spec, cv), fonts, assets))
         xml = out["word/document.xml"].decode()
         assert "<w:tabs><w:tab " in xml
         assert "<w:tab/>" in xml

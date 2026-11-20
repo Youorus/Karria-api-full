@@ -267,6 +267,7 @@ def _generated(row: GeneratedCvModel) -> GeneratedCv:
         company_name=row.company_name or "",
         primary_color=row.primary_color,
         letter_style=row.letter_style,
+        watermarked=bool(row.watermarked),
     )
 
 
@@ -297,7 +298,23 @@ class TortoiseGeneratedCvRepository:
             company_name=generated.company_name,
             primary_color=generated.primary_color,
             letter_style=generated.letter_style,
+            watermarked=generated.watermarked,
         )
+
+    async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
+        """Les instants des CV exportés sans filigrane depuis `since` (ADR-0040), bornés à 500."""
+        rows = (
+            await GeneratedCvModel.filter(
+                user_id=user_id,
+                kind=DocumentKind.CV.value,
+                watermarked=False,
+                created_at__gte=since,
+            )
+            .order_by("created_at")
+            .limit(500)
+            .only("created_at")
+        )
+        return [row.created_at for row in rows]
 
     async def get(self, generated_id: UUID) -> GeneratedCv | None:
         row = await GeneratedCvModel.get_or_none(id=generated_id)

@@ -33,6 +33,7 @@ from typing import Any, Final
 from karria.modules.documents.domain.view import header_path, item_path
 from karria.modules.documents.infrastructure.fonts import FontSet
 from karria.modules.documents.infrastructure.footer import footer_html
+from karria.modules.documents.infrastructure.header_layout import layout_header
 
 Json = dict[str, Any]
 
@@ -53,6 +54,8 @@ SIBLINGS: Final[dict[str, list[str]]] = {
 }
 SPACING_STEPS: Final = (1, 0.9, 0.8, 0.7, 0.6)
 FONT_STEPS: Final = (1, 0.96, 0.92, 0.88)
+#: La marge au-dessus de la première rubrique d'une colonne ne se resserre pas sous 85 %.
+FIRST_SECTION_MIN_K: Final = 0.85
 #: Ce que l'ajustement sait absorber avant d'ouvrir une page (espacements
 #: ×0,6, corps ×0,88) : la part de la hauteur estimée qui peut disparaître.
 FIT_SLACK: Final = 0.78
@@ -108,6 +111,14 @@ def fit_script(spec: Json, *, live: bool) -> str:
     le répète pour l'app (ADR-0029).
     """
     ph = float(spec["page"]["height_mm"])
+    # Des coordonnées en pied de première page (Portrait Capitales) : le contenu
+    # qui passe en page 2 se coupe au-dessus d'elles, pas à travers.
+    feet = [
+        float(e["y_mm"])
+        for e in (spec.get("header") or {}).get("elements", [])
+        if float(e["y_mm"]) > float(spec.get("content_bottom_mm", ph)) and not e.get("flow")
+    ]
+    foot_mm = ph - min(feet) + 3.0 if feet else 0.0
     # Le haut des pages suivantes : une marge de lecture, pas la réserve de
     # l'en-tête de la première (souvent 50 mm et plus).
     top_mm = min(float(spec.get("first_band_top_mm", 12.0)), 16.0)
@@ -133,8 +144,12 @@ def fit_script(spec: Json, *, live: bool) -> str:
         # L'en-tête (textes en absolu) peut dépasser la hauteur mesurée sur
         # l'exemple : un poste visé long replié sur deux lignes. La première
         # bande descend alors d'autant, au lieu de se laisser recouvrir.
-        "var hb=0,pt0=p.getBoundingClientRect().top;document.querySelectorAll('[class^=\"s-header\"]').forEach("
-        "function(e){if(getComputedStyle(e).position==='absolute'){hb=Math.max(hb,e.getBoundingClientRect().bottom-pt0)}});"
+        # Seuls comptent les textes posés **au-dessus** de la bande (`data-hb`) : des
+        # coordonnées de pied de page renvoyaient tout le CV en page 2 (Portrait
+        # Capitales, 2026-11-20), des coordonnées à côté d'une colonne ont leur
+        # propre réserve (`header_reserve`).
+        "var hb=0,pt0=p.getBoundingClientRect().top;document.querySelectorAll('[data-hb]').forEach("
+        "function(e){hb=Math.max(hb,e.getBoundingClientRect().bottom-pt0)});"
         "var b0=document.querySelector('.band');if(b0){var bt=b0.getBoundingClientRect().top-pt0,gap=1.5*mm;"
         "if(hb+gap>bt){b0.style.marginTop=(hb+gap-bt)+'px'}}"
         f"var K=[{k_steps}],F=[{f_steps}],k=1,f=1,ok=false,n=1;"
@@ -161,7 +176,8 @@ def fit_script(spec: Json, *, live: bool) -> str:
         "var els=Array.prototype.filter.call(c.querySelectorAll('.item,.t'),function(e){return e.classList.contains('item')||!e.closest('.item')});"
         "for(var i=0;i<els.length;i++){var e=els[i],q=sh(e);if(q.b-q.t>ph*0.8)continue;"
         # … et le premier élément d'une page suivante descend aussi à la marge haute.
-        "var g=Math.floor(q.t/ph),cut=(g+1)*ph;if(g>0&&q.t<g*ph+top-0.5){push(e,g*ph+top);continue}if(q.b>cut){"
+        f"var g=Math.floor(q.t/ph),cut=(g+1)*ph,lim1=g===0?cut-{foot_mm:.2f}*mm:cut;"
+        "if(g>0&&q.t<g*ph+top-0.5){push(e,g*ph+top);continue}if(q.b>lim1){"
         "var prev=els[i-1];if(prev&&!prev.classList.contains('item')&&!prev.closest('.item')&&sh(prev).b>cut-12*mm){push(prev,cut+top);i--;continue}"
         "push(e,cut+top)}}});"
         f"n=Math.max(2,Math.ceil(b()/ph));p.style.height=(n*{ph})+'mm';"
@@ -457,6 +473,9 @@ class HtmlRenderer:
                 adresse ; par défaut le nom lui-même, pour les fichiers joints.
             anchored: Écrit `data-chemin` sur chaque texte du CV (atelier).
         """
+        # Le bloc de titre (nom, poste visé, précision) est posé une fois, ici,
+        # pour le CV d'une personne ; l'exemple du modèle garde le dessin d'origine.
+        spec = layout_header(spec, view, fonts, photo=photo is not None)
         self.spec, self.view, self.fonts, self.photo = spec, view, fonts, photo
         self.url, self.anchored = url_for, anchored
         self.styles: dict[str, Json] = spec["styles"]
@@ -513,7 +532,7 @@ class HtmlRenderer:
         return anchor(path) if self.anchored else ""
 
     def section(  # noqa: PLR0912, PLR0915 - le gabarit d'une rubrique, dans l'ordre du modèle
-        self, s: Json, sec: Json, col_w: float, *, reserve_mm: float = 0.0
+        self, s: Json, sec: Json, col_w: float, *, reserve_mm: float = 0.0, first: bool = False
     ) -> str:
         """Une rubrique : titre, éléments, puces, ornements ancrés.
 
@@ -528,7 +547,11 @@ class HtmlRenderer:
         # commence à sa première ligne, sans demi-blanc de titre à reprendre.
         lead = 0.0 if untitled else half(tst)
         margin = s["margin_top_mm"] - lead
-        top_css = f"calc({margin:.2f}mm*var(--k))"
+        # La première rubrique d'une colonne se pose par rapport au haut de sa
+        # bande et à ses filets : resserrée comme les autres, son titre venait
+        # toucher le filet du dessus (Frise Pharmacie, CV chargé, 2026-11-20).
+        k = f"max(var(--k),{FIRST_SECTION_MIN_K})" if first and margin > 0 else "var(--k)"
+        top_css = f"calc({margin:.2f}mm*{k})"
         if reserve_mm > 0:
             top_css = f"max({top_css},{reserve_mm - lead:.2f}mm)"
         # La boîte mesurée d'un titre sur deux lignes vaut pour l'exemple ; le
@@ -642,12 +665,21 @@ class HtmlRenderer:
                 if d["anchor"] != "item" or d.get("attach") == "row" or not self.shown(d):
                     continue
                 inset = d.get("bottom_inset_mm", 0.0)
+                bottom_css = f"{inset:.2f}mm"
                 if d.get("connector") and last_item:
                     # Le dernier élément : son propre trait (plus court) s'il en a un.
                     if d.get("last_bottom_inset_mm") is None:
                         continue
-                    inset = d["last_bottom_inset_mm"]
-                extra = f"height:auto;bottom:{inset:.2f}mm;" if d.get("stretch") else ""
+                    bottom_css = f"{d['last_bottom_inset_mm']:.2f}mm"
+                elif d.get("connector") and not self.view.get("sample"):
+                    # Un trait de frise relie un élément au suivant : il s'arrête où
+                    # le suivant commence. Mesuré sur un exemple à un seul long
+                    # trait, il traversait la rubrique d'après (Minimalist, 2026-11-20).
+                    reach = float(s.get("item_gap_mm") or 0.0)
+                    start = float(d["dy_mm"]) + half(first_st)
+                    if -float(inset) > reach + start + 3.0:
+                        bottom_css = f"calc(-{reach:.2f}mm*var(--k) - {start:.2f}mm)"
+                extra = f"height:auto;bottom:{bottom_css};" if d.get("stretch") else ""
                 out.append(
                     f'<div style="{deco_css(d, d["dx_mm"] - origin, d["dy_mm"] + half(first_st), extra)}"></div>'
                 )
@@ -1052,11 +1084,17 @@ class HtmlRenderer:
             # coordonnée sur la ligne du titre (cv10), pas ce qui finit au-dessus.
             if y >= section_top - 2.0:
                 continue
-            low = y + lh(self.styles[e["style"]])
+            low = y + self.element_height(e)
             if low <= band_top:
                 continue
             bottom = max(bottom, low)
         return max(0.0, bottom + 1.5 - band_top) if bottom else 0.0
+
+    def element_height(self, e: Json) -> float:
+        """La hauteur d'un texte d'en-tête, lignes repliées comprises."""
+        st = self.styles[e["style"]]
+        extra = (int(e.get("lines") or 1) - 1) * float(e.get("pitch_mm") or 0.0)
+        return lh(st) + extra
 
     def band_floor(self, index: int) -> float:
         """La hauteur minimale d'une bande : ce que l'en-tête occupe encore à côté d'elle.
@@ -1072,16 +1110,38 @@ class HtmlRenderer:
             if not self.view["header"].get(e["field"]) or e.get("flow"):
                 continue
             y = float(e["y_mm"])
-            if y < top - 1.0 and y + lh(self.styles[e["style"]]) <= top:
+            if y < top - 1.0 and y + self.element_height(e) <= top:
                 continue
-            if index + 1 < len(self.spec["bands"]) and y >= float(
-                self.spec["bands"][index + 1]["y_sample"]
+            if (
+                not e.get("laid")
+                and index + 1 < len(self.spec["bands"])
+                and y >= float(self.spec["bands"][index + 1]["y_sample"])
             ):
-                continue  # un pied de page, plus bas que la bande suivante
-            bottom = max(bottom, y + lh(self.styles[e["style"]]))
+                # Un pied de page, plus bas que la bande suivante — pas le bloc de
+                # titre, qu'une ligne de plus peut faire descendre jusque-là.
+                continue
+            bottom = max(bottom, y + self.element_height(e))
         if not bottom:
             return 0.0
-        return max(0.0, bottom + 1.5 - top - float(band.get("gap_after_mm", 0.0)))
+        return max(0.0, bottom + 1.5 - top)
+
+    def photo_floor(self, index: int) -> float:
+        """La hauteur qu'une bande garde pour que ce qui la suit (son filet, la bande
+        suivante) reste sous la photo : une bande courte laissait remonter la suivante
+        dessous (Portrait Capitales, 2026-11-20)."""
+        photo = self.spec["header"].get("photo") if self.photo else None
+        if not photo or index + 1 >= len(self.spec["bands"]):
+            return 0.0
+        top = float(self.spec["bands"][index]["y_sample"])
+        low = float(photo["y_mm"]) + float(photo["h_mm"])
+        if low <= top or float(photo["y_mm"]) >= float(self.spec["bands"][index + 1]["y_sample"]):
+            return 0.0
+        rules = [
+            float(d["dy_mm"])
+            for d in self.spec["page_decorations"]
+            if d.get("anchor") == "band" and d.get("band") == index
+        ]
+        return max(0.0, low + 1.5 - top - (min(rules) if rules else 0.0))
 
     def column_top_under(self, x: float) -> float:
         """Le haut mesuré de la première rubrique de la colonne de la première bande à cette abscisse."""
@@ -1217,6 +1277,13 @@ class HtmlRenderer:
                 e = {**e, "y_mm": tight[e["field"]]}  # noqa: PLW2901
             st = self.styles[e["style"]]
             cls = f'class="{esc(css_class(e["style"]))}"'
+            if e.get("pushes_band") or (
+                not e.get("laid") and float(e["y_mm"]) < float(self.spec["first_band_top_mm"])
+            ):
+                cls += ' data-hb="1"'
+            if e.get("laid"):
+                out.append(self.laid(e, st, val, cls))
+                continue
             if self.view.get("sample") and e.get("sample_lines"):
                 # L'exemple du modèle : chaque ligne d'un champ écrit sur
                 # plusieurs lignes reprend sa place exacte dans la source.
@@ -1274,6 +1341,33 @@ class HtmlRenderer:
             )
         return "".join(out)
 
+    def laid(self, e: Json, st: Json, val: str, cls: str) -> str:
+        """Un élément du bloc de titre déjà posé (`header_layout`) : écrit tel quel, sans réajustement."""
+        pw = float(self.spec["page"]["width_mm"])
+        align = e.get("align") or "left"
+        box = e.get("box_w_mm")
+        if align == "right":
+            left = f"right:{pw - float(e['rx_mm']):.2f}mm"
+        elif align == "center":
+            left = (
+                f"left:{float(e['cx_mm']) - float(box) / 2:.2f}mm"
+                if box
+                else f"left:{float(e['cx_mm']):.2f}mm;transform:translateX(-50%)"
+            )
+        else:
+            left = f"left:{float(e['x_mm']):.2f}mm"
+        top = float(e["y_mm"])
+        if box:
+            pitch = float(e["pitch_mm"])
+            top -= (pitch - float(st["box_h_mm"])) / 2
+            wrap = f";width:{float(box):.2f}mm;white-space:normal;line-height:{pitch:.3f}mm;text-align:{align}"
+        else:
+            wrap = ";white-space:nowrap"
+        return (
+            f'<div {cls}{self.anchor(header_path(self.view, e["field"]))} style="position:absolute;{left};'
+            f'top:{top:.2f}mm{wrap}">{esc(val)}</div>'
+        )
+
     def render(self) -> str:
         """Le document HTML complet."""
         page = self.spec["page"]
@@ -1291,6 +1385,7 @@ class HtmlRenderer:
             *(self.css_style(k, v) for k, v in self.styles.items()),
         ]
         bands_html = []
+        drawn: set[int] = set()
         for bi, band in enumerate(placement(self.spec, self.view, self.fonts)):
             if not any(band["columns"]):
                 continue
@@ -1301,8 +1396,15 @@ class HtmlRenderer:
                 reserve = (
                     self.header_reserve(cspec, float(band["spec"]["y_sample"])) if bi == 0 else 0.0
                 )
+                if col and col[0][2]:
+                    # Une rubrique empruntée en tête de colonne prend la marge de
+                    # tête de cette colonne, pas l'écart usuel entre rubriques.
+                    head = cspec["sections"][0]["margin_top_mm"] if cspec["sections"] else 0.0
+                    col = [({**col[0][0], "margin_top_mm": head}, col[0][1], True), *col[1:]]  # noqa: PLW2901
                 inner = "".join(
-                    self.section(s, sec, cspec["w_mm"], reserve_mm=reserve if i == 0 else 0.0)
+                    self.section(
+                        s, sec, cspec["w_mm"], reserve_mm=reserve if i == 0 else 0.0, first=i == 0
+                    )
                     for i, (s, sec, _) in enumerate(col)
                 )
                 cols.append(
@@ -1310,14 +1412,33 @@ class HtmlRenderer:
                 )
                 prev_right = cspec["x_mm"] + cspec["w_mm"]
             margin = 0.0 if bi == 0 else self.spec["bands"][bi - 1].get("gap_after_mm", 8.0)
+            # Un filet posé entre deux bandes garde sa place quand l'ajustement
+            # resserre l'écart : la bande ne remonte pas dessus.
+            rules = [
+                float(d["dy_mm"])
+                for d in self.spec["page_decorations"]
+                if d.get("anchor") == "band" and d.get("band") == bi - 1 and bi - 1 in drawn
+            ]
+            drawn.add(bi)
+            gap_css = f"calc({margin:.2f}mm*var(--k))"
+            if rules and max(rules) + 3.5 < margin:
+                gap_css = f"max({gap_css},{max(rules) + 3.5:.2f}mm)"
             # Un filet qui court le long de la bande (la ligne d'une frise) s'étire avec elle.
             band_decor = "".join(
                 f'<div style="{deco_css(d, d["x_mm"], d["dy_mm"], self.stretch_css(d))}"></div>'
                 for d in band["spec"].get("decorations", [])
             )
-            floor = f"min-height:{self.band_floor(bi):.2f}mm;" if bi == 0 else ""
+            # L'écart avec la bande suivante compte dans la hauteur exigée — à sa
+            # valeur resserrée par l'ajustement, pas à sa valeur d'origine.
+            after = float(band["spec"].get("gap_after_mm") or 0.0)
+            floor = (
+                f"min-height:max(calc({self.band_floor(bi):.2f}mm - {after:.2f}mm*var(--k)),"
+                f"{self.photo_floor(bi):.2f}mm);"
+                if bi == 0
+                else ""
+            )
             bands_html.append(
-                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;{floor}margin-top:calc({margin:.2f}mm*var(--k))">{band_decor}{"".join(cols)}</div>'
+                f'<div class="band" style="position:relative;display:flex;align-items:flex-start;{floor}margin-top:{gap_css}">{band_decor}{"".join(cols)}</div>'
             )
             bands_html.extend(
                 f'<div style="position:relative;height:0"><div style="{deco_css(d, d["x_mm"], d["dy_mm"])}"></div></div>'
@@ -1352,7 +1473,7 @@ class HtmlRenderer:
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>CV</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="flow" style="position:absolute;left:0;top:{top:.2f}mm;width:100%">'
-            f"{flows}{self.flow_headline()}{''.join(bands_html)}</div>{footer_html('cv')}</div>{fit}</body></html>"
+            f"{flows}{self.flow_headline()}{''.join(bands_html)}</div>{footer_html('cv') if self.view.get('watermark', True) else ''}</div>{fit}</body></html>"
         )
 
     def flow_headline(self) -> str:
@@ -1362,15 +1483,28 @@ class HtmlRenderer:
         if e is None:
             return ""
         val = self.view["header"].get(e["field"], "")
-        if not val:
+        extra = self.view["header"].get("availability", "") if e.get("flow_extra") else ""
+        if not val and not extra:
             return ""
         pw = float(self.spec["page"]["width_mm"])
         gap = float(e.get("gap_mm") or 2.0)
-        return (
-            f'<div class="t {esc(css_class(e["style"]))}"{self.anchor(header_path(self.view, e["field"]))} '
-            f'style="position:relative;margin-left:{e["x_mm"]}mm;width:{pw - float(e["x_mm"]) - 8:.2f}mm;'
-            f'margin-bottom:{gap:.2f}mm">{esc(val)}</div>'
+        width = float(e.get("flow_w_mm") or pw - float(e["x_mm"]) - 8)
+        box = (
+            f"position:relative;margin-left:{float(e['x_mm']):.2f}mm;width:{width:.2f}mm;"
+            f"text-align:{e.get('flow_align') or 'left'}"
         )
+        out = ""
+        if val:
+            out += (
+                f'<div class="t {esc(css_class(e["style"]))}"{self.anchor(header_path(self.view, e["field"]))} '
+                f'style="{box};margin-bottom:{0.8 if extra else gap:.2f}mm">{esc(val)}</div>'
+            )
+        if extra:
+            out += (
+                f'<div class="t {esc(css_class(e["flow_extra"]))}"{self.anchor(header_path(self.view, "availability"))} '
+                f'style="{box};margin-bottom:{gap:.2f}mm">{esc(extra)}</div>'
+            )
+        return out
 
     @staticmethod
     def stretch_css(d: Json) -> str:

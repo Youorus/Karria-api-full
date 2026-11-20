@@ -423,6 +423,16 @@ class InMemoryGeneratedCvRepository:
     async def add(self, generated: GeneratedCv) -> None:
         self.items[generated.id] = generated
 
+    async def clean_cv_times(self, user_id: UUID, *, since: datetime) -> list[datetime]:
+        return sorted(
+            g.created_at
+            for g in self.items.values()
+            if g.user_id == user_id
+            and g.kind is DocumentKind.CV
+            and not g.watermarked
+            and g.created_at >= since
+        )
+
     async def get(self, generated_id: UUID) -> GeneratedCv | None:
         return self.items.get(generated_id)
 

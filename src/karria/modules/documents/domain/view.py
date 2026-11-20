@@ -47,6 +47,10 @@ LANGUAGE_LEVELS_FR: Final[dict[str, str]] = {"Natif": "langue maternelle"}
 _SCHEME: Final = re.compile(r"^https?://(www\.)?")
 
 
+#: Sous cette largeur (mm), la colonne latérale d'une frise ne porte pas un nom d'école.
+NARROW_SIDE_MM = 25.0
+
+
 def year(value: str | None) -> str:
     """L'année d'une date `AAAA-MM` ou `AAAA`."""
     return (value or "")[:4]
@@ -102,7 +106,31 @@ def spec_sections(spec: Json) -> dict[str, Json]:
     return {s["kind"]: s for b in spec["bands"] for c in b["columns"] for s in c["sections"]}
 
 
-def from_cv(spec: Json, cv: Json) -> Json:
+def school_placement(edu_spec: Json) -> tuple[bool, bool]:
+    """Où écrire l'établissement quand le modèle ne lui a pas donné d'emplacement.
+
+    Un modèle dont l'exemple écrit la ville dans la marge (Frise Pharmacie)
+    perdait l'école (revue du 2026-11-20). Rend (à la place du lieu ?, à la suite
+    du diplôme ?) : elle prend la place du lieu ; si la marge est trop étroite
+    pour un nom d'école (« Université » coupé en deux), ou s'il n'y a pas de
+    lieu non plus, elle suit le diplôme, comme l'entreprise suit le poste.
+    """
+    side = edu_spec.get("side") or {}
+    roles = {
+        role
+        for slot in [*edu_spec.get("slots", []), *side.get("slots", [])]
+        for role in slot["roles"]
+    }
+    if not roles or "item_subtitle" in roles:
+        return False, False
+    narrow_side = any("item_location" in slot["roles"] for slot in side.get("slots", [])) and (
+        float(side.get("w_mm") or 0.0) < NARROW_SIDE_MM
+    )
+    as_location = "item_location" in roles and not narrow_side
+    return as_location, not as_location
+
+
+def from_cv(spec: Json, cv: Json) -> Json:  # noqa: PLR0915 - une rubrique après l'autre, dans l'ordre du CV
     """Le CV (forme de `GET /cv/me`) vers la vue, selon les emplacements du modèle."""
     ident = cv.get("identity") or {}
     contact = cv.get("contact") or {}
@@ -114,6 +142,9 @@ def from_cv(spec: Json, cv: Json) -> Json:
         "last_name": last,
         "full_name": f"{first} {last}".strip(),
         "headline": (ident.get("headline") or "").strip(),
+        # La précision sous le poste visé (« Recherche alternance 24 mois ·
+        # Disponible immédiatement ») : posée par `header_layout`.
+        "availability": (ident.get("availability") or "").strip(),
         "phone": contact.get("phone") or "",
         "email": contact.get("email") or "",
         "address": contact.get("city") or "",
@@ -124,6 +155,7 @@ def from_cv(spec: Json, cv: Json) -> Json:
         "last_name": "identity.last_name",
         "full_name": "identity.full_name",
         "headline": "identity.headline",
+        "availability": "identity.availability",
         "phone": "contact.phone",
         "email": "contact.email",
         "address": "contact.city",
@@ -196,25 +228,35 @@ def from_cv(spec: Json, cv: Json) -> Json:
         out.append({"kind": "experiences", "items": items, "paths": paths})
     items = []
     paths = []
+    edu_spec = kinds.get("educations", {})
+    school_as_location, school_in_title = school_placement(edu_spec)
+    edu_sep = separator([edu_spec.get("title_sep", "")])
     for i, e in enumerate(cv.get("educations") or []):
+        school = e.get("school")
         items.append(
             {
-                "item_title": e["degree"],
-                "item_subtitle": e["school"],
+                "item_title": f"{e['degree']}{edu_sep}{school}"
+                if school_in_title and school
+                else e["degree"],
+                "item_subtitle": school,
                 "item_dates": period(
                     e.get("start_date"), e.get("end_date"), current=bool(e.get("is_in_progress"))
                 ),
-                "item_location": e.get("location"),
+                "item_location": school if school_as_location and school else e.get("location"),
                 "bullet": [],
                 "item_text": e.get("description"),
             }
         )
         paths.append(
             {
-                "item_title": f"educations.{i}.degree",
+                "item_title": f"educations.{i}"
+                if school_in_title and school
+                else f"educations.{i}.degree",
                 "item_subtitle": f"educations.{i}.school",
                 "item_dates": f"educations.{i}.dates",
-                "item_location": f"educations.{i}.location",
+                "item_location": f"educations.{i}.school"
+                if school_as_location and school
+                else f"educations.{i}.location",
                 "bullet": [],
                 "item_text": f"educations.{i}.description",
             }

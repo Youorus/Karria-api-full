@@ -52,6 +52,7 @@ from karria.modules.documents.infrastructure.footer import (
     add_docx_footer,
     docx_footer_distance,
 )
+from karria.modules.documents.infrastructure.header_layout import layout_header
 from karria.modules.documents.infrastructure.html_renderer import (
     LIST_KINDS,
     ROLE_MARKER,
@@ -85,6 +86,8 @@ ROLE_FR: Final[dict[str, str]] = {
     "last_name": "Nom",
     "full_name": "Nom complet",
     "headline": "Poste visé",
+    "name": "Nom (titre)",
+    "availability": "Précision",
 }
 EMU_PER_MM: Final = 36000
 MM_TO_PT: Final = 72 / 25.4
@@ -335,6 +338,9 @@ class DocxRenderer:
             photo: Octets de la photo (PNG/JPEG), ou `None`.
             k, f: Facteurs d'espacement et de corps retenus par la mise en page du PDF.
         """
+        # Le même bloc de titre que le PDF (nom dans un seul caractère, poste visé,
+        # précision) : posé une fois par `header_layout`, lu ici tel quel.
+        spec = layout_header(spec, view, fonts, photo=photo is not None)
         self.spec, self.view, self.fonts = spec, view, fonts
         self.photo, self.k, self.f = photo, k, f
         self.styles: dict[str, Json] = spec["styles"]
@@ -564,9 +570,16 @@ class DocxRenderer:
         Une seule pile si les piles ne se chevauchent pas en hauteur : le flux
         simple (avec taquets) les rend alors fidèlement.
         """
+
+        # Une pile se reconnaît au bord que ses lignes partagent : le bord droit
+        # d'un bloc au fer à droite, l'axe d'un bloc centré, sinon le bord gauche
+        # (un nom et un poste visé appuyés à droite ont des bords gauches épars).
+        def edge(e: Json) -> float:
+            return float(e.get("rx_mm") or e.get("cx_mm") or e["x_mm"])
+
         groups: list[list[Json]] = []
-        for e in sorted(texts, key=lambda e: e["x_mm"]):
-            if groups and e["x_mm"] - min(x["x_mm"] for x in groups[-1]) <= 25:  # noqa: PLR2004
+        for e in sorted(texts, key=edge):
+            if groups and edge(e) - min(edge(x) for x in groups[-1]) <= 25:  # noqa: PLR2004
                 groups[-1].append(e)
             else:
                 groups.append([e])
@@ -628,6 +641,18 @@ class DocxRenderer:
                 run = p.add_run(self.view["header"][other["field"]])
                 self.apply_run_style(run, other["style"])
             prev_bottom = lead["y_mm"] + float(st["box_h_mm"])
+            extra = self.view["header"].get("availability") if lead.get("flow_extra") else ""
+            if extra:
+                # La précision d'un poste visé posé en tête de flux : sa ligne, juste dessous.
+                self.para(
+                    container,
+                    lead["flow_extra"],
+                    extra,
+                    before_mm=0.8,
+                    indent_mm=indent,
+                    align=align,
+                )
+                prev_bottom += 0.8 + float(self.styles[lead["flow_extra"]]["box_h_mm"])
         return prev_bottom
 
     def apply_run_style(self, run: Any, key: str) -> None:
@@ -1242,7 +1267,8 @@ class DocxRenderer:
         sec.top_margin, sec.bottom_margin = Mm(max(0.0, top - lead_top)), Mm(6)
         sec.left_margin, sec.right_margin = Mm(0), Mm(0)
         sec.header_distance, sec.footer_distance = Mm(0), docx_footer_distance()
-        add_docx_footer(sec.footer.paragraphs[0], "cv", self.footer_family())
+        if self.view.get("watermark", True):
+            add_docx_footer(sec.footer.paragraphs[0], "cv", self.footer_family())
         normal = self.doc.styles["Normal"]
         normal.paragraph_format.space_after = Pt(0)
         normal.paragraph_format.space_before = Pt(0)

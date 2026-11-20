@@ -361,6 +361,7 @@ class CvIdentityBody(Loose):
     first_name: str = Field(default="", max_length=100)
     last_name: str = Field(default="", max_length=100)
     headline: str | None = Field(default=None, max_length=200)
+    availability: str | None = Field(default=None, max_length=200)
 
 
 class CvLinkBody(Loose):
@@ -509,6 +510,24 @@ class RenderRead(BaseModel):
         default=None,
         description="Lettre : le style réellement servi (`template` ou `plain`) ; `null` pour un CV.",
     )
+    watermark: bool | None = Field(
+        default=None,
+        description=(
+            "Le rendu porte le filigrane, comme l'export le portera (ADR-0040) ; `null` pour "
+            "l'exemple d'un modèle."
+        ),
+    )
+
+
+class ExportAllowanceRead(BaseModel):
+    """`GET /cv/me/generated-cvs/allowance` : les exports sans filigrane du mois (ADR-0040)."""
+
+    subscriber: bool = Field(description="« Karria sans pub » actif : jamais de filigrane.")
+    free_per_month: int = Field(description="CV sans filigrane offerts par mois civil (UTC).")
+    used: int = Field(description="CV exportés sans filigrane depuis le début du mois.")
+    remaining: int = Field(description="CV sans filigrane encore offerts ce mois-ci.")
+    watermark_next: bool = Field(description="Le prochain export portera le filigrane.")
+    resets_at: datetime = Field(description="Début du mois suivant (UTC) : le compteur repart.")
 
 
 class LetterExportRequest(BaseModel):
@@ -588,6 +607,13 @@ class GeneratedCvRead(BaseModel):
         default=None,
         description="Lettre : le style servi (`template` ou `plain`) ; `null` pour un CV.",
     )
+    watermarked: bool = Field(
+        default=False,
+        description=(
+            "Le document porte le filigrane « réalisé avec Karria » (ADR-0040) : jamais les "
+            "trois premiers CV du mois, jamais chez un abonné. L'app propose alors « sans pub »."
+        ),
+    )
     offer_id: UUID | None
     created_at: datetime
     pdf_url: str | None
@@ -628,6 +654,7 @@ class GeneratedCvRead(BaseModel):
             ats_safe=generated.ats_safe,
             primary_color=generated.primary_color,
             letter_style=generated.letter_style,  # type: ignore[arg-type]
+            watermarked=generated.watermarked,
             offer_id=generated.offer_id,
             created_at=generated.created_at,
             pdf_url=await sign(generated.pdf_key, "pdf"),

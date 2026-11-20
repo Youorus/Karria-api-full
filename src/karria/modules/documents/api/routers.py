@@ -18,12 +18,15 @@ ancré de l'atelier (ADR-0029, compté par compte), l'export d'une lettre
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 
 from karria.modules.documents.api.dependencies import (
+    AllowanceDep,
+    ClockDep,
     GuestPrincipalDep,
     RenderPrincipalDep,
     SendOriginDep,
@@ -50,6 +53,7 @@ from karria.modules.documents.api.dependencies import (
 from karria.modules.documents.api.schemas import (
     AcquireRequest,
     BatchSendRequest,
+    ExportAllowanceRead,
     ExportRequest,
     FitRead,
     GeneratedCvListRead,
@@ -91,6 +95,7 @@ from karria.modules.documents.application import (
 from karria.modules.documents.application.use_cases import plain_letter_pages
 from karria.modules.documents.domain.errors import TemplateNotFoundError
 from karria.modules.documents.domain.templates import DocumentKind
+from karria.modules.documents.domain.watermark import month_start
 from karria.shared.auth import (
     AiConsentedPrincipalDep,
     CurrentPrincipalDep,
@@ -339,6 +344,27 @@ async def export_cv(
 
 
 @exports_router.get(
+    "/allowance",
+    summary="Mes CV sans filigrane du mois",
+    response_model=ExportAllowanceRead,
+)
+async def read_export_allowance(
+    principal: CurrentPrincipalDep, use_case: AllowanceDep, clock: ClockDep
+) -> ExportAllowanceRead:
+    """Trois CV sans filigrane par mois ; au-delà le filigrane, sans jamais bloquer (ADR-0040)."""
+    state = await use_case.execute(principal.subject_id)
+    start = month_start(clock.now())
+    return ExportAllowanceRead(
+        subscriber=state.subscriber,
+        free_per_month=state.free_per_month,
+        used=state.used,
+        remaining=state.remaining,
+        watermark_next=state.watermark,
+        resets_at=(start + timedelta(days=32)).replace(day=1),
+    )
+
+
+@exports_router.get(
     "",
     summary="Mes documents exportés (CV et lettres)",
     response_model=GeneratedCvListRead,
@@ -440,6 +466,7 @@ async def render_document(
         pages=rendered.pages,
         warnings=list(rendered.warnings),
         letter_style_served=rendered.letter_style,  # type: ignore[arg-type]
+        watermark=rendered.watermark,
     )
 
 

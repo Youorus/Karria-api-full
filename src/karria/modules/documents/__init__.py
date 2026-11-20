@@ -42,6 +42,7 @@ from karria.modules.documents.api.dependencies import (
     get_account_directory,
     get_cv_source,
     get_render_document,
+    get_subscription_reader,
     get_template_shop,
 )
 from karria.modules.documents.api.tasks import register_tasks
@@ -86,6 +87,7 @@ __all__ = [
     "get_account_directory",
     "get_cv_source",
     "get_render_document",
+    "get_subscription_reader",
     "get_template_shop",
     "register_tasks",
 ]

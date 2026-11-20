@@ -1,5 +1,9 @@
 """Couche applicative du module `documents`."""
 
+from karria.modules.documents.application.allowance import (
+    ReadExportAllowance,
+    SubscriptionReader,
+)
 from karria.modules.documents.application.ports import (
     AccountDirectory,
     Analysis,
@@ -88,6 +92,7 @@ __all__ = [
     "PreviewTemplate",
     "Previews",
     "PublishPlainLetterPreview",
+    "ReadExportAllowance",
     "RecordTemplateView",
     "RefreshSamplePortrait",
     "RefreshTemplateColors",
@@ -99,6 +104,7 @@ __all__ = [
     "SendDocuments",
     "SendRepository",
     "SubmitTemplate",
+    "SubscriptionReader",
     "TemplateJobs",
     "TemplateRepository",
     "TemplateShop",

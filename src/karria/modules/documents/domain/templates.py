@@ -228,6 +228,9 @@ class GeneratedCv:
     #: Lettre : le style **réellement servi** (`template` ou `plain`, ADR-0036) ;
     #: `None` pour un CV.
     letter_style: str | None = None
+    #: Le document porte-t-il le filigrane Karria ? (ADR-0040 : pas les trois
+    #: premiers CV du mois, jamais chez un abonné.)
+    watermarked: bool = False
 
     @staticmethod
     def new_id() -> UUID:

@@ -928,6 +928,7 @@ CV_IDENTITY: dict[str, Any] = {
     "first_name": "Awa",
     "last_name": "Diallo",
     "headline": "Conseillère de vente",
+    "availability": None,
 }
 CV_CONTACT: dict[str, Any] = {
     "email": "awa@example.com",

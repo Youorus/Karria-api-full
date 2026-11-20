@@ -86,7 +86,9 @@ class TestAncres:
         assert "skills.1" in found
         assert "languages.0" in found
         assert "summary" in found
-        assert "educations.0.degree" in found
+        # Le modèle d'essai n'a pas d'emplacement pour l'établissement : il suit le
+        # diplôme, et le texte porte le chemin de l'élément (comme poste + entreprise).
+        assert "educations.0" in found
 
     def test_un_champ_compose_sur_une_ligne_ancre_chaque_morceau(
         self, spec: Json, fonts: FontSet
@@ -149,7 +151,7 @@ class TestPages:
         assert "border-top:2px dashed" in live
         # L'en-tête qui déborde pousse la première bande, dans les deux variantes.
         for script in (live, printed):
-            assert "s-header" in script
+            assert "[data-hb]" in script
             assert "b0.style.marginTop" in script
         # Un script à accolades déséquilibrées ne s'exécute pas : l'atelier
         # perdrait le nombre de pages et la seconde page (incident du 13/11).

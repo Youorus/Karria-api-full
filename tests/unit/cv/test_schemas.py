@@ -150,7 +150,12 @@ class TestValidationParChapitre:
             Chapter.IDENTITY,
             {"first_name": " Awa", "last_name": "Diallo", "headline": None, "x": 1},
         )
-        assert data == {"first_name": "Awa", "last_name": "Diallo", "headline": None}
+        assert data == {
+            "first_name": "Awa",
+            "last_name": "Diallo",
+            "headline": None,
+            "availability": None,
+        }
 
     def test_une_valeur_invalide_leve_une_erreur_pydantic(self) -> None:
         with pytest.raises(ValidationError):

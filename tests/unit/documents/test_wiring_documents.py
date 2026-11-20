@@ -37,6 +37,7 @@ def test_le_cv_est_rendu_sous_la_forme_du_contrat_sans_la_photo() -> None:
         "first_name": "Awa",
         "last_name": "Diallo",
         "headline": "Conseillère de vente",
+        "availability": None,
     }
     assert data["contact"] == {
         "email": "awa@example.com",

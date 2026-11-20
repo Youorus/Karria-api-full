@@ -145,6 +145,9 @@ class GeneratedCvModel(BaseDBModel):
     letter_style = fields.CharField(
         max_length=8, null=True, description="Lettre : style servi, template ou plain (ADR-0036)."
     )
+    watermarked = fields.BooleanField(
+        default=False, description="Le document porte le filigrane Karria (ADR-0040)."
+    )
 
     class Meta:
         table = "documents_generated_cvs"

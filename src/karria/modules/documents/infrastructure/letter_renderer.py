@@ -275,7 +275,8 @@ class LetterHtmlRenderer:
         return (
             f'<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Lettre</title><style>{"".join(css)}</style></head>'
             f'<body><div class="page">{statics}{self.header()}<div class="sheet">{self.body()}</div>'
-            f"{footer_html('letter')}</div>{fit_script(self.spec, live=self.anchored)}</body></html>"
+            f"{footer_html('letter') if self.view.get('watermark', True) else ''}</div>"
+            f"{fit_script(self.spec, live=self.anchored)}</body></html>"
         )
 
 
@@ -481,7 +482,8 @@ class LetterDocxRenderer:
         sec.left_margin = Mm(float(body["x_mm"]))
         sec.right_margin = Mm(float(page["width_mm"]) - float(body["x_mm"]) - float(body["w_mm"]))
         sec.footer_distance = docx_footer_distance()
-        add_docx_footer(sec.footer.paragraphs[0], "letter", self.footer_family())
+        if self.view.get("watermark", True):
+            add_docx_footer(sec.footer.paragraphs[0], "letter", self.footer_family())
         normal = self.doc.styles["Normal"]
         normal.paragraph_format.space_after = Pt(0)
         normal.paragraph_format.space_before = Pt(0)

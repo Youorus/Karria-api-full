@@ -44,6 +44,7 @@ from karria.modules.documents.application import (
     OriginThrottle,
     PreviewTemplate,
     PublishPlainLetterPreview,
+    ReadExportAllowance,
     RecordTemplateView,
     RefreshSamplePortrait,
     RefreshTemplateColors,
@@ -52,6 +53,7 @@ from karria.modules.documents.application import (
     SendDocuments,
     SendRepository,
     SubmitTemplate,
+    SubscriptionReader,
     TemplateJobs,
     TemplateRepository,
     TemplateShop,
@@ -201,6 +203,19 @@ def get_cv_source() -> CvSource:
     return NoCvSource()
 
 
+class _NoSubscription:
+    """Par défaut, personne n'est abonné : le filigrane revient après trois CV."""
+
+    async def is_subscriber(self, user_id: UUID) -> bool:
+        _ = user_id
+        return False
+
+
+def get_subscription_reader() -> SubscriptionReader:
+    """Remplacé par `bootstrap/wiring.py` (module `payments`) ; sinon, la règle du gratuit."""
+    return _NoSubscription()
+
+
 def get_account_directory() -> AccountDirectory:
     return NoAccountDirectory()
 
@@ -255,6 +270,17 @@ TemplatesDep = Annotated[TemplateRepository, Depends(get_template_repository)]
 OwnedDep = Annotated[UserTemplateRepository, Depends(get_user_template_repository)]
 GeneratedDep = Annotated[GeneratedCvRepository, Depends(get_generated_cv_repository)]
 CvSourceDep = Annotated[CvSource, Depends(get_cv_source)]
+SubscriptionReaderDep = Annotated[SubscriptionReader, Depends(get_subscription_reader)]
+
+
+def get_export_allowance(
+    generated: GeneratedDep, subscriptions: SubscriptionReaderDep, clock: ClockDep
+) -> ReadExportAllowance:
+    """Les exports sans filigrane du mois (ADR-0040)."""
+    return ReadExportAllowance(generated=generated, subscriptions=subscriptions, clock=clock)
+
+
+AllowanceDep = Annotated[ReadExportAllowance, Depends(get_export_allowance)]
 EngineDep = Annotated[DocumentEngine, Depends(get_engine)]
 JobsDep = Annotated[TemplateJobs, Depends(get_jobs)]
 SendsDep = Annotated[SendRepository, Depends(get_send_repository)]
@@ -339,6 +365,7 @@ def get_export(
     storage: ObjectStorageDep,
     jobs: JobsDep,
     clock: ClockDep,
+    allowance: AllowanceDep,
 ) -> ExportCv:
     return ExportCv(
         renderer=renderer,
@@ -349,6 +376,7 @@ def get_export(
         storage=storage,
         jobs=jobs,
         clock=clock,
+        allowance=allowance,
     )
 
 
@@ -365,6 +393,7 @@ def get_render_document(
     storage: ObjectStorageDep,
     logos: LogosDep,
     clock: ClockDep,
+    allowance: AllowanceDep,
 ) -> RenderDocument:
     """Le rendu HTML de l'atelier (ADR-0029) — aussi la façade d'un autre module."""
     return RenderDocument(
@@ -375,6 +404,7 @@ def get_render_document(
         storage=storage,
         logos=logos,
         clock=clock,
+        allowance=allowance,
     )
 
 
@@ -387,6 +417,7 @@ def get_export_letter(
     storage: ObjectStorageDep,
     logos: LogosDep,
     clock: ClockDep,
+    allowance: AllowanceDep,
 ) -> ExportLetter:
     return ExportLetter(
         templates=templates,
@@ -396,6 +427,7 @@ def get_export_letter(
         storage=storage,
         logos=logos,
         clock=clock,
+        allowance=allowance,
     )
 
 
