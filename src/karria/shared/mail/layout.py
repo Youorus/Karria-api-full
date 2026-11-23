@@ -93,13 +93,13 @@ PIED: Final[dict[str, dict[str, str]]] = {
     },
 }
 
-#: Fiches des magasins d'applications, quand elles existeront.
+#: Fiches des magasins d'applications.
 #:
-#: `None` tant que l'application n'est pas publiée : un bouton de
-#: téléchargement qui mène à une page inexistante est pire que pas de
-#: bouton. Le jour de la publication, renseigner ces deux valeurs suffit.
-APP_STORE_URL: Final[str | None] = None
-PLAY_STORE_URL: Final[str | None] = None
+#: Renseignées le 23 novembre 2026, jour de la publication de la 1.1.0 sur
+#: les deux magasins : le pied de chaque courriel y renvoie. Remises à `None`,
+#: le pied annoncerait de nouveau une publication prochaine.
+APP_STORE_URL: Final[str | None] = "https://apps.apple.com/fr/app/id6776608930"
+PLAY_STORE_URL: Final[str | None] = "https://play.google.com/store/apps/details?id=com.karria.app"
 
 
 def dark_mode_css() -> str:

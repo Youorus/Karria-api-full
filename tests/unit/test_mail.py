@@ -247,6 +247,14 @@ class TestGabaritDeMarque:
         if layout.APP_STORE_URL is None:
             assert "apps.apple.com" not in rendu.html_body
 
+    def test_le_pied_mene_aux_deux_fiches_publiees(self) -> None:
+        """Depuis la publication (23 novembre 2026), le pied renvoie aux deux magasins."""
+        rendu = _rendre(MailMessage.LOGIN_CODE)
+
+        assert "https://apps.apple.com/fr/app/id6776608930" in rendu.html_body
+        assert "https://play.google.com/store/apps/details?id=com.karria.app" in rendu.html_body
+        assert "arrive bientôt" not in rendu.html_body
+
     def test_le_destinataire_est_rappele(self) -> None:
         """Ce qu'un hameçonnage ne sait pas faire : nommer l'adresse."""
         rendu = _rendre(MailMessage.WELCOME)
