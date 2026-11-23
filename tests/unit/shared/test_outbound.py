@@ -184,6 +184,25 @@ class TestLaComposition:
         assert vues == ["https://exemple.test/envoi"]
 
     @pytest.mark.asyncio
+    async def test_sans_chemin_l_adresse_reste_telle_quelle(self) -> None:
+        # Les clés publiques de Google : `…/certs/` répond 404, `…/certs` répond 200.
+        vues: list[str] = []
+
+        def _urlopen(requete: Any, **__: object) -> _Reponse:
+            vues.append(requete.full_url)
+            return _Reponse({"keys": []})
+
+        client = JsonClient(base_url="https://www.googleapis.com/oauth2/v3/certs")
+        with patch("urllib.request.urlopen", side_effect=_urlopen):
+            await client.get_json("")
+            await client.get_json("", {"v": "1"})
+
+        assert vues == [
+            "https://www.googleapis.com/oauth2/v3/certs",
+            "https://www.googleapis.com/oauth2/v3/certs?v=1",
+        ]
+
+    @pytest.mark.asyncio
     async def test_les_parametres_sont_encodes(self) -> None:
         vues: list[str] = []
 

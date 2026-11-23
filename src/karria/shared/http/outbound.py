@@ -138,7 +138,13 @@ class JsonClient:
         return await self._call(method.upper(), path, payload)
 
     async def _call(self, method: str, path: str, payload: Any) -> JsonResponse:
-        url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
+        # Sans chemin (ou avec seulement des paramètres), l'adresse est `base_url`
+        # telle quelle : y ajouter « / » demandait `…/oauth2/v3/certs/`, que Google
+        # refuse (404), et toute connexion Google échouait (23 novembre 2026).
+        if not path or path.startswith("?"):
+            url = f"{self.base_url}{path}"
+        else:
+            url = f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
         derniere: OutboundError | None = None
 
         for tentative in range(1, self.attempts + 1):
